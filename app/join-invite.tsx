@@ -8,7 +8,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-export default function SigninScreen() {
+export default function JoinInviteScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.content}>
@@ -16,44 +16,33 @@ export default function SigninScreen() {
           <Text style={styles.backText}>← Back</Text>
         </TouchableOpacity>
 
-        <Text style={styles.heading}>Welcome back</Text>
+        <Text style={styles.heading}>Join Your Caregiver</Text>
 
         <Text style={styles.subheading}>
-          Sign in to manage reminders, view care activity, and stay connected.
+          Enter the invite code your caregiver gave you to connect your account.
         </Text>
 
-        <View style={styles.formGroup}>
-          <Text style={styles.label}>Email</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="you@example.com"
-            placeholderTextColor="#9CA3AF"
-            keyboardType="email-address"
-            autoCapitalize="none"
-          />
-        </View>
+        <View style={styles.card}>
+          <Text style={styles.label}>Invite Code</Text>
 
-        <View style={styles.formGroup}>
-          <Text style={styles.label}>Password</Text>
           <TextInput
             style={styles.input}
-            placeholder="Enter your password"
+            placeholder="A7F9K2"
             placeholderTextColor="#9CA3AF"
-            secureTextEntry
+            autoCapitalize="characters"
+            maxLength={6}
           />
+
+          <Text style={styles.helperText}>
+            This links your reminders and completion status to your caregiver.
+          </Text>
         </View>
 
         <TouchableOpacity
-          style={styles.signinButton}
-          onPress={() => router.push('/caregiver-dashboard')}
+          style={styles.connectButton}
+          onPress={() => router.push('/recipient-dashboard')}
         >
-          <Text style={styles.signinButtonText}>Sign In</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity onPress={() => router.push('/signup')}>
-          <Text style={styles.footerText}>
-            Don’t have an account? Create one
-          </Text>
+          <Text style={styles.connectButtonText}>Connect Account</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -77,7 +66,7 @@ const styles = StyleSheet.create({
     marginBottom: 28,
   },
   heading: {
-    fontSize: 36,
+    fontSize: 34,
     fontWeight: '900',
     color: '#111827',
     marginBottom: 10,
@@ -86,44 +75,50 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#6B7280',
     lineHeight: 24,
-    marginBottom: 30,
+    marginBottom: 28,
   },
-  formGroup: {
+  card: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    padding: 20,
     marginBottom: 18,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
   },
   label: {
     fontSize: 15,
     fontWeight: '900',
     color: '#374151',
-    marginBottom: 8,
+    marginBottom: 10,
   },
   input: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F9FAFB',
     borderRadius: 16,
     paddingHorizontal: 16,
-    paddingVertical: 17,
-    fontSize: 16,
+    paddingVertical: 18,
+    fontSize: 28,
+    fontWeight: '900',
+    letterSpacing: 4,
+    textAlign: 'center',
     borderWidth: 1,
     borderColor: '#E5E7EB',
     color: '#111827',
+    marginBottom: 14,
   },
-  signinButton: {
+  helperText: {
+    fontSize: 14,
+    color: '#6B7280',
+    lineHeight: 21,
+  },
+  connectButton: {
     backgroundColor: '#2563EB',
     paddingVertical: 18,
     borderRadius: 16,
     alignItems: 'center',
-    marginTop: 10,
-    marginBottom: 18,
   },
-  signinButtonText: {
+  connectButtonText: {
     color: '#FFFFFF',
     fontSize: 17,
     fontWeight: '900',
-  },
-  footerText: {
-    textAlign: 'center',
-    color: '#2563EB',
-    fontSize: 15,
-    fontWeight: '800',
   },
 });

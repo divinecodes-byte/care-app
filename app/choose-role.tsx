@@ -24,7 +24,7 @@ export default function ChooseRoleScreen() {
 
         <TouchableOpacity
           style={styles.card}
-          onPress={() => router.push('/recipient-dashboard')}
+          onPress={() => router.push('/join-invite')}
         >
           <Text style={styles.cardTitle}>I am receiving care</Text>
           <Text style={styles.cardText}>
