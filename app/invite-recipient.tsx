@@ -1,8 +1,77 @@
 import { router } from 'expo-router';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useState } from 'react';
+import {
+    ActivityIndicator,
+    Alert,
+    ScrollView,
+    Share,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { supabase } from '@/lib/supabase';
+
+function generateInviteCode() {
+  const characters = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+
+  for (let i = 0; i < 6; i++) {
+    code += characters.charAt(Math.floor(Math.random() * characters.length));
+  }
+
+  return code;
+}
+
 export default function InviteRecipientScreen() {
+  const [inviteCode, setInviteCode] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  async function createInviteCode() {
+    setLoading(true);
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      setLoading(false);
+      Alert.alert('Not signed in', 'Please sign in again.');
+      return;
+    }
+
+    const code = generateInviteCode();
+
+    const { error } = await supabase.from('connections').insert({
+      caregiver_id: user.id,
+      invite_code: code,
+      status: 'pending',
+    });
+
+    setLoading(false);
+
+    if (error) {
+      Alert.alert('Invite error', error.message);
+      return;
+    }
+
+    setInviteCode(code);
+  }
+
+  async function shareInviteCode() {
+    if (!inviteCode) {
+      Alert.alert('No invite code', 'Generate an invite code first.');
+      return;
+    }
+
+    await Share.share({
+      message: `Use this invite code to connect with me on Care App: ${inviteCode}`,
+    });
+  }
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.content}>
@@ -13,24 +82,49 @@ export default function InviteRecipientScreen() {
         <Text style={styles.heading}>Invite Loved One</Text>
 
         <Text style={styles.subheading}>
-          Share this code with your loved one so their account can connect to your caregiver dashboard.
+          Generate a code and share it with your loved one so their account can connect to your caregiver dashboard.
         </Text>
 
         <View style={styles.codeCard}>
           <Text style={styles.codeLabel}>Invite Code</Text>
-          <Text style={styles.code}>A7F9K2</Text>
-          <Text style={styles.codeHint}>This code expires in 24 hours.</Text>
+
+          <Text style={styles.code}>
+            {inviteCode || '------'}
+          </Text>
+
+          <Text style={styles.codeHint}>
+            {inviteCode
+              ? 'This code is ready to share.'
+              : 'No code generated yet.'}
+          </Text>
         </View>
+
+        <TouchableOpacity
+          style={styles.generateButton}
+          onPress={createInviteCode}
+          disabled={loading}
+        >
+          {loading ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text style={styles.generateButtonText}>
+              Generate Invite Code
+            </Text>
+          )}
+        </TouchableOpacity>
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>How it works</Text>
           <Text style={styles.step}>1. Your loved one opens the app.</Text>
           <Text style={styles.step}>2. They choose “I am receiving care.”</Text>
-          <Text style={styles.step}>3. They enter the invite code.</Text>
-          <Text style={styles.step}>4. You can create reminders and track completion.</Text>
+          <Text style={styles.step}>3. They enter this invite code.</Text>
+          <Text style={styles.step}>4. Their reminders and completion status become linked to you.</Text>
         </View>
 
-        <TouchableOpacity style={styles.shareButton}>
+        <TouchableOpacity
+          style={styles.shareButton}
+          onPress={shareInviteCode}
+        >
           <Text style={styles.shareButtonText}>Share Code</Text>
         </TouchableOpacity>
 
@@ -93,6 +187,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#6B7280',
     fontWeight: '700',
+    textAlign: 'center',
+  },
+  generateButton: {
+    backgroundColor: '#2563EB',
+    paddingVertical: 18,
+    borderRadius: 16,
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  generateButtonText: {
+    color: '#FFFFFF',
+    fontSize: 17,
+    fontWeight: '900',
   },
   card: {
     backgroundColor: '#FFFFFF',
@@ -114,7 +221,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   shareButton: {
-    backgroundColor: '#2563EB',
+    backgroundColor: '#111827',
     paddingVertical: 18,
     borderRadius: 16,
     alignItems: 'center',
