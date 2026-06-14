@@ -1,89 +1,188 @@
+import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { StatusBar } from 'expo-status-bar';
+import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import { RADIUS, SHADOW, T } from '@/constants/theme';
 
 export default function HomeScreen() {
-    return (
-        <SafeAreaView style={styles.container}>
-            <View style={styles.content}>
-                <Text style={styles.logo}>Care App</Text>
+    const insets = useSafeAreaInsets();
 
-                <Text style={styles.title}>
-                    Stay connected to the people who matter most.
+    function navigate(href: '/signup' | '/signin') {
+        if (Platform.OS === 'ios') {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        }
+        router.push(href);
+    }
+
+    return (
+        <View style={[styles.container, { paddingTop: insets.top }]}>
+            <StatusBar style="dark" />
+
+            {/* Decorative background blobs */}
+            <View style={styles.blobTopRight} />
+            <View style={styles.blobBottomLeft} />
+
+            {/* Hero section */}
+            <View style={styles.hero}>
+                {/* Logo mark */}
+                <View style={styles.logoRow}>
+                    <View style={styles.logoIconWrap}>
+                        <Ionicons name="heart" size={20} color={T.textInverse} />
+                    </View>
+                    <Text style={styles.logoText}>Care App</Text>
+                </View>
+
+                <Text style={styles.headline}>
+                    Care together,{'\n'}from anywhere.
                 </Text>
 
                 <Text style={styles.subtitle}>
-                    Track medications, appointments, and daily care tasks from anywhere.
+                    Simple reminders and daily check-ins to keep your loved ones safe and cared for.
                 </Text>
+            </View>
 
+            {/* CTA card — white, anchored to bottom */}
+            <View
+                style={[
+                    styles.ctaCard,
+                    SHADOW.md,
+                    { paddingBottom: Math.max(insets.bottom + 8, 32) },
+                ]}
+            >
                 <TouchableOpacity
-                    style={styles.primaryButton}
-                    onPress={() => router.push('/signup')}
+                    style={[styles.primaryButton, SHADOW.primary]}
+                    onPress={() => navigate('/signup')}
+                    activeOpacity={0.88}
                 >
                     <Text style={styles.primaryButtonText}>Get Started</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
                     style={styles.secondaryButton}
-                    onPress={() => router.push('/signin')}
+                    onPress={() => navigate('/signin')}
+                    activeOpacity={0.7}
                 >
-                    <Text style={styles.secondaryButtonText}>Sign In</Text>
+                    <Text style={styles.secondaryButtonText}>I already have an account</Text>
                 </TouchableOpacity>
+
+                <Text style={styles.termsText}>
+                    By continuing, you agree to our Terms of Use and Privacy Policy.
+                </Text>
             </View>
-        </SafeAreaView>
+        </View>
     );
 }
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#F8F7F4',
+        backgroundColor: T.bgPage,
     },
-    content: {
+
+    // ── Decorative blobs ──────────────────────────────────────────────
+    blobTopRight: {
+        position: 'absolute',
+        top: -80,
+        right: -80,
+        width: 260,
+        height: 260,
+        borderRadius: 130,
+        backgroundColor: T.primaryMid,
+        opacity: 0.35,
+    },
+    blobBottomLeft: {
+        position: 'absolute',
+        bottom: 200,
+        left: -50,
+        width: 160,
+        height: 160,
+        borderRadius: 80,
+        backgroundColor: T.primaryLight,
+        opacity: 0.9,
+    },
+
+    // ── Hero ──────────────────────────────────────────────────────────
+    hero: {
         flex: 1,
+        paddingHorizontal: 28,
+        paddingTop: 16,
         justifyContent: 'center',
-        paddingHorizontal: 24,
     },
-    logo: {
-        fontSize: 22,
-        fontWeight: '700',
-        marginBottom: 30,
+    logoRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 52,
     },
-    title: {
-        fontSize: 36,
+    logoIconWrap: {
+        width: 42,
+        height: 42,
+        borderRadius: RADIUS.md,
+        backgroundColor: T.primary,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 10,
+    },
+    logoText: {
+        fontSize: 20,
         fontWeight: '800',
-        lineHeight: 44,
-        marginBottom: 16,
-        color: '#111827',
+        color: T.textPrimary,
+        letterSpacing: -0.4,
+    },
+    headline: {
+        fontSize: 40,
+        fontWeight: '800',
+        color: T.textPrimary,
+        lineHeight: 50,
+        letterSpacing: -1,
+        marginBottom: 18,
     },
     subtitle: {
-        fontSize: 18,
-        lineHeight: 28,
-        color: '#6B7280',
-        marginBottom: 40,
+        fontSize: 17,
+        color: T.textSecondary,
+        lineHeight: 27,
+        letterSpacing: -0.2,
+    },
+
+    // ── CTA card ──────────────────────────────────────────────────────
+    ctaCard: {
+        backgroundColor: T.bgSurface,
+        borderTopLeftRadius: RADIUS.xxl,
+        borderTopRightRadius: RADIUS.xxl,
+        paddingHorizontal: 24,
+        paddingTop: 32,
     },
     primaryButton: {
-        backgroundColor: '#2563EB',
+        backgroundColor: T.primary,
         paddingVertical: 18,
-        borderRadius: 16,
+        borderRadius: RADIUS.xl,
+        alignItems: 'center',
+        marginBottom: 14,
+    },
+    primaryButtonText: {
+        color: T.textInverse,
+        fontSize: 17,
+        fontWeight: '700',
+        letterSpacing: -0.2,
+    },
+    secondaryButton: {
+        paddingVertical: 16,
         alignItems: 'center',
         marginBottom: 12,
     },
-    primaryButtonText: {
-        color: 'white',
-        fontSize: 16,
-        fontWeight: '700',
-    },
-    secondaryButton: {
-        borderWidth: 1,
-        borderColor: '#D1D5DB',
-        paddingVertical: 18,
-        borderRadius: 16,
-        alignItems: 'center',
-    },
     secondaryButtonText: {
         fontSize: 16,
-        fontWeight: '700',
-        color: '#111827',
+        fontWeight: '600',
+        color: T.primary,
+        letterSpacing: -0.1,
+    },
+    termsText: {
+        textAlign: 'center',
+        fontSize: 12,
+        color: T.textMuted,
+        lineHeight: 18,
+        paddingBottom: 4,
     },
 });
