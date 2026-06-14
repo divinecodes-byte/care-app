@@ -18,6 +18,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { SettingsSheet } from '@/components/settings-sheet';
 import { RADIUS, SHADOW, T } from '@/constants/theme';
 import { supabase } from '@/lib/supabase';
+import {
+    requestNotificationPermissions,
+    scheduleReminderNotifications,
+    scheduleTestNotification,
+} from '@/lib/notifications';
 
 type ReminderStatus = 'pending' | 'taken' | 'snoozed' | 'skipped' | 'missed';
 
@@ -116,6 +121,7 @@ export default function RecipientDashboard() {
     const [loading, setLoading]                   = useState(true);
     const [savingReminderId, setSavingReminderId] = useState<string | null>(null);
     const [settingsVisible, setSettingsVisible]   = useState(false);
+    const [notifDenied, setNotifDenied]           = useState(false);
 
     async function loadReminders() {
         setLoading(true);
@@ -139,6 +145,15 @@ export default function RecipientDashboard() {
             setLoading(false);
             Alert.alert('Reminder error', error.message);
             return;
+        }
+
+        // Schedule local notifications for ALL active reminders (not just today's).
+        // cancelAll + reschedule on every focus keeps the schedule in sync with any
+        // reminder edits the caregiver may have made.
+        const granted = await requestNotificationPermissions();
+        setNotifDenied(!granted);
+        if (granted) {
+            scheduleReminderNotifications(data || []).catch(console.warn);
         }
 
         const todaysReminders = (data || []).filter((r) => shouldShowToday(r.frequency));
@@ -249,6 +264,16 @@ export default function RecipientDashboard() {
                     visible={settingsVisible}
                     onClose={() => setSettingsVisible(false)}
                 />
+
+                {/* Notification permission denied notice */}
+                {notifDenied && !loading && (
+                    <View style={styles.notifDeniedBanner}>
+                        <Ionicons name="notifications-off-outline" size={16} color="#92400E" />
+                        <Text style={styles.notifDeniedText}>
+                            Notifications are off. Enable them in Settings to receive reminder alerts.
+                        </Text>
+                    </View>
+                )}
 
                 {/* Loading state */}
                 {loading && (
@@ -367,6 +392,24 @@ export default function RecipientDashboard() {
                         </TouchableOpacity>
                     );
                 })}
+
+                {/* ── Dev helper: test notification (remove before production) ── */}
+                {!loading && reminders.length > 0 && (
+                    <TouchableOpacity
+                        style={styles.testNotifButton}
+                        activeOpacity={0.7}
+                        onPress={async () => {
+                            await scheduleTestNotification(reminders[0]);
+                            Alert.alert(
+                                'Test notification scheduled',
+                                `Fires in 10 seconds for "${reminders[0].title}". Background the app to see it.`
+                            );
+                        }}
+                    >
+                        <Ionicons name="notifications-outline" size={15} color={T.textMuted} />
+                        <Text style={styles.testNotifText}>Test Notification (Dev)</Text>
+                    </TouchableOpacity>
+                )}
             </ScrollView>
         </SafeAreaView>
     );
@@ -607,5 +650,45 @@ const styles = StyleSheet.create({
         color: T.textSecondary,
         fontSize: 16,
         fontWeight: '600',
+    },
+
+    // ── Notification denied banner ─────────────────────────────────────
+    notifDeniedBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        backgroundColor: '#FEF3C7',
+        borderRadius: RADIUS.md,
+        borderWidth: 1,
+        borderColor: '#FDE68A',
+        paddingVertical: 12,
+        paddingHorizontal: 14,
+        marginBottom: 16,
+    },
+    notifDeniedText: {
+        flex: 1,
+        fontSize: 13,
+        color: '#92400E',
+        fontWeight: '500',
+        lineHeight: 18,
+    },
+
+    // ── Dev test notification button ───────────────────────────────────
+    testNotifButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        marginTop: 8,
+        paddingVertical: 14,
+        borderRadius: RADIUS.md,
+        borderWidth: 1,
+        borderColor: T.border,
+        borderStyle: 'dashed',
+    },
+    testNotifText: {
+        fontSize: 13,
+        color: T.textMuted,
+        fontWeight: '500',
     },
 });
