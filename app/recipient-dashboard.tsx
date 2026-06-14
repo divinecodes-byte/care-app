@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { router, useFocusEffect } from 'expo-router';
+import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import {
     ActivityIndicator,
@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { SettingsSheet } from '@/components/settings-sheet';
 import { RADIUS, SHADOW, T } from '@/constants/theme';
 import { supabase } from '@/lib/supabase';
 
@@ -111,9 +112,10 @@ function formatDayLabel() {
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function RecipientDashboard() {
-    const [reminders, setReminders]           = useState<Reminder[]>([]);
-    const [loading, setLoading]               = useState(true);
+    const [reminders, setReminders]               = useState<Reminder[]>([]);
+    const [loading, setLoading]                   = useState(true);
     const [savingReminderId, setSavingReminderId] = useState<string | null>(null);
+    const [settingsVisible, setSettingsVisible]   = useState(false);
 
     async function loadReminders() {
         setLoading(true);
@@ -236,12 +238,17 @@ export default function RecipientDashboard() {
                     </View>
                     <TouchableOpacity
                         style={styles.alertIconButton}
-                        onPress={() => router.push('/reminder-alert')}
+                        onPress={() => setSettingsVisible(true)}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
-                        <Ionicons name="notifications-outline" size={22} color={T.primary} />
+                        <Ionicons name="settings-outline" size={22} color={T.primary} />
                     </TouchableOpacity>
                 </View>
+
+                <SettingsSheet
+                    visible={settingsVisible}
+                    onClose={() => setSettingsVisible(false)}
+                />
 
                 {/* Loading state */}
                 {loading && (

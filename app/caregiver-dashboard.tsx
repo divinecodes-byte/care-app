@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { SettingsSheet } from '@/components/settings-sheet';
 import { RADIUS, SHADOW, T } from '@/constants/theme';
 import { supabase } from '@/lib/supabase';
 
@@ -442,6 +443,7 @@ export default function CaregiverDashboard() {
     const [weeklyData, setWeeklyData]               = useState<DayData[]>([]);
     const [monthData, setMonthData]                 = useState<DayData[]>([]);
     const [reminderBreakdown, setReminderBreakdown] = useState<ReminderBreakdownItem[]>([]);
+    const [settingsVisible, setSettingsVisible]     = useState(false);
 
     async function loadDashboardData() {
         setConnectionLoading(true);
@@ -1025,6 +1027,14 @@ export default function CaregiverDashboard() {
 
                     <View style={styles.headerActions}>
                         <TouchableOpacity
+                            style={styles.iconButton}
+                            onPress={() => setSettingsVisible(true)}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                            <Ionicons name="settings-outline" size={20} color={T.textSecondary} />
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
                             style={styles.inviteButton}
                             onPress={() => router.push('/invite-recipient')}
                             activeOpacity={0.75}
@@ -1047,6 +1057,11 @@ export default function CaregiverDashboard() {
 
                 {renderAnalytics()}
             </ScrollView>
+
+            <SettingsSheet
+                visible={settingsVisible}
+                onClose={() => setSettingsVisible(false)}
+            />
         </SafeAreaView>
     );
 }
@@ -1082,6 +1097,16 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 10,
+    },
+    iconButton: {
+        width: 40,
+        height: 40,
+        borderRadius: RADIUS.lg,
+        backgroundColor: T.bgSurface,
+        borderWidth: 1.5,
+        borderColor: T.border,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     inviteButton: {
         height: 44,

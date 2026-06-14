@@ -49,44 +49,126 @@ const FREQUENCY_LABELS: Record<Frequency, string> = {
     weekends: 'Sat–Sun',
 };
 
-function normalizeTimeInput(input: string) {
-    const cleaned = input.trim().toUpperCase().replace(/\s+/g, '');
-    const match = cleaned.match(/^(\d{1,2}):(\d{2})(AM|PM)?$/);
-    if (!match) return null;
-    let hour = Number(match[1]);
-    const minute = Number(match[2]);
-    const meridiem = match[3];
-    if (minute < 0 || minute > 59) return null;
-    if (meridiem) {
-        if (hour < 1 || hour > 12) return null;
-        if (meridiem === 'AM' && hour === 12) hour = 0;
-        if (meridiem === 'PM' && hour !== 12) hour += 12;
-    } else {
-        if (hour < 0 || hour > 23) return null;
+// ─── Inline time picker ───────────────────────────────────────────────────────
+
+type TimePickerProps = {
+    hour: number;        // 1–12
+    minute: number;      // 0–59
+    meridiem: 'AM' | 'PM';
+    onChangeHour: (h: number) => void;
+    onChangeMinute: (m: number) => void;
+    onChangeMeridiem: (m: 'AM' | 'PM') => void;
+};
+
+function TimePicker({ hour, minute, meridiem, onChangeHour, onChangeMinute, onChangeMeridiem }: TimePickerProps) {
+    const [open, setOpen] = useState(false);
+
+    const displayLabel = `${hour}:${String(minute).padStart(2, '0')} ${meridiem}`;
+
+    function adjustHour(delta: number) {
+        onChangeHour(((hour - 1 + delta + 12) % 12) + 1);
     }
-    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00`;
+
+    function adjustMinute(delta: number) {
+        onChangeMinute((minute + delta + 60) % 60);
+    }
+
+    return (
+        <View>
+            {/* Tappable display row */}
+            <TouchableOpacity
+                style={[styles.timeButton, open && styles.timeButtonOpen]}
+                onPress={() => setOpen((v) => !v)}
+                activeOpacity={0.8}
+            >
+                <Ionicons name="time-outline" size={20} color={T.primary} />
+                <Text style={styles.timeButtonText}>{displayLabel}</Text>
+                <Ionicons
+                    name={open ? 'chevron-up' : 'chevron-down'}
+                    size={16}
+                    color={T.textMuted}
+                />
+            </TouchableOpacity>
+
+            {/* Expanded picker */}
+            {open && (
+                <View style={styles.pickerPanel}>
+                    {/* Hour column */}
+                    <View style={styles.pickerColumn}>
+                        <TouchableOpacity style={styles.pickerArrow} onPress={() => adjustHour(1)} activeOpacity={0.7}>
+                            <Ionicons name="chevron-up" size={24} color={T.primary} />
+                        </TouchableOpacity>
+                        <Text style={styles.pickerValue}>{String(hour).padStart(2, '0')}</Text>
+                        <TouchableOpacity style={styles.pickerArrow} onPress={() => adjustHour(-1)} activeOpacity={0.7}>
+                            <Ionicons name="chevron-down" size={24} color={T.primary} />
+                        </TouchableOpacity>
+                        <Text style={styles.pickerUnit}>hr</Text>
+                    </View>
+
+                    <Text style={styles.pickerColon}>:</Text>
+
+                    {/* Minute column */}
+                    <View style={styles.pickerColumn}>
+                        <TouchableOpacity style={styles.pickerArrow} onPress={() => adjustMinute(5)} activeOpacity={0.7}>
+                            <Ionicons name="chevron-up" size={24} color={T.primary} />
+                        </TouchableOpacity>
+                        <Text style={styles.pickerValue}>{String(minute).padStart(2, '0')}</Text>
+                        <TouchableOpacity style={styles.pickerArrow} onPress={() => adjustMinute(-5)} activeOpacity={0.7}>
+                            <Ionicons name="chevron-down" size={24} color={T.primary} />
+                        </TouchableOpacity>
+                        <Text style={styles.pickerUnit}>min</Text>
+                    </View>
+
+                    {/* AM / PM toggle */}
+                    <View style={styles.meridiemWrap}>
+                        {(['AM', 'PM'] as const).map((m) => (
+                            <TouchableOpacity
+                                key={m}
+                                style={[styles.meridiemBtn, meridiem === m && styles.meridiemBtnActive]}
+                                onPress={() => onChangeMeridiem(m)}
+                                activeOpacity={0.75}
+                            >
+                                <Text style={[styles.meridiemText, meridiem === m && styles.meridiemTextActive]}>
+                                    {m}
+                                </Text>
+                            </TouchableOpacity>
+                        ))}
+                    </View>
+                </View>
+            )}
+        </View>
+    );
 }
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function buildTimeString(hour: number, minute: number, meridiem: 'AM' | 'PM'): string {
+    let h = hour;
+    if (meridiem === 'AM' && h === 12) h = 0;
+    if (meridiem === 'PM' && h !== 12) h += 12;
+    return `${String(h).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00`;
+}
+
+// ─── Main screen ──────────────────────────────────────────────────────────────
+
 export default function CreateReminderScreen() {
-    const [title, setTitle]                   = useState('');
-    const [reminderType, setReminderType]     = useState<ReminderType>('medication');
-    const [notes, setNotes]                   = useState('');
-    const [timeOfDay, setTimeOfDay]           = useState('8:00 AM');
-    const [frequency, setFrequency]           = useState<Frequency>('daily');
+    const [title, setTitle]                         = useState('');
+    const [reminderType, setReminderType]           = useState<ReminderType>('medication');
+    const [notes, setNotes]                         = useState('');
+    const [pickerHour, setPickerHour]               = useState(8);
+    const [pickerMinute, setPickerMinute]           = useState(0);
+    const [pickerMeridiem, setPickerMeridiem]       = useState<'AM' | 'PM'>('AM');
+    const [frequency, setFrequency]                 = useState<Frequency>('daily');
     const [noResponseMinutes, setNoResponseMinutes] = useState('30');
-    const [loading, setLoading]               = useState(false);
-    const [focused, setFocused]               = useState<string | null>(null);
+    const [loading, setLoading]                     = useState(false);
+    const [focused, setFocused]                     = useState<string | null>(null);
 
     async function saveReminder() {
-        const normalizedTime    = normalizeTimeInput(timeOfDay);
-        const noResponseNumber  = Number(noResponseMinutes);
+        const timeOfDay        = buildTimeString(pickerHour, pickerMinute, pickerMeridiem);
+        const noResponseNumber = Number(noResponseMinutes);
 
         if (!title.trim()) {
             Alert.alert('Missing title', 'Please enter a reminder name.');
-            return;
-        }
-        if (!normalizedTime) {
-            Alert.alert('Invalid time', 'Use a format like 8:00 AM or 14:30.');
             return;
         }
         if (!noResponseNumber || noResponseNumber < 1) {
@@ -130,16 +212,16 @@ export default function CreateReminderScreen() {
         }
 
         const { error } = await supabase.from('reminders').insert({
-            connection_id:      connection.id,
-            caregiver_id:       user.id,
-            recipient_id:       connection.recipient_id,
-            title:              title.trim(),
-            reminder_type:      reminderType,
-            notes:              notes.trim() || null,
-            time_of_day:        normalizedTime,
+            connection_id:       connection.id,
+            caregiver_id:        user.id,
+            recipient_id:        connection.recipient_id,
+            title:               title.trim(),
+            reminder_type:       reminderType,
+            notes:               notes.trim() || null,
+            time_of_day:         timeOfDay,
             frequency,
             no_response_minutes: noResponseNumber,
-            is_active:          true,
+            is_active:           true,
         });
 
         setLoading(false);
@@ -242,20 +324,14 @@ export default function CreateReminderScreen() {
                         </View>
 
                         <Text style={styles.label}>Time of day</Text>
-                        <TextInput
-                            style={inputStyle('time')}
-                            placeholder="8:00 AM"
-                            placeholderTextColor={T.textMuted}
-                            value={timeOfDay}
-                            onChangeText={setTimeOfDay}
-                            onFocus={() => setFocused('time')}
-                            onBlur={() => setFocused(null)}
-                            returnKeyType="next"
-                            autoCapitalize="characters"
+                        <TimePicker
+                            hour={pickerHour}
+                            minute={pickerMinute}
+                            meridiem={pickerMeridiem}
+                            onChangeHour={setPickerHour}
+                            onChangeMinute={setPickerMinute}
+                            onChangeMeridiem={setPickerMeridiem}
                         />
-                        <Text style={styles.helperText}>
-                            Accepts 8:00 AM, 2:30 PM, or 24-hour format (14:30).
-                        </Text>
 
                         <Text style={[styles.label, { marginTop: 18 }]}>Frequency</Text>
                         <View style={styles.frequencyRow}>
@@ -349,13 +425,8 @@ export default function CreateReminderScreen() {
 }
 
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: T.bgPage,
-    },
-    kav: {
-        flex: 1,
-    },
+    container: { flex: 1, backgroundColor: T.bgPage },
+    kav:       { flex: 1 },
     content: {
         paddingHorizontal: 20,
         paddingTop: 12,
@@ -460,6 +531,99 @@ const styles = StyleSheet.create({
         lineHeight: 17,
     },
 
+    // ── Time picker ───────────────────────────────────────────────────
+    timeButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        backgroundColor: T.bgAlt,
+        borderRadius: RADIUS.lg,
+        paddingHorizontal: 14,
+        paddingVertical: Platform.OS === 'ios' ? 14 : 12,
+        borderWidth: 1.5,
+        borderColor: 'transparent',
+    },
+    timeButtonOpen: {
+        backgroundColor: T.bgSurface,
+        borderColor: T.borderFocus,
+        borderBottomLeftRadius: 0,
+        borderBottomRightRadius: 0,
+    },
+    timeButtonText: {
+        flex: 1,
+        fontSize: 17,
+        fontWeight: '700',
+        color: T.textPrimary,
+        letterSpacing: -0.2,
+    },
+    pickerPanel: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        backgroundColor: T.bgSurface,
+        borderWidth: 1.5,
+        borderTopWidth: 0,
+        borderColor: T.borderFocus,
+        borderBottomLeftRadius: RADIUS.lg,
+        borderBottomRightRadius: RADIUS.lg,
+        paddingVertical: 16,
+        paddingHorizontal: 12,
+    },
+    pickerColumn: {
+        alignItems: 'center',
+        gap: 4,
+        minWidth: 64,
+    },
+    pickerArrow: {
+        padding: 6,
+    },
+    pickerValue: {
+        fontSize: 32,
+        fontWeight: '800',
+        color: T.textPrimary,
+        letterSpacing: -1,
+        lineHeight: 40,
+    },
+    pickerUnit: {
+        fontSize: 11,
+        fontWeight: '600',
+        color: T.textMuted,
+        letterSpacing: 0.4,
+        textTransform: 'uppercase',
+        marginTop: 2,
+    },
+    pickerColon: {
+        fontSize: 28,
+        fontWeight: '800',
+        color: T.textPrimary,
+        marginBottom: 18,
+        alignSelf: 'center',
+    },
+    meridiemWrap: {
+        borderRadius: RADIUS.lg,
+        overflow: 'hidden',
+        borderWidth: 1.5,
+        borderColor: T.border,
+        marginLeft: 8,
+    },
+    meridiemBtn: {
+        paddingVertical: 14,
+        paddingHorizontal: 18,
+        backgroundColor: T.bgAlt,
+    },
+    meridiemBtnActive: {
+        backgroundColor: T.primary,
+    },
+    meridiemText: {
+        fontSize: 15,
+        fontWeight: '700',
+        color: T.textMuted,
+    },
+    meridiemTextActive: {
+        color: T.textInverse,
+    },
+
     // ── Type chip grid ────────────────────────────────────────────────
     typeGrid: {
         flexDirection: 'row',
@@ -481,9 +645,7 @@ const styles = StyleSheet.create({
         backgroundColor: T.primaryLight,
         borderColor: T.primary,
     },
-    typeChipEmoji: {
-        fontSize: 14,
-    },
+    typeChipEmoji: { fontSize: 14 },
     typeChipText: {
         color: T.textSecondary,
         fontSize: 13,
@@ -495,10 +657,7 @@ const styles = StyleSheet.create({
     },
 
     // ── Frequency chips ───────────────────────────────────────────────
-    frequencyRow: {
-        flexDirection: 'row',
-        gap: 8,
-    },
+    frequencyRow: { flexDirection: 'row', gap: 8 },
     frequencyChip: {
         flex: 1,
         backgroundColor: T.bgAlt,
@@ -544,9 +703,7 @@ const styles = StyleSheet.create({
         gap: 10,
         marginTop: 6,
     },
-    saveButtonDisabled: {
-        opacity: 0.65,
-    },
+    saveButtonDisabled: { opacity: 0.65 },
     saveButtonText: {
         color: T.textInverse,
         fontSize: 17,
