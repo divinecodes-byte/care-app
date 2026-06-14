@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { useFocusEffect } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import {
     ActivityIndicator,
@@ -281,7 +281,16 @@ export default function RecipientDashboard() {
                     const typeIcon   = TYPE_ICONS[reminder.reminder_type] ?? '•';
 
                     return (
-                        <View key={reminder.id} style={[styles.reminderCard, SHADOW.sm]}>
+                        <TouchableOpacity
+                            key={reminder.id}
+                            style={[styles.reminderCard, SHADOW.sm]}
+                            onPress={() => {
+                                if (!isSaving) {
+                                    router.push({ pathname: '/reminder-alert', params: { reminderId: reminder.id } });
+                                }
+                            }}
+                            activeOpacity={0.95}
+                        >
                             {/* Top accent bar — color-coded by status */}
                             <View style={[styles.cardAccentBar, { backgroundColor: statusInfo.accent }]} />
 
@@ -355,7 +364,7 @@ export default function RecipientDashboard() {
                                     </View>
                                 </View>
                             )}
-                        </View>
+                        </TouchableOpacity>
                     );
                 })}
             </ScrollView>

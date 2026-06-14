@@ -49,6 +49,12 @@ const FREQUENCY_LABELS: Record<Frequency, string> = {
     weekends: 'Sat–Sun',
 };
 
+const NO_RESPONSE_OPTIONS = [15, 30, 45, 60, 90, 120];
+
+function formatResponseMinutes(m: number): string {
+    return m < 60 ? `${m} min` : `${m / 60} hr`;
+}
+
 // ─── Inline time picker ───────────────────────────────────────────────────────
 
 type TimePickerProps = {
@@ -159,20 +165,15 @@ export default function CreateReminderScreen() {
     const [pickerMinute, setPickerMinute]           = useState(0);
     const [pickerMeridiem, setPickerMeridiem]       = useState<'AM' | 'PM'>('AM');
     const [frequency, setFrequency]                 = useState<Frequency>('daily');
-    const [noResponseMinutes, setNoResponseMinutes] = useState('30');
+    const [noResponseMinutes, setNoResponseMinutes] = useState(30);
     const [loading, setLoading]                     = useState(false);
     const [focused, setFocused]                     = useState<string | null>(null);
 
     async function saveReminder() {
-        const timeOfDay        = buildTimeString(pickerHour, pickerMinute, pickerMeridiem);
-        const noResponseNumber = Number(noResponseMinutes);
+        const timeOfDay = buildTimeString(pickerHour, pickerMinute, pickerMeridiem);
 
         if (!title.trim()) {
             Alert.alert('Missing title', 'Please enter a reminder name.');
-            return;
-        }
-        if (!noResponseNumber || noResponseNumber < 1) {
-            Alert.alert('Invalid window', 'Enter a number of minutes greater than 0.');
             return;
         }
 
@@ -220,7 +221,7 @@ export default function CreateReminderScreen() {
             notes:               notes.trim() || null,
             time_of_day:         timeOfDay,
             frequency,
-            no_response_minutes: noResponseNumber,
+            no_response_minutes: noResponseMinutes,
             is_active:           true,
         });
 
@@ -368,21 +369,33 @@ export default function CreateReminderScreen() {
                         </View>
 
                         <Text style={styles.label}>Alert if no response after</Text>
-                        <View style={styles.minutesRow}>
-                            <TextInput
-                                style={[inputStyle('minutes'), styles.minutesInput]}
-                                placeholder="30"
-                                placeholderTextColor={T.textMuted}
-                                keyboardType="number-pad"
-                                value={noResponseMinutes}
-                                onChangeText={setNoResponseMinutes}
-                                onFocus={() => setFocused('minutes')}
-                                onBlur={() => setFocused(null)}
-                                returnKeyType="done"
-                            />
-                            <View style={styles.minutesSuffix}>
-                                <Text style={styles.minutesSuffixText}>minutes</Text>
-                            </View>
+                        <View style={styles.noResponseGrid}>
+                            {[NO_RESPONSE_OPTIONS.slice(0, 3), NO_RESPONSE_OPTIONS.slice(3)].map(
+                                (row, ri) => (
+                                    <View key={ri} style={styles.noResponseRow}>
+                                        {row.map((opt) => (
+                                            <TouchableOpacity
+                                                key={opt}
+                                                style={[
+                                                    styles.noResponseChip,
+                                                    noResponseMinutes === opt && styles.noResponseChipActive,
+                                                ]}
+                                                onPress={() => setNoResponseMinutes(opt)}
+                                                activeOpacity={0.75}
+                                            >
+                                                <Text
+                                                    style={[
+                                                        styles.noResponseChipText,
+                                                        noResponseMinutes === opt && styles.noResponseChipTextActive,
+                                                    ]}
+                                                >
+                                                    {formatResponseMinutes(opt)}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        ))}
+                                    </View>
+                                )
+                            )}
                         </View>
                         <Text style={styles.helperText}>
                             Reminder is marked as missed if no response arrives within this window.
@@ -668,28 +681,31 @@ const styles = StyleSheet.create({
         borderColor: 'transparent',
     },
 
-    // ── Minutes input row ─────────────────────────────────────────────
-    minutesRow: {
-        flexDirection: 'row',
-        gap: 10,
-        alignItems: 'center',
-    },
-    minutesInput: {
-        width: 90,
-        textAlign: 'center',
-    },
-    minutesSuffix: {
+
+    // ── No-response chip grid ─────────────────────────────────────────
+    noResponseGrid: { gap: 8 },
+    noResponseRow:  { flexDirection: 'row', gap: 8 },
+    noResponseChip: {
         flex: 1,
-        height: Platform.OS === 'ios' ? 50 : 46,
         backgroundColor: T.bgAlt,
+        paddingVertical: 12,
         borderRadius: RADIUS.lg,
-        justifyContent: 'center',
-        paddingHorizontal: 14,
+        alignItems: 'center',
+        borderWidth: 1.5,
+        borderColor: 'transparent',
     },
-    minutesSuffixText: {
-        fontSize: 15,
-        color: T.textMuted,
-        fontWeight: '500',
+    noResponseChipActive: {
+        backgroundColor: T.primaryLight,
+        borderColor: T.primary,
+    },
+    noResponseChipText: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: T.textSecondary,
+    },
+    noResponseChipTextActive: {
+        color: T.primary,
+        fontWeight: '700',
     },
 
     // ── Save button ───────────────────────────────────────────────────

@@ -73,6 +73,8 @@ type DayData = {
 type ReminderBreakdownItem = {
     id: string;
     name: string;
+    time_of_day: string;
+    frequency: 'daily' | 'weekdays' | 'weekends';
     completed: number;
     scheduled: number;
     missed: number;
@@ -143,6 +145,13 @@ function formatStatus(status: ReminderStatus): string {
         taken: 'Taken', snoozed: 'Snoozed', skipped: 'Skipped', missed: 'Missed', pending: 'Pending',
     };
     return map[status] ?? 'Pending';
+}
+
+function formatFrequency(freq: Reminder['frequency']): string {
+    if (freq === 'daily') return 'Every day';
+    if (freq === 'weekdays') return 'Weekdays';
+    if (freq === 'weekends') return 'Weekends';
+    return freq;
 }
 
 function shouldShowOnDate(frequency: Reminder['frequency'], date: Date): boolean {
@@ -286,6 +295,8 @@ function buildReminderBreakdown(
         return {
             id: reminder.id,
             name: reminder.title,
+            time_of_day: reminder.time_of_day,
+            frequency: reminder.frequency,
             completed,
             scheduled,
             missed,
@@ -375,54 +386,89 @@ function MetricTile({ count, label, color, bg }: { count: number; label: string;
 }
 
 function BreakdownCard({ item }: { item: ReminderBreakdownItem }) {
-    const adherenceColor   = item.scheduled === 0 ? T.textMuted : getAdherenceColor(item.adherence);
-    const adherenceDisplay = item.scheduled === 0 ? '—' : `${item.adherence}%`;
-    const subParts = [
-        item.missed  > 0 ? `${item.missed} missed`  : null,
-        item.skipped > 0 ? `${item.skipped} skipped` : null,
-        item.snoozed > 0 ? `${item.snoozed} snoozed` : null,
-        item.pending > 0 ? `${item.pending} pending` : null,
-    ].filter(Boolean);
+    const hasCountable   = item.scheduled > 0;
+    const adherenceColor = hasCountable ? getAdherenceColor(item.adherence) : T.textMuted;
+
+    const chips = [
+        item.completed > 0 ? { label: `${item.completed} Taken`,   bg: '#DCFCE7', color: '#15803D' } : null,
+        item.missed    > 0 ? { label: `${item.missed} Missed`,     bg: '#FEE2E2', color: '#B91C1C' } : null,
+        item.skipped   > 0 ? { label: `${item.skipped} Skipped`,   bg: '#FEF3C7', color: '#B45309' } : null,
+        item.snoozed   > 0 ? { label: `${item.snoozed} Snoozed`,   bg: '#DBEAFE', color: '#1D4ED8' } : null,
+        item.pending   > 0 ? { label: `${item.pending} Pending`,   bg: T.bgAlt,   color: T.textMuted } : null,
+    ].filter(Boolean) as { label: string; bg: string; color: string }[];
+
+    let summaryText: string;
+    if (!hasCountable && item.pending === 0) {
+        summaryText = 'No countable history yet';
+    } else if (!hasCountable) {
+        summaryText = `${item.pending} pending — no past data yet`;
+    } else if (item.adherence === 100) {
+        summaryText = `${item.completed} of ${item.scheduled} taken`;
+    } else if (item.missed > 0 && item.pending > 0) {
+        summaryText = `${item.missed} missed · ${item.pending} pending`;
+    } else if (item.missed > 0) {
+        summaryText = `${item.missed} missed this month`;
+    } else if (item.pending > 0) {
+        summaryText = `${item.pending} pending today`;
+    } else {
+        summaryText = `${item.completed} of ${item.scheduled} taken`;
+    }
 
     return (
         <TouchableOpacity
-            style={styles.breakdownCard}
-            onPress={() => router.push('/reminder-details')}
+            style={[styles.bcCard, SHADOW.xs]}
+            onPress={() =>
+                router.push({ pathname: '/reminder-details', params: { reminderId: item.id } })
+            }
             activeOpacity={0.75}
         >
-            <View style={styles.breakdownHeader}>
-                <Text style={styles.breakdownName}>{item.name}</Text>
-                <Text style={[styles.breakdownMetric, { color: adherenceColor }]}>
-                    {adherenceDisplay}
-                </Text>
+            <View style={styles.bcHeader}>
+                <View style={{ flex: 1 }}>
+                    <Text style={styles.bcName} numberOfLines={1}>{item.name}</Text>
+                    <Text style={styles.bcMeta}>
+                        {formatTime(item.time_of_day)} · {formatFrequency(item.frequency)}
+                    </Text>
+                </View>
+                <View style={styles.bcAdherenceBlock}>
+                    <Text style={[styles.bcAdherencePct, { color: adherenceColor }]}>
+                        {hasCountable ? `${item.adherence}%` : '—'}
+                    </Text>
+                    <Text style={styles.bcAdherenceLabel}>adherence</Text>
+                </View>
             </View>
 
-            {item.scheduled > 0 && (
-                <View style={styles.progressBarTrack}>
-                    <View
-                        style={[
-                            styles.progressBarFill,
-                            { width: `${item.adherence}%`, backgroundColor: adherenceColor },
-                        ]}
-                    />
+            {hasCountable && (
+                <>
+                    <View style={styles.bcProgressTrack}>
+                        <View
+                            style={[
+                                styles.bcProgressFill,
+                                { width: `${item.adherence}%`, backgroundColor: adherenceColor },
+                            ]}
+                        />
+                    </View>
+                    <Text style={styles.bcCountLine}>
+                        {item.completed} of {item.scheduled} countable scheduled
+                    </Text>
+                </>
+            )}
+
+            {chips.length > 0 && (
+                <View style={styles.bcChips}>
+                    {chips.map((chip) => (
+                        <View key={chip.label} style={[styles.bcChip, { backgroundColor: chip.bg }]}>
+                            <Text style={[styles.bcChipText, { color: chip.color }]}>{chip.label}</Text>
+                        </View>
+                    ))}
                 </View>
             )}
 
-            <Text style={styles.breakdownText}>
-                {item.scheduled === 0
-                    ? item.pending > 0
-                        ? `${item.pending} pending today — no past data yet`
-                        : 'No countable data yet this month'
-                    : `${item.completed}/${item.scheduled} taken this month`}
-            </Text>
-
-            {subParts.length > 0 && (
-                <Text style={styles.breakdownSubText}>{subParts.join(' · ')}</Text>
-            )}
-
-            <View style={styles.viewDetailsRow}>
-                <Text style={styles.viewDetailsText}>View details</Text>
-                <Ionicons name="chevron-forward" size={14} color={T.primary} />
+            <View style={styles.bcFooter}>
+                <Text style={styles.bcSummary}>{summaryText}</Text>
+                <View style={styles.bcCta}>
+                    <Text style={styles.bcCtaText}>Details</Text>
+                    <Ionicons name="chevron-forward" size={13} color={T.primary} />
+                </View>
             </View>
         </TouchableOpacity>
     );
@@ -978,25 +1024,27 @@ export default function CaregiverDashboard() {
                 )}
 
                 {/* ── Reminder breakdown ── */}
-                <View style={[styles.card, SHADOW.xs]}>
-                    <Text style={styles.cardTitle}>Reminder Breakdown</Text>
-                    <Text style={styles.helperText}>
-                        Month-to-date · days before reminder creation are excluded
+                <View style={styles.bdSection}>
+                    <Text style={styles.bdSectionTitle}>Reminder Breakdown</Text>
+                    <Text style={styles.bdSectionSub}>
+                        Month-to-date · days before each reminder was created are excluded
                     </Text>
+                </View>
 
-                    {reminderBreakdown.length === 0 ? (
+                {reminderBreakdown.length === 0 ? (
+                    <View style={[styles.card, SHADOW.xs]}>
                         <View style={styles.inlineEmpty}>
                             <Ionicons name="list-outline" size={20} color={T.textMuted} />
                             <Text style={styles.inlineEmptyText}>
                                 No reminders created yet. Tap + to add one.
                             </Text>
                         </View>
-                    ) : (
-                        reminderBreakdown.map((item) => (
-                            <BreakdownCard key={item.id} item={item} />
-                        ))
-                    )}
-                </View>
+                    </View>
+                ) : (
+                    reminderBreakdown.map((item) => (
+                        <BreakdownCard key={item.id} item={item} />
+                    ))
+                )}
             </>
         );
     }
@@ -1446,48 +1494,71 @@ const styles = StyleSheet.create({
     snoozedText:  { color: '#1D4ED8' },
     pendingText:  { color: T.textMuted },
 
-    // ── Breakdown cards ───────────────────────────────────────────────────────
-    breakdownCard: {
-        borderTopWidth: 1,
-        borderTopColor: T.bgAlt,
-        paddingTop: 16,
-        marginTop: 14,
-    },
-    breakdownHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 10,
-    },
-    breakdownName: {
-        fontSize: 15,
+    // ── Breakdown section header ──────────────────────────────────────────────
+    bdSection: { marginBottom: 10, marginTop: 4 },
+    bdSectionTitle: {
+        fontSize: 20,
         fontWeight: '700',
         color: T.textPrimary,
-        flex: 1,
-        paddingRight: 12,
-        letterSpacing: -0.2,
+        letterSpacing: -0.3,
+        marginBottom: 3,
     },
-    breakdownMetric: { fontSize: 20, fontWeight: '800', letterSpacing: -0.5 },
-    progressBarTrack: {
+    bdSectionSub: { fontSize: 13, color: T.textMuted, fontWeight: '500' },
+
+    // ── Breakdown cards (bc*) ─────────────────────────────────────────────────
+    bcCard: {
+        backgroundColor: T.bgSurface,
+        borderRadius: RADIUS.xl,
+        padding: 18,
+        marginBottom: 10,
+        borderWidth: 1,
+        borderColor: T.border,
+    },
+    bcHeader: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        marginBottom: 12,
+        gap: 12,
+    },
+    bcName: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: T.textPrimary,
+        letterSpacing: -0.3,
+        marginBottom: 3,
+    },
+    bcMeta: { fontSize: 13, color: T.textMuted, fontWeight: '500' },
+    bcAdherenceBlock: { alignItems: 'flex-end', flexShrink: 0 },
+    bcAdherencePct: { fontSize: 24, fontWeight: '800', letterSpacing: -0.8, lineHeight: 28 },
+    bcAdherenceLabel: {
+        fontSize: 10,
+        fontWeight: '600',
+        color: T.textMuted,
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+        marginTop: 2,
+    },
+    bcProgressTrack: {
         height: 5,
         backgroundColor: T.bgAlt,
         borderRadius: RADIUS.full,
-        marginBottom: 10,
+        marginBottom: 6,
         overflow: 'hidden',
     },
-    progressBarFill: { height: '100%', borderRadius: RADIUS.full },
-    breakdownText: {
-        fontSize: 13,
-        color: T.textSecondary,
-        fontWeight: '500',
-        marginTop: 2,
-    },
-    breakdownSubText: { fontSize: 12, color: T.textMuted, marginTop: 3 },
-    viewDetailsRow: {
+    bcProgressFill: { height: '100%', borderRadius: RADIUS.full },
+    bcCountLine: { fontSize: 12, color: T.textMuted, fontWeight: '500', marginBottom: 12 },
+    bcChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 12 },
+    bcChip: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: RADIUS.full },
+    bcChipText: { fontSize: 12, fontWeight: '700' },
+    bcFooter: {
         flexDirection: 'row',
+        justifyContent: 'space-between',
         alignItems: 'center',
-        gap: 3,
-        marginTop: 10,
+        borderTopWidth: 1,
+        borderTopColor: T.bgAlt,
+        paddingTop: 10,
     },
-    viewDetailsText: { fontSize: 13, color: T.primary, fontWeight: '700' },
+    bcSummary: { fontSize: 13, color: T.textSecondary, fontWeight: '500', flex: 1 },
+    bcCta: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+    bcCtaText: { fontSize: 13, color: T.primary, fontWeight: '700' },
 });
