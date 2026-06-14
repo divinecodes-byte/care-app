@@ -150,7 +150,7 @@ export default function CreateReminderScreen() {
         }
 
         Alert.alert('Reminder saved', 'This reminder is now linked to your loved one.');
-        router.push('/caregiver-dashboard');
+        router.replace('/caregiver-dashboard');
     }
 
     const inputStyle = (field: string) => [

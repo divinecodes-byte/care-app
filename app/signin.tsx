@@ -67,16 +67,16 @@ export default function SigninScreen() {
         }
 
         if (profile?.role === 'caregiver') {
-            router.push('/caregiver-dashboard');
+            router.replace('/caregiver-dashboard');
             return;
         }
 
         if (profile?.role === 'recipient') {
-            router.push('/recipient-dashboard');
+            router.replace('/recipient-dashboard');
             return;
         }
 
-        router.push('/choose-role');
+        router.replace('/choose-role');
     }
 
     const inputStyle = (field: string) => [

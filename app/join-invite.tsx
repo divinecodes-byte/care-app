@@ -73,7 +73,7 @@ export default function JoinInviteScreen() {
             return;
         }
 
-        router.push('/recipient-dashboard');
+        router.replace('/recipient-dashboard');
     }
 
     return (

@@ -17,6 +17,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { RADIUS, SHADOW, T } from '@/constants/theme';
 import { supabase } from '@/lib/supabase';
 
+// ─── Types ────────────────────────────────────────────────────────────────────
+
 type ReminderStatus = 'pending' | 'taken' | 'snoozed' | 'skipped' | 'missed';
 
 type Reminder = {
@@ -30,6 +32,7 @@ type Reminder = {
     time_of_day: string;
     frequency: 'daily' | 'weekdays' | 'weekends';
     no_response_minutes: number;
+    created_at: string;
 };
 
 type ReminderLog = {
@@ -52,9 +55,17 @@ type DayData = {
     dateLabel: string;
     shortLabel: string;
     monthDay: number;
-    adherence: number;
     scheduledCount: number;
+    eligibleCount: number;
+    countableCount: number;
     takenCount: number;
+    pendingCount: number;
+    missedCount: number;
+    skippedCount: number;
+    snoozedCount: number;
+    adherence: number;
+    hasData: boolean;
+    isFuture: boolean;
     reminders: ReminderDisplay[];
 };
 
@@ -66,6 +77,7 @@ type ReminderBreakdownItem = {
     missed: number;
     skipped: number;
     snoozed: number;
+    pending: number;
     adherence: number;
 };
 
@@ -74,64 +86,65 @@ type ConnectionSummary = {
     status: 'none' | 'pending' | 'accepted';
     inviteCode?: string;
     recipientName?: string;
+    acceptedAt?: string;
 };
 
-// ─── Pure date helpers (unchanged) ───────────────────────────────────────────
+type RangeStats = { adherence: number | null; countable: number; taken: number };
 
-function getLocalDateString(date: Date) {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
+// ─── Pure date helpers ────────────────────────────────────────────────────────
+
+function getLocalDateString(date: Date): string {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
 }
 
-function getStartOfWeek(date: Date) {
-    const start = new Date(date);
-    start.setHours(0, 0, 0, 0);
-    start.setDate(start.getDate() - start.getDay());
-    return start;
+function getStartOfWeek(date: Date): Date {
+    const s = new Date(date);
+    s.setHours(0, 0, 0, 0);
+    s.setDate(s.getDate() - s.getDay());
+    return s;
 }
 
-function addDays(date: Date, amount: number) {
+function addDays(date: Date, n: number): Date {
     const next = new Date(date);
-    next.setDate(next.getDate() + amount);
+    next.setDate(next.getDate() + n);
     return next;
 }
 
-function getMonthDates(date: Date) {
+function getMonthDates(date: Date): Date[] {
     const year = date.getFullYear();
     const month = date.getMonth();
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
-    return Array.from({ length: daysInMonth }, (_, index) => new Date(year, month, index + 1));
+    const days = new Date(year, month + 1, 0).getDate();
+    return Array.from({ length: days }, (_, i) => new Date(year, month, i + 1));
 }
 
-function formatDateLabel(date: Date) {
+function formatDateLabel(date: Date): string {
     return date.toLocaleDateString(undefined, { month: 'long', day: 'numeric' });
 }
 
-function formatShortDay(date: Date) {
+function formatShortDay(date: Date): string {
     return date.toLocaleDateString(undefined, { weekday: 'short' });
 }
 
-function formatTime(time: string) {
-    const [hourString, minuteString] = time.split(':');
-    let hour = Number(hourString);
-    const minute = minuteString;
-    const suffix = hour >= 12 ? 'PM' : 'AM';
-    if (hour === 0) hour = 12;
-    if (hour > 12) hour -= 12;
-    return `${hour}:${minute} ${suffix}`;
+function formatTime(time: string): string {
+    const [hStr, mStr] = time.split(':');
+    let h = Number(hStr);
+    const suffix = h >= 12 ? 'PM' : 'AM';
+    if (h === 0) h = 12;
+    else if (h > 12) h -= 12;
+    return `${h}:${mStr} ${suffix}`;
 }
 
-function formatStatus(status: ReminderStatus) {
-    if (status === 'taken') return 'Taken';
-    if (status === 'snoozed') return 'Snoozed';
-    if (status === 'skipped') return 'Skipped';
-    if (status === 'missed') return 'Missed';
-    return 'Pending';
+function formatStatus(status: ReminderStatus): string {
+    const map: Record<ReminderStatus, string> = {
+        taken: 'Taken', snoozed: 'Snoozed', skipped: 'Skipped', missed: 'Missed', pending: 'Pending',
+    };
+    return map[status] ?? 'Pending';
 }
 
-function shouldShowOnDate(frequency: Reminder['frequency'], date: Date) {
+function shouldShowOnDate(frequency: Reminder['frequency'], date: Date): boolean {
     const day = date.getDay();
     const isWeekend = day === 0 || day === 6;
     if (frequency === 'daily') return true;
@@ -140,87 +153,134 @@ function shouldShowOnDate(frequency: Reminder['frequency'], date: Date) {
     return true;
 }
 
-function buildScheduledDateTime(dateString: string, time: string) {
-    const [yearString, monthString, dayString] = dateString.split('-');
-    const [hourString, minuteString] = time.split(':');
-    return new Date(
-        Number(yearString),
-        Number(monthString) - 1,
-        Number(dayString),
-        Number(hourString),
-        Number(minuteString),
-        0,
-        0
-    );
+function buildScheduledDateTime(dateString: string, timeOfDay: string): Date {
+    const [yr, mo, dy] = dateString.split('-').map(Number);
+    const [hr, mn] = timeOfDay.split(':').map(Number);
+    return new Date(yr, mo - 1, dy, hr, mn, 0, 0);
 }
 
-function getComputedStatus(reminder: Reminder, dateString: string, log?: ReminderLog): ReminderStatus {
+// ─── Analytics helpers ────────────────────────────────────────────────────────
+
+function getAnalyticsStartDate(connectionAcceptedAt: string, reminderCreatedAt: string): Date {
+    const connDate = new Date(connectionAcceptedAt);
+    const remDate  = new Date(reminderCreatedAt);
+    const later    = connDate > remDate ? connDate : remDate;
+    return new Date(later.getFullYear(), later.getMonth(), later.getDate(), 0, 0, 0, 0);
+}
+
+function isReminderEligibleOnDate(
+    reminder: Reminder,
+    date: Date,
+    connectionAcceptedAt: string
+): boolean {
+    if (!shouldShowOnDate(reminder.frequency, date)) return false;
+    const start     = getAnalyticsStartDate(connectionAcceptedAt, reminder.created_at);
+    const dateStart = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
+    return dateStart >= start;
+}
+
+function getComputedStatus(
+    reminder: Reminder,
+    dateString: string,
+    todayString: string,
+    log?: ReminderLog
+): ReminderStatus {
     if (log?.status) return log.status;
+    if (dateString > todayString) return 'pending';
     const scheduledFor = buildScheduledDateTime(dateString, reminder.time_of_day);
-    const missedAt = new Date(scheduledFor.getTime() + reminder.no_response_minutes * 60 * 1000);
-    if (new Date() > missedAt) return 'missed';
-    return 'pending';
+    const missedAt     = new Date(scheduledFor.getTime() + reminder.no_response_minutes * 60 * 1000);
+    if (new Date() < missedAt) return 'pending';
+    return 'missed';
 }
 
-function buildDayData(date: Date, reminders: Reminder[], logs: ReminderLog[]): DayData {
-    const dateString = getLocalDateString(date);
+function buildDayData(
+    date: Date,
+    reminders: Reminder[],
+    logs: ReminderLog[],
+    connectionAcceptedAt: string
+): DayData {
+    const dateString  = getLocalDateString(date);
+    const todayString = getLocalDateString(new Date());
+    const isFuture    = dateString > todayString;
+
     const scheduledReminders = reminders.filter((r) => shouldShowOnDate(r.frequency, date));
-    const reminderDisplays = scheduledReminders.map((reminder) => {
-        const matchingLog = logs.find(
-            (log) => log.reminder_id === reminder.id && log.occurrence_date === dateString
+    const eligibleReminders  = scheduledReminders.filter((r) =>
+        isReminderEligibleOnDate(r, date, connectionAcceptedAt)
+    );
+
+    const reminderDisplays: ReminderDisplay[] = eligibleReminders.map((reminder) => {
+        const log = logs.find(
+            (l) => l.reminder_id === reminder.id && l.occurrence_date === dateString
         );
         return {
-            id: reminder.id,
-            name: reminder.title,
-            time: formatTime(reminder.time_of_day),
-            status: getComputedStatus(reminder, dateString, matchingLog),
+            id:     reminder.id,
+            name:   reminder.title,
+            time:   formatTime(reminder.time_of_day),
+            status: getComputedStatus(reminder, dateString, todayString, log),
         };
     });
-    const scheduledCount = reminderDisplays.length;
-    const takenCount = reminderDisplays.filter((r) => r.status === 'taken').length;
-    const adherence = scheduledCount === 0 ? 0 : Math.round((takenCount / scheduledCount) * 100);
+
+    const takenCount    = reminderDisplays.filter((r) => r.status === 'taken').length;
+    const pendingCount  = reminderDisplays.filter((r) => r.status === 'pending').length;
+    const missedCount   = reminderDisplays.filter((r) => r.status === 'missed').length;
+    const skippedCount  = reminderDisplays.filter((r) => r.status === 'skipped').length;
+    const snoozedCount  = reminderDisplays.filter((r) => r.status === 'snoozed').length;
+    const countableCount = reminderDisplays.filter((r) => r.status !== 'pending').length;
+    const adherence     = countableCount === 0 ? 0 : Math.round((takenCount / countableCount) * 100);
+
     return {
         dateString,
-        dateLabel: formatDateLabel(date),
-        shortLabel: formatShortDay(date),
-        monthDay: date.getDate(),
-        adherence,
-        scheduledCount,
+        dateLabel:     formatDateLabel(date),
+        shortLabel:    formatShortDay(date),
+        monthDay:      date.getDate(),
+        scheduledCount: scheduledReminders.length,
+        eligibleCount:  eligibleReminders.length,
+        countableCount,
         takenCount,
+        pendingCount,
+        missedCount,
+        skippedCount,
+        snoozedCount,
+        adherence,
+        hasData: eligibleReminders.length > 0,
+        isFuture,
         reminders: reminderDisplays,
     };
 }
 
-function getRangeAdherence(days: DayData[]) {
+function getRangeStats(days: DayData[]): RangeStats {
     const todayString = getLocalDateString(new Date());
-    const pastAndToday = days.filter((day) => day.dateString <= todayString);
-    const scheduled = pastAndToday.reduce((total, day) => total + day.scheduledCount, 0);
-    const taken = pastAndToday.reduce((total, day) => total + day.takenCount, 0);
-    if (scheduled === 0) return 0;
-    return Math.round((taken / scheduled) * 100);
+    const past        = days.filter((d) => d.dateString <= todayString);
+    const countable   = past.reduce((s, d) => s + d.countableCount, 0);
+    const taken       = past.reduce((s, d) => s + d.takenCount, 0);
+    return {
+        adherence: countable === 0 ? null : Math.round((taken / countable) * 100),
+        countable,
+        taken,
+    };
 }
 
 function buildReminderBreakdown(
     reminders: Reminder[],
     logs: ReminderLog[],
-    monthDates: Date[]
+    monthDates: Date[],
+    connectionAcceptedAt: string
 ): ReminderBreakdownItem[] {
+    const todayString = getLocalDateString(new Date());
     return reminders.map((reminder) => {
-        let scheduled = 0, completed = 0, missed = 0, skipped = 0, snoozed = 0;
+        let scheduled = 0, completed = 0, missed = 0, skipped = 0, snoozed = 0, pending = 0;
         monthDates.forEach((date) => {
             const dateString = getLocalDateString(date);
-            const todayString = getLocalDateString(new Date());
             if (dateString > todayString) return;
-            if (!shouldShowOnDate(reminder.frequency, date)) return;
+            if (!isReminderEligibleOnDate(reminder, date, connectionAcceptedAt)) return;
+            const log    = logs.find((l) => l.reminder_id === reminder.id && l.occurrence_date === dateString);
+            const status = getComputedStatus(reminder, dateString, todayString, log);
+            if (status === 'pending') { pending += 1; return; }
             scheduled += 1;
-            const matchingLog = logs.find(
-                (log) => log.reminder_id === reminder.id && log.occurrence_date === dateString
-            );
-            const status = getComputedStatus(reminder, dateString, matchingLog);
-            if (status === 'taken') completed += 1;
-            if (status === 'missed') missed += 1;
-            if (status === 'skipped') skipped += 1;
-            if (status === 'snoozed') snoozed += 1;
+            if (status === 'taken')   completed += 1;
+            if (status === 'missed')  missed    += 1;
+            if (status === 'skipped') skipped   += 1;
+            if (status === 'snoozed') snoozed   += 1;
         });
         return {
             id: reminder.id,
@@ -230,14 +290,16 @@ function buildReminderBreakdown(
             missed,
             skipped,
             snoozed,
+            pending,
             adherence: scheduled === 0 ? 0 : Math.round((completed / scheduled) * 100),
         };
     });
 }
 
-// ─── UI helpers ──────────────────────────────────────────────────────────────
+// ─── UI helpers ───────────────────────────────────────────────────────────────
 
-function getAdherenceColor(pct: number) {
+function getAdherenceColor(pct: number | null): string {
+    if (pct === null) return T.textMuted;
     if (pct >= 80) return T.success;
     if (pct >= 50) return '#D97706';
     return T.error;
@@ -262,38 +324,124 @@ function getStatusTextStyle(status: ReminderStatus) {
 function getHeatmapStyle(day: DayData) {
     const todayString = getLocalDateString(new Date());
     if (day.dateString > todayString) return styles.heatmapFuture;
-    if (day.scheduledCount === 0) return styles.heatmapEmpty;
+    if (!day.hasData) return styles.heatmapNoData;
+    if (day.countableCount === 0 && day.pendingCount > 0) return styles.heatmapPending;
+    if (day.countableCount === 0) return styles.heatmapEmpty;
     if (day.adherence === 100) return styles.heatmapHigh;
-    if (day.adherence >= 75)  return styles.heatmapMedium;
-    if (day.adherence >= 50)  return styles.heatmapLow;
+    if (day.adherence >= 75)   return styles.heatmapMedium;
+    if (day.adherence >= 50)   return styles.heatmapLow;
     return styles.heatmapMissed;
 }
 
-// ─── Main component ──────────────────────────────────────────────────────────
+function getBarColor(day: DayData): string {
+    if (!day.hasData || day.isFuture) return T.border;
+    if (day.countableCount === 0)     return T.primaryMid;
+    return getAdherenceColor(day.adherence);
+}
+
+function getBarHeight(day: DayData): string {
+    if (!day.hasData || day.isFuture) return '8%';
+    if (day.countableCount === 0)     return '10%';
+    return `${Math.max(day.adherence, 6)}%`;
+}
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function ReminderRow({ reminder }: { reminder: ReminderDisplay }) {
+    return (
+        <View style={styles.reminderRow}>
+            <View style={[styles.reminderStatusBar, getStatusPillStyle(reminder.status)]} />
+            <View style={styles.reminderTextBlock}>
+                <Text style={styles.reminderName}>{reminder.name}</Text>
+                <Text style={styles.reminderTime}>{reminder.time}</Text>
+            </View>
+            <View style={[styles.statusPill, getStatusPillStyle(reminder.status)]}>
+                <Text style={[styles.statusText, getStatusTextStyle(reminder.status)]}>
+                    {formatStatus(reminder.status)}
+                </Text>
+            </View>
+        </View>
+    );
+}
+
+function MetricTile({ count, label, color, bg }: { count: number; label: string; color: string; bg: string }) {
+    return (
+        <View style={[styles.metricTile, { backgroundColor: bg }]}>
+            <Text style={[styles.metricTileCount, { color }]}>{count}</Text>
+            <Text style={[styles.metricTileLabel, { color }]}>{label}</Text>
+        </View>
+    );
+}
+
+function BreakdownCard({ item }: { item: ReminderBreakdownItem }) {
+    const adherenceColor   = item.scheduled === 0 ? T.textMuted : getAdherenceColor(item.adherence);
+    const adherenceDisplay = item.scheduled === 0 ? '—' : `${item.adherence}%`;
+    const subParts = [
+        item.missed  > 0 ? `${item.missed} missed`  : null,
+        item.skipped > 0 ? `${item.skipped} skipped` : null,
+        item.snoozed > 0 ? `${item.snoozed} snoozed` : null,
+        item.pending > 0 ? `${item.pending} pending` : null,
+    ].filter(Boolean);
+
+    return (
+        <TouchableOpacity
+            style={styles.breakdownCard}
+            onPress={() => router.push('/reminder-details')}
+            activeOpacity={0.75}
+        >
+            <View style={styles.breakdownHeader}>
+                <Text style={styles.breakdownName}>{item.name}</Text>
+                <Text style={[styles.breakdownMetric, { color: adherenceColor }]}>
+                    {adherenceDisplay}
+                </Text>
+            </View>
+
+            {item.scheduled > 0 && (
+                <View style={styles.progressBarTrack}>
+                    <View
+                        style={[
+                            styles.progressBarFill,
+                            { width: `${item.adherence}%`, backgroundColor: adherenceColor },
+                        ]}
+                    />
+                </View>
+            )}
+
+            <Text style={styles.breakdownText}>
+                {item.scheduled === 0
+                    ? item.pending > 0
+                        ? `${item.pending} pending today — no past data yet`
+                        : 'No countable data yet this month'
+                    : `${item.completed}/${item.scheduled} taken this month`}
+            </Text>
+
+            {subParts.length > 0 && (
+                <Text style={styles.breakdownSubText}>{subParts.join(' · ')}</Text>
+            )}
+
+            <View style={styles.viewDetailsRow}>
+                <Text style={styles.viewDetailsText}>View details</Text>
+                <Ionicons name="chevron-forward" size={14} color={T.primary} />
+            </View>
+        </TouchableOpacity>
+    );
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
 
 export default function CaregiverDashboard() {
-    const [selectedRange, setSelectedRange] = useState<'Today' | 'Week' | 'Month'>('Today');
-    const [selectedWeekIndex, setSelectedWeekIndex]   = useState(new Date().getDay());
+    const [selectedRange, setSelectedRange]         = useState<'Today' | 'Week' | 'Month'>('Today');
+    const [selectedWeekIndex, setSelectedWeekIndex] = useState(new Date().getDay());
     const [selectedMonthIndex, setSelectedMonthIndex] = useState(new Date().getDate() - 1);
 
     const [connectionLoading, setConnectionLoading] = useState(true);
     const [dashboardLoading, setDashboardLoading]   = useState(true);
 
     const [connectionSummary, setConnectionSummary] = useState<ConnectionSummary>({ id: '', status: 'none' });
-    const [todayData, setTodayData]           = useState<DayData | null>(null);
-    const [weeklyData, setWeeklyData]         = useState<DayData[]>([]);
-    const [monthData, setMonthData]           = useState<DayData[]>([]);
+    const [todayData, setTodayData]                 = useState<DayData | null>(null);
+    const [weeklyData, setWeeklyData]               = useState<DayData[]>([]);
+    const [monthData, setMonthData]                 = useState<DayData[]>([]);
     const [reminderBreakdown, setReminderBreakdown] = useState<ReminderBreakdownItem[]>([]);
-
-    const selectedDay =
-        selectedRange === 'Today' ? todayData
-        : selectedRange === 'Week' ? weeklyData[selectedWeekIndex]
-        : monthData[selectedMonthIndex];
-
-    const rangeAdherence =
-        selectedRange === 'Today' ? (todayData?.adherence || 0)
-        : selectedRange === 'Week' ? getRangeAdherence(weeklyData)
-        : getRangeAdherence(monthData);
 
     async function loadDashboardData() {
         setConnectionLoading(true);
@@ -310,7 +458,7 @@ export default function CaregiverDashboard() {
 
         const { data: connections, error: connectionError } = await supabase
             .from('connections')
-            .select('id, invite_code, status, recipient_id, created_at')
+            .select('id, invite_code, status, recipient_id, created_at, accepted_at')
             .eq('caregiver_id', user.id)
             .order('created_at', { ascending: false })
             .limit(10);
@@ -350,18 +498,27 @@ export default function CaregiverDashboard() {
 
         if (profileError) console.log(profileError.message);
 
+        // Fallback: if accepted_at is null, use created_at
+        const acceptedAt: string =
+            acceptedConnection.accepted_at ||
+            acceptedConnection.created_at  ||
+            new Date().toISOString();
+
         setConnectionSummary({
             id: acceptedConnection.id,
             status: 'accepted',
             inviteCode: acceptedConnection.invite_code,
             recipientName: recipientProfile?.full_name || 'Loved one',
+            acceptedAt,
         });
 
         setConnectionLoading(false);
 
         const { data: remindersData, error: remindersError } = await supabase
             .from('reminders')
-            .select('id, connection_id, caregiver_id, recipient_id, title, reminder_type, notes, time_of_day, frequency, no_response_minutes')
+            .select(
+                'id, connection_id, caregiver_id, recipient_id, title, reminder_type, notes, time_of_day, frequency, no_response_minutes, created_at'
+            )
             .eq('caregiver_id', user.id)
             .eq('connection_id', acceptedConnection.id)
             .eq('is_active', true)
@@ -373,14 +530,17 @@ export default function CaregiverDashboard() {
             return;
         }
 
-        const reminders = (remindersData || []) as Reminder[];
-        const today     = new Date();
-        const weekStart = getStartOfWeek(today);
-        const weekDates = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+        const reminders  = (remindersData || []) as Reminder[];
+        const today      = new Date();
+        const weekStart  = getStartOfWeek(today);
+        const weekDates  = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
         const monthDates = getMonthDates(today);
 
         const earliestDate = weekDates[0] < monthDates[0] ? weekDates[0] : monthDates[0];
-        const latestDate   = weekDates[6] > monthDates[monthDates.length - 1] ? weekDates[6] : monthDates[monthDates.length - 1];
+        const latestDate   =
+            weekDates[6] > monthDates[monthDates.length - 1]
+                ? weekDates[6]
+                : monthDates[monthDates.length - 1];
 
         let logs: ReminderLog[] = [];
 
@@ -398,16 +558,16 @@ export default function CaregiverDashboard() {
             else logs = (logsData || []) as ReminderLog[];
         }
 
-        const todayDayData  = buildDayData(today, reminders, logs);
-        const weekDayData   = weekDates.map((d) => buildDayData(d, reminders, logs));
-        const monthDayData  = monthDates.map((d) => buildDayData(d, reminders, logs));
+        const todayDayData = buildDayData(today, reminders, logs, acceptedAt);
+        const weekDayData  = weekDates.map((d) => buildDayData(d, reminders, logs, acceptedAt));
+        const monthDayData = monthDates.map((d) => buildDayData(d, reminders, logs, acceptedAt));
 
         setSelectedWeekIndex(today.getDay());
         setSelectedMonthIndex(today.getDate() - 1);
         setTodayData(todayDayData);
         setWeeklyData(weekDayData);
         setMonthData(monthDayData);
-        setReminderBreakdown(buildReminderBreakdown(reminders, logs, monthDates));
+        setReminderBreakdown(buildReminderBreakdown(reminders, logs, monthDates, acceptedAt));
         setDashboardLoading(false);
     }
 
@@ -422,7 +582,7 @@ export default function CaregiverDashboard() {
         router.push('/create-reminder');
     }
 
-    // ── Connection status card ──────────────────────────────────────────────
+    // ── Connection card ─────────────────────────────────────────────────────
 
     function ConnectionCard() {
         if (connectionLoading) {
@@ -504,12 +664,8 @@ export default function CaregiverDashboard() {
                     </View>
                     <View style={{ flex: 1 }}>
                         <Text style={styles.connectionLabel}>Care Connection</Text>
-                        <Text style={styles.connectionTitle}>
-                            {connectionSummary.recipientName}
-                        </Text>
-                        <Text style={styles.connectionText}>
-                            Connected · reminders are active.
-                        </Text>
+                        <Text style={styles.connectionTitle}>{connectionSummary.recipientName}</Text>
+                        <Text style={styles.connectionText}>Connected · reminders are active.</Text>
                     </View>
                 </View>
             </View>
@@ -546,23 +702,22 @@ export default function CaregiverDashboard() {
             );
         }
 
-        if (!todayData) {
-            return (
-                <View style={[styles.card, SHADOW.xs]}>
-                    <View style={styles.emptyState}>
-                        <View style={styles.emptyIconWrap}>
-                            <Ionicons name="add-circle-outline" size={28} color={T.textMuted} />
-                        </View>
-                        <Text style={styles.emptyTitle}>No reminders yet</Text>
-                        <Text style={styles.emptyText}>
-                            Tap the + button above to create the first reminder.
-                        </Text>
-                    </View>
-                </View>
-            );
-        }
+        const rangeStats: RangeStats =
+            selectedRange === 'Today' && todayData ? getRangeStats([todayData])
+            : selectedRange === 'Week'             ? getRangeStats(weeklyData)
+            :                                        getRangeStats(monthData);
 
-        const adherenceColor = getAdherenceColor(rangeAdherence);
+        const selectedDay: DayData | undefined =
+            selectedRange === 'Week'  ? weeklyData[selectedWeekIndex]
+            : selectedRange === 'Month' ? monthData[selectedMonthIndex]
+            : undefined;
+
+        // First-day-of-month offset for heatmap alignment
+        const monthOffset = monthData.length > 0
+            ? new Date(monthData[0].dateString + 'T12:00:00').getDay()
+            : 0;
+
+        const adherenceColor = getAdherenceColor(rangeStats.adherence);
 
         return (
             <>
@@ -585,46 +740,113 @@ export default function CaregiverDashboard() {
                 {/* Adherence metric */}
                 <View style={[styles.card, SHADOW.xs]}>
                     <Text style={styles.cardLabel}>{selectedRange} Adherence</Text>
-                    <Text style={[styles.bigMetric, { color: adherenceColor }]}>
-                        {rangeAdherence}%
-                    </Text>
-                    <View style={styles.adherenceBarTrack}>
-                        <View
-                            style={[
-                                styles.adherenceBarFill,
-                                { width: `${rangeAdherence}%`, backgroundColor: adherenceColor },
-                            ]}
-                        />
-                    </View>
-                    <Text style={styles.helperText}>
-                        Calculated from real reminder logs and scheduled reminders.
-                    </Text>
+
+                    {rangeStats.adherence !== null ? (
+                        <>
+                            <Text style={[styles.bigMetric, { color: adherenceColor }]}>
+                                {rangeStats.adherence}%
+                            </Text>
+                            <View style={styles.adherenceBarTrack}>
+                                <View
+                                    style={[
+                                        styles.adherenceBarFill,
+                                        { width: `${rangeStats.adherence}%`, backgroundColor: adherenceColor },
+                                    ]}
+                                />
+                            </View>
+                            <Text style={styles.helperText}>
+                                {rangeStats.taken} taken of {rangeStats.countable} countable reminder
+                                {rangeStats.countable !== 1 ? 's' : ''}
+                            </Text>
+                        </>
+                    ) : (
+                        <>
+                            <Text style={[styles.bigMetric, { color: T.textMuted }]}>—</Text>
+                            <Text style={styles.helperText}>
+                                {reminderBreakdown.length === 0
+                                    ? 'No reminders created yet. Tap + to add one.'
+                                    : 'No countable data yet — adherence appears once reminders pass their response window.'}
+                            </Text>
+                        </>
+                    )}
                 </View>
 
-                {/* Today's reminders */}
+                {/* ── Today view ── */}
                 {selectedRange === 'Today' && (
                     <View style={[styles.card, SHADOW.xs]}>
                         <Text style={styles.cardTitle}>Today's Reminders</Text>
-                        <Text style={styles.helperText}>Every task scheduled for today.</Text>
 
-                        {todayData.reminders.length === 0 ? (
+                        {reminderBreakdown.length === 0 ? (
+                            <>
+                                <Text style={[styles.helperText, { marginBottom: 12 }]}>
+                                    No reminders have been created yet.
+                                </Text>
+                                <View style={styles.inlineEmpty}>
+                                    <Ionicons name="add-circle-outline" size={20} color={T.textMuted} />
+                                    <Text style={styles.inlineEmptyText}>
+                                        Tap + above to create the first reminder.
+                                    </Text>
+                                </View>
+                            </>
+                        ) : !todayData || todayData.eligibleCount === 0 ? (
                             <View style={styles.inlineEmpty}>
                                 <Ionicons name="calendar-outline" size={20} color={T.textMuted} />
-                                <Text style={styles.inlineEmptyText}>No reminders scheduled today.</Text>
+                                <Text style={styles.inlineEmptyText}>
+                                    {todayData && todayData.scheduledCount > 0
+                                        ? 'Reminders exist but are not active yet — analytics start from the day they were created.'
+                                        : 'No reminders scheduled for today.'}
+                                </Text>
                             </View>
                         ) : (
-                            todayData.reminders.map((reminder) => (
-                                <ReminderRow key={reminder.id} reminder={reminder} />
-                            ))
+                            <>
+                                <Text style={[styles.helperText, { marginBottom: 12 }]}>
+                                    {todayData.eligibleCount} reminder
+                                    {todayData.eligibleCount !== 1 ? 's' : ''} scheduled today
+                                </Text>
+
+                                {/* Stats row */}
+                                <View style={styles.metricRow}>
+                                    <MetricTile
+                                        count={todayData.takenCount}
+                                        label="Taken"
+                                        color="#15803D"
+                                        bg="#DCFCE7"
+                                    />
+                                    <MetricTile
+                                        count={todayData.pendingCount}
+                                        label="Pending"
+                                        color={T.textSecondary}
+                                        bg={T.bgAlt}
+                                    />
+                                    <MetricTile
+                                        count={todayData.missedCount}
+                                        label="Missed"
+                                        color="#B91C1C"
+                                        bg="#FEE2E2"
+                                    />
+                                    <MetricTile
+                                        count={todayData.skippedCount + todayData.snoozedCount}
+                                        label="Skipped"
+                                        color="#B45309"
+                                        bg="#FEF3C7"
+                                    />
+                                </View>
+
+                                {todayData.reminders.map((reminder) => (
+                                    <ReminderRow key={reminder.id} reminder={reminder} />
+                                ))}
+                            </>
                         )}
                     </View>
                 )}
 
-                {/* Weekly bar chart */}
+                {/* ── Week view ── */}
                 {selectedRange === 'Week' && (
                     <View style={[styles.card, SHADOW.xs]}>
                         <Text style={styles.cardTitle}>Weekly Activity</Text>
-                        <Text style={styles.helperText}>Tap a day to see exact reminders.</Text>
+                        <Text style={styles.helperText}>
+                            Tap a day to see details. Gray bars = no data yet.
+                        </Text>
 
                         <View style={styles.chart}>
                             {weeklyData.map((day, index) => (
@@ -638,8 +860,13 @@ export default function CaregiverDashboard() {
                                         <View
                                             style={[
                                                 styles.bar,
-                                                { height: `${day.scheduledCount === 0 ? 4 : Math.max(day.adherence, 6)}%` },
-                                                selectedWeekIndex === index && styles.selectedBar,
+                                                {
+                                                    height: getBarHeight(day) as any,
+                                                    backgroundColor:
+                                                        selectedWeekIndex === index && day.hasData
+                                                            ? T.primaryDark
+                                                            : getBarColor(day),
+                                                },
                                             ]}
                                         />
                                     </View>
@@ -657,23 +884,22 @@ export default function CaregiverDashboard() {
                     </View>
                 )}
 
-                {/* Monthly heatmap */}
+                {/* ── Month heatmap ── */}
                 {selectedRange === 'Month' && (
                     <View style={[styles.card, SHADOW.xs]}>
                         <Text style={styles.cardTitle}>Monthly Heatmap</Text>
-                        <Text style={styles.helperText}>
-                            Tap any day to see reminder details.
-                        </Text>
+                        <Text style={styles.helperText}>Tap any day to see reminder details.</Text>
 
                         <View style={styles.weekLabels}>
-                            {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((label, index) => (
-                                <Text key={`${label}-${index}`} style={styles.weekLabel}>
-                                    {label}
-                                </Text>
+                            {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((label, i) => (
+                                <Text key={`wl-${i}`} style={styles.weekLabel}>{label}</Text>
                             ))}
                         </View>
 
                         <View style={styles.heatmapGrid}>
+                            {Array.from({ length: monthOffset }, (_, i) => (
+                                <View key={`offset-${i}`} style={[styles.heatmapDay, styles.heatmapOffset]} />
+                            ))}
                             {monthData.map((day, index) => (
                                 <TouchableOpacity
                                     key={day.dateString}
@@ -690,13 +916,14 @@ export default function CaregiverDashboard() {
                             ))}
                         </View>
 
-                        {/* Heatmap legend */}
                         <View style={styles.legendRow}>
                             {[
-                                { style: styles.heatmapHigh,   label: '100%' },
-                                { style: styles.heatmapMedium, label: '75%+' },
-                                { style: styles.heatmapLow,    label: '50%+' },
-                                { style: styles.heatmapMissed, label: '<50%' },
+                                { style: styles.heatmapNoData,  label: 'No data' },
+                                { style: styles.heatmapHigh,    label: '100%' },
+                                { style: styles.heatmapMedium,  label: '75%+' },
+                                { style: styles.heatmapLow,     label: '50%+' },
+                                { style: styles.heatmapMissed,  label: '<50%' },
+                                { style: styles.heatmapPending, label: 'Pending' },
                             ].map(({ style, label }) => (
                                 <View key={label} style={styles.legendItem}>
                                     <View style={[styles.legendSwatch, style]} />
@@ -707,33 +934,53 @@ export default function CaregiverDashboard() {
                     </View>
                 )}
 
-                {/* Selected day detail */}
+                {/* ── Selected day detail (Week / Month) ── */}
                 {selectedRange !== 'Today' && selectedDay && (
                     <View style={[styles.card, SHADOW.xs]}>
                         <Text style={styles.cardTitle}>{selectedDay.dateLabel}</Text>
-                        <Text style={styles.helperText}>
-                            {selectedDay.scheduledCount === 0
-                                ? 'No reminders scheduled.'
-                                : `${selectedDay.takenCount}/${selectedDay.scheduledCount} taken · ${selectedDay.adherence}% adherence`}
-                        </Text>
 
-                        {selectedDay.reminders.length === 0 ? (
+                        {selectedDay.isFuture ? (
+                            <View style={styles.inlineEmpty}>
+                                <Ionicons name="time-outline" size={20} color={T.textMuted} />
+                                <Text style={styles.inlineEmptyText}>Future date — no data yet.</Text>
+                            </View>
+                        ) : !selectedDay.hasData ? (
+                            <View style={styles.inlineEmpty}>
+                                <Ionicons name="information-circle-outline" size={20} color={T.textMuted} />
+                                <Text style={styles.inlineEmptyText}>
+                                    No data — reminders had not started yet on this day. Analytics begin from the date each reminder was created.
+                                </Text>
+                            </View>
+                        ) : selectedDay.eligibleCount === 0 ? (
                             <View style={styles.inlineEmpty}>
                                 <Ionicons name="calendar-outline" size={20} color={T.textMuted} />
-                                <Text style={styles.inlineEmptyText}>Nothing scheduled.</Text>
+                                <Text style={styles.inlineEmptyText}>No reminders scheduled.</Text>
                             </View>
                         ) : (
-                            selectedDay.reminders.map((reminder) => (
-                                <ReminderRow key={reminder.id} reminder={reminder} />
-                            ))
+                            <>
+                                <Text style={styles.helperText}>
+                                    {selectedDay.takenCount}/{selectedDay.eligibleCount} taken
+                                    {selectedDay.pendingCount > 0
+                                        ? ` · ${selectedDay.pendingCount} pending`
+                                        : ''}
+                                    {selectedDay.countableCount > 0
+                                        ? ` · ${selectedDay.adherence}% adherence`
+                                        : ''}
+                                </Text>
+                                {selectedDay.reminders.map((r) => (
+                                    <ReminderRow key={r.id} reminder={r} />
+                                ))}
+                            </>
                         )}
                     </View>
                 )}
 
-                {/* Reminder breakdown */}
+                {/* ── Reminder breakdown ── */}
                 <View style={[styles.card, SHADOW.xs]}>
                     <Text style={styles.cardTitle}>Reminder Breakdown</Text>
-                    <Text style={styles.helperText}>Month-to-date per reminder.</Text>
+                    <Text style={styles.helperText}>
+                        Month-to-date · days before reminder creation are excluded
+                    </Text>
 
                     {reminderBreakdown.length === 0 ? (
                         <View style={styles.inlineEmpty}>
@@ -743,49 +990,8 @@ export default function CaregiverDashboard() {
                             </Text>
                         </View>
                     ) : (
-                        reminderBreakdown.map((reminder) => (
-                            <TouchableOpacity
-                                key={reminder.id}
-                                style={styles.breakdownCard}
-                                onPress={() => router.push('/reminder-details')}
-                                activeOpacity={0.75}
-                            >
-                                <View style={styles.breakdownHeader}>
-                                    <Text style={styles.breakdownName}>{reminder.name}</Text>
-                                    <Text
-                                        style={[
-                                            styles.breakdownMetric,
-                                            { color: getAdherenceColor(reminder.adherence) },
-                                        ]}
-                                    >
-                                        {reminder.adherence}%
-                                    </Text>
-                                </View>
-
-                                <View style={styles.progressBarTrack}>
-                                    <View
-                                        style={[
-                                            styles.progressBarFill,
-                                            {
-                                                width: `${reminder.adherence}%`,
-                                                backgroundColor: getAdherenceColor(reminder.adherence),
-                                            },
-                                        ]}
-                                    />
-                                </View>
-
-                                <Text style={styles.breakdownText}>
-                                    {reminder.completed}/{reminder.scheduled} taken this month
-                                </Text>
-                                <Text style={styles.breakdownSubText}>
-                                    {reminder.missed} missed · {reminder.skipped} skipped · {reminder.snoozed} snoozed
-                                </Text>
-
-                                <View style={styles.viewDetailsRow}>
-                                    <Text style={styles.viewDetailsText}>View details</Text>
-                                    <Ionicons name="chevron-forward" size={14} color={T.primary} />
-                                </View>
-                            </TouchableOpacity>
+                        reminderBreakdown.map((item) => (
+                            <BreakdownCard key={item.id} item={item} />
                         ))
                     )}
                 </View>
@@ -811,7 +1017,6 @@ export default function CaregiverDashboard() {
                     />
                 }
             >
-                {/* Header */}
                 <View style={styles.header}>
                     <View style={styles.headerTextBlock}>
                         <Text style={styles.heading}>Care Overview</Text>
@@ -846,36 +1051,11 @@ export default function CaregiverDashboard() {
     );
 }
 
-// ─── Reminder row ─────────────────────────────────────────────────────────────
-
-function ReminderRow({ reminder }: { reminder: ReminderDisplay }) {
-    return (
-        <View style={styles.reminderRow}>
-            <View style={[styles.reminderStatusBar, getStatusPillStyle(reminder.status)]} />
-            <View style={styles.reminderTextBlock}>
-                <Text style={styles.reminderName}>{reminder.name}</Text>
-                <Text style={styles.reminderTime}>{reminder.time}</Text>
-            </View>
-            <View style={[styles.statusPill, getStatusPillStyle(reminder.status)]}>
-                <Text style={[styles.statusText, getStatusTextStyle(reminder.status)]}>
-                    {formatStatus(reminder.status)}
-                </Text>
-            </View>
-        </View>
-    );
-}
-
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: T.bgPage,
-    },
-    content: {
-        padding: 20,
-        paddingBottom: 48,
-    },
+    container: { flex: 1, backgroundColor: T.bgPage },
+    content:   { padding: 20, paddingBottom: 48 },
 
     // ── Header ──────────────────────────────────────────────────────────────
     header: {
@@ -885,9 +1065,7 @@ const styles = StyleSheet.create({
         marginBottom: 20,
         gap: 12,
     },
-    headerTextBlock: {
-        flex: 1,
-    },
+    headerTextBlock: { flex: 1 },
     heading: {
         fontSize: 30,
         fontWeight: '800',
@@ -917,11 +1095,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         gap: 6,
     },
-    inviteButtonText: {
-        color: T.textSecondary,
-        fontSize: 14,
-        fontWeight: '600',
-    },
+    inviteButtonText: { color: T.textSecondary, fontSize: 14, fontWeight: '600' },
     createButton: {
         width: 44,
         height: 44,
@@ -940,14 +1114,8 @@ const styles = StyleSheet.create({
         borderWidth: 1.5,
         borderColor: T.border,
     },
-    connectionCardPending: {
-        backgroundColor: '#FFFBEB',
-        borderColor: '#FDE68A',
-    },
-    connectionCardAccepted: {
-        backgroundColor: T.successLight,
-        borderColor: '#A7F3D0',
-    },
+    connectionCardPending:  { backgroundColor: '#FFFBEB', borderColor: '#FDE68A' },
+    connectionCardAccepted: { backgroundColor: T.successLight, borderColor: '#A7F3D0' },
     connectionCardInner: {
         flexDirection: 'row',
         alignItems: 'flex-start',
@@ -977,11 +1145,7 @@ const styles = StyleSheet.create({
         letterSpacing: -0.3,
         marginBottom: 4,
     },
-    connectionText: {
-        fontSize: 14,
-        color: T.textSecondary,
-        lineHeight: 20,
-    },
+    connectionText: { fontSize: 14, color: T.textSecondary, lineHeight: 20 },
     connectionButton: {
         backgroundColor: T.primary,
         paddingVertical: 14,
@@ -1003,11 +1167,7 @@ const styles = StyleSheet.create({
         borderWidth: 1.5,
         borderColor: '#FDE68A',
     },
-    connectionButtonOutlineText: {
-        color: '#D97706',
-        fontSize: 14,
-        fontWeight: '700',
-    },
+    connectionButtonOutlineText: { color: '#D97706', fontSize: 14, fontWeight: '700' },
     inviteCodePill: {
         backgroundColor: '#FEF3C7',
         borderRadius: RADIUS.md,
@@ -1039,19 +1199,14 @@ const styles = StyleSheet.create({
         borderRadius: RADIUS.md,
         alignItems: 'center',
     },
-    activeTab: {
-        backgroundColor: T.primary,
-    },
+    activeTab: { backgroundColor: T.primary },
     tabText: {
         fontSize: 14,
         fontWeight: '600',
         color: T.textMuted,
         letterSpacing: -0.1,
     },
-    activeTabText: {
-        color: T.textInverse,
-        fontWeight: '700',
-    },
+    activeTabText: { color: T.textInverse, fontWeight: '700' },
 
     // ── Generic card ──────────────────────────────────────────────────────────
     card: {
@@ -1091,10 +1246,7 @@ const styles = StyleSheet.create({
         marginBottom: 12,
         overflow: 'hidden',
     },
-    adherenceBarFill: {
-        height: '100%',
-        borderRadius: RADIUS.full,
-    },
+    adherenceBarFill: { height: '100%', borderRadius: RADIUS.full },
     helperText: {
         fontSize: 14,
         color: T.textMuted,
@@ -1102,22 +1254,35 @@ const styles = StyleSheet.create({
         letterSpacing: -0.1,
     },
 
-    // ── Loading / empty states ────────────────────────────────────────────────
-    loadingState: {
-        alignItems: 'center',
-        paddingVertical: 24,
-        gap: 12,
-    },
-    loadingText: {
-        fontSize: 14,
-        color: T.textMuted,
-        fontWeight: '600',
-    },
-    emptyState: {
-        alignItems: 'center',
-        paddingVertical: 20,
+    // ── Today metric tiles ────────────────────────────────────────────────────
+    metricRow: {
+        flexDirection: 'row',
         gap: 8,
+        marginBottom: 16,
     },
+    metricTile: {
+        flex: 1,
+        alignItems: 'center',
+        paddingVertical: 10,
+        borderRadius: RADIUS.md,
+    },
+    metricTileCount: {
+        fontSize: 22,
+        fontWeight: '800',
+        letterSpacing: -0.5,
+    },
+    metricTileLabel: {
+        fontSize: 10,
+        fontWeight: '700',
+        letterSpacing: 0.3,
+        marginTop: 2,
+        textTransform: 'uppercase',
+    },
+
+    // ── Loading / empty states ────────────────────────────────────────────────
+    loadingState: { alignItems: 'center', paddingVertical: 24, gap: 12 },
+    loadingText:  { fontSize: 14, color: T.textMuted, fontWeight: '600' },
+    emptyState:   { alignItems: 'center', paddingVertical: 20, gap: 8 },
     emptyIconWrap: {
         width: 52,
         height: 52,
@@ -1144,7 +1309,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 8,
-        marginTop: 16,
+        marginTop: 12,
         padding: 14,
         backgroundColor: T.bgAlt,
         borderRadius: RADIUS.md,
@@ -1164,10 +1329,7 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         marginTop: 20,
     },
-    barWrapper: {
-        alignItems: 'center',
-        flex: 1,
-    },
+    barWrapper: { alignItems: 'center', flex: 1 },
     barTrack: {
         height: 110,
         width: 20,
@@ -1176,24 +1338,9 @@ const styles = StyleSheet.create({
         justifyContent: 'flex-end',
         overflow: 'hidden',
     },
-    bar: {
-        width: '100%',
-        backgroundColor: T.primaryMid,
-        borderRadius: RADIUS.full,
-    },
-    selectedBar: {
-        backgroundColor: T.primary,
-    },
-    dayLabel: {
-        marginTop: 8,
-        fontSize: 12,
-        color: T.textMuted,
-        fontWeight: '600',
-    },
-    selectedDayLabel: {
-        color: T.primary,
-        fontWeight: '700',
-    },
+    bar: { width: '100%', borderRadius: RADIUS.full },
+    dayLabel: { marginTop: 8, fontSize: 12, color: T.textMuted, fontWeight: '600' },
+    selectedDayLabel: { color: T.primary, fontWeight: '700' },
 
     // ── Heatmap ───────────────────────────────────────────────────────────────
     weekLabels: {
@@ -1209,11 +1356,7 @@ const styles = StyleSheet.create({
         fontWeight: '700',
         color: T.textMuted,
     },
-    heatmapGrid: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: 6,
-    },
+    heatmapGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
     heatmapDay: {
         width: 38,
         height: 38,
@@ -1221,42 +1364,27 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
-    selectedHeatmapDay: {
-        borderWidth: 2,
-        borderColor: T.textPrimary,
-    },
-    heatmapHigh:   { backgroundColor: '#BBF7D0' },
-    heatmapMedium: { backgroundColor: '#FEF3C7' },
-    heatmapLow:    { backgroundColor: '#FED7AA' },
-    heatmapMissed: { backgroundColor: '#FECACA' },
-    heatmapFuture: { backgroundColor: T.bgAlt },
-    heatmapEmpty:  { backgroundColor: T.border },
-    heatmapText: {
-        fontSize: 12,
-        fontWeight: '700',
-        color: T.textPrimary,
-    },
+    heatmapOffset:  { backgroundColor: 'transparent' },
+    selectedHeatmapDay: { borderWidth: 2, borderColor: T.textPrimary },
+    heatmapHigh:    { backgroundColor: '#BBF7D0' },
+    heatmapMedium:  { backgroundColor: '#FEF3C7' },
+    heatmapLow:     { backgroundColor: '#FED7AA' },
+    heatmapMissed:  { backgroundColor: '#FECACA' },
+    heatmapFuture:  { backgroundColor: T.bgAlt },
+    heatmapEmpty:   { backgroundColor: T.border },
+    heatmapNoData:  { backgroundColor: '#CBD5E1' },
+    heatmapPending: { backgroundColor: '#DBEAFE' },
+    heatmapText: { fontSize: 12, fontWeight: '700', color: T.textPrimary },
     legendRow: {
         flexDirection: 'row',
         justifyContent: 'center',
-        gap: 16,
+        flexWrap: 'wrap',
+        gap: 12,
         marginTop: 16,
     },
-    legendItem: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 5,
-    },
-    legendSwatch: {
-        width: 12,
-        height: 12,
-        borderRadius: 3,
-    },
-    legendLabel: {
-        fontSize: 11,
-        color: T.textMuted,
-        fontWeight: '600',
-    },
+    legendItem:  { flexDirection: 'row', alignItems: 'center', gap: 5 },
+    legendSwatch: { width: 12, height: 12, borderRadius: 3 },
+    legendLabel: { fontSize: 11, color: T.textMuted, fontWeight: '600' },
 
     // ── Reminder row ──────────────────────────────────────────────────────────
     reminderRow: {
@@ -1267,45 +1395,31 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: 12,
     },
-    reminderStatusBar: {
-        width: 3,
-        height: 36,
-        borderRadius: RADIUS.full,
-        flexShrink: 0,
-    },
-    reminderTextBlock: {
-        flex: 1,
-    },
+    reminderStatusBar: { width: 3, height: 36, borderRadius: RADIUS.full, flexShrink: 0 },
+    reminderTextBlock: { flex: 1 },
     reminderName: {
         fontSize: 15,
         fontWeight: '700',
         color: T.textPrimary,
         letterSpacing: -0.2,
     },
-    reminderTime: {
-        fontSize: 13,
-        color: T.textMuted,
-        marginTop: 2,
-    },
+    reminderTime: { fontSize: 13, color: T.textMuted, marginTop: 2 },
     statusPill: {
         paddingHorizontal: 11,
         paddingVertical: 6,
         borderRadius: RADIUS.full,
     },
-    statusText: {
-        fontSize: 12,
-        fontWeight: '700',
-    },
-    takenPill:   { backgroundColor: '#DCFCE7' },
-    missedPill:  { backgroundColor: '#FEE2E2' },
-    skippedPill: { backgroundColor: '#FEF3C7' },
-    snoozedPill: { backgroundColor: '#DBEAFE' },
-    pendingPill: { backgroundColor: T.bgAlt },
-    takenText:   { color: '#15803D' },
-    missedText:  { color: '#B91C1C' },
-    skippedText: { color: '#B45309' },
-    snoozedText: { color: '#1D4ED8' },
-    pendingText: { color: T.textMuted },
+    statusText:   { fontSize: 12, fontWeight: '700' },
+    takenPill:    { backgroundColor: '#DCFCE7' },
+    missedPill:   { backgroundColor: '#FEE2E2' },
+    skippedPill:  { backgroundColor: '#FEF3C7' },
+    snoozedPill:  { backgroundColor: '#DBEAFE' },
+    pendingPill:  { backgroundColor: T.bgAlt },
+    takenText:    { color: '#15803D' },
+    missedText:   { color: '#B91C1C' },
+    skippedText:  { color: '#B45309' },
+    snoozedText:  { color: '#1D4ED8' },
+    pendingText:  { color: T.textMuted },
 
     // ── Breakdown cards ───────────────────────────────────────────────────────
     breakdownCard: {
@@ -1328,11 +1442,7 @@ const styles = StyleSheet.create({
         paddingRight: 12,
         letterSpacing: -0.2,
     },
-    breakdownMetric: {
-        fontSize: 20,
-        fontWeight: '800',
-        letterSpacing: -0.5,
-    },
+    breakdownMetric: { fontSize: 20, fontWeight: '800', letterSpacing: -0.5 },
     progressBarTrack: {
         height: 5,
         backgroundColor: T.bgAlt,
@@ -1340,30 +1450,19 @@ const styles = StyleSheet.create({
         marginBottom: 10,
         overflow: 'hidden',
     },
-    progressBarFill: {
-        height: '100%',
-        borderRadius: RADIUS.full,
-    },
+    progressBarFill: { height: '100%', borderRadius: RADIUS.full },
     breakdownText: {
         fontSize: 13,
         color: T.textSecondary,
         fontWeight: '500',
         marginTop: 2,
     },
-    breakdownSubText: {
-        fontSize: 12,
-        color: T.textMuted,
-        marginTop: 3,
-    },
+    breakdownSubText: { fontSize: 12, color: T.textMuted, marginTop: 3 },
     viewDetailsRow: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 3,
         marginTop: 10,
     },
-    viewDetailsText: {
-        fontSize: 13,
-        color: T.primary,
-        fontWeight: '700',
-    },
+    viewDetailsText: { fontSize: 13, color: T.primary, fontWeight: '700' },
 });

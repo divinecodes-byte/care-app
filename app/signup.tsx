@@ -71,7 +71,7 @@ export default function SignupScreen() {
             return;
         }
 
-        router.push('/choose-role');
+        router.replace('/choose-role');
     }
 
     const inputStyle = (field: string) => [

@@ -47,9 +47,9 @@ export default function ChooseRoleScreen() {
         }
 
         if (role === 'caregiver') {
-            router.push('/caregiver-dashboard');
+            router.replace('/caregiver-dashboard');
         } else {
-            router.push('/join-invite');
+            router.replace('/join-invite');
         }
     }
 
