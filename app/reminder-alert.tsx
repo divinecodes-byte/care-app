@@ -16,6 +16,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { RADIUS, SHADOW, T } from '@/constants/theme';
+import { isPastNoResponseWindow } from '@/lib/reminderStatus';
 import { supabase } from '@/lib/supabase';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -101,6 +102,7 @@ export default function ReminderAlertScreen() {
     const [error, setError]             = useState<string | null>(null);
     const [reminder, setReminder]       = useState<Reminder | null>(null);
     const [todayStatus, setTodayStatus] = useState<ReminderStatus | null>(null);
+    const [isOverdue, setIsOverdue]     = useState(false);
 
     const pulseScale   = useRef(new Animated.Value(1)).current;
     const pulseOpacity = useRef(new Animated.Value(0.35)).current;
@@ -176,6 +178,13 @@ export default function ReminderAlertScreen() {
 
         setReminder(reminderData as Reminder);
 
+        // Compute overdue state once so the UI reflects it immediately.
+        const overdue = isPastNoResponseWindow(
+            reminderData.time_of_day,
+            reminderData.no_response_minutes
+        );
+        setIsOverdue(overdue);
+
         const todayDate = getTodayDateString();
         const { data: logData } = await supabase
             .from('reminder_logs')
@@ -184,8 +193,39 @@ export default function ReminderAlertScreen() {
             .eq('occurrence_date', todayDate)
             .maybeSingle();
 
-        if (logData?.status) {
-            setTodayStatus(logData.status as ReminderStatus);
+        const existingStatus = logData?.status as ReminderStatus | undefined;
+
+        if (existingStatus && existingStatus !== 'pending') {
+            // Existing terminal status — display as-is, never overwrite.
+            setTodayStatus(existingStatus);
+        } else if (overdue) {
+            // No log yet, or still pending, and the window has passed.
+            setTodayStatus('missed');
+
+            // Write the missed row immediately so the caregiver dashboard
+            // reflects it without the recipient needing to tap anything.
+            // onConflict ensures a pending row is updated, not duplicated.
+            const { error: missedErr } = await supabase
+                .from('reminder_logs')
+                .upsert(
+                    {
+                        reminder_id:     reminderData.id,
+                        connection_id:   reminderData.connection_id,
+                        caregiver_id:    reminderData.caregiver_id,
+                        recipient_id:    reminderData.recipient_id,
+                        occurrence_date: todayDate,
+                        scheduled_for:   buildScheduledForIso(reminderData.time_of_day),
+                        status:          'missed' as const,
+                        completed_at:    null,
+                        snoozed_until:   null,
+                        updated_at:      new Date().toISOString(),
+                    },
+                    { onConflict: 'reminder_id,occurrence_date' }
+                );
+
+            if (missedErr) {
+                console.error('[ReminderAlert] Failed to write missed log:', missedErr.message);
+            }
         }
 
         setLoading(false);
@@ -337,7 +377,17 @@ export default function ReminderAlertScreen() {
                     Response window: {reminder.no_response_minutes} min
                 </Text>
 
-                {/* Today's status (if already logged) */}
+                {/* Overdue notice */}
+                {isOverdue && (
+                    <View style={styles.overdueBanner}>
+                        <Ionicons name="time-outline" size={14} color="#FCA5A5" />
+                        <Text style={styles.overdueText}>
+                            Response window has passed · You can still respond
+                        </Text>
+                    </View>
+                )}
+
+                {/* Today's status */}
                 {todayStatus && statusInfo ? (
                     <View style={[styles.todayStatusPill, { backgroundColor: statusInfo.bg }]}>
                         <Text style={[styles.todayStatusText, { color: statusInfo.text }]}>
@@ -385,7 +435,9 @@ export default function ReminderAlertScreen() {
                 )}
 
                 <Text style={styles.footerText}>
-                    Your caregiver will see your response.
+                    {isOverdue
+                        ? 'You can still respond — your caregiver will see your update.'
+                        : 'Your caregiver will see your response.'}
                 </Text>
             </View>
         </View>
@@ -582,6 +634,26 @@ const styles = StyleSheet.create({
         color: 'rgba(255,255,255,0.3)',
         textAlign: 'center',
         marginBottom: 16,
+    },
+
+    // ── Overdue banner ─────────────────────────────────────────────────────────
+    overdueBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 7,
+        backgroundColor: 'rgba(239,68,68,0.14)',
+        borderRadius: RADIUS.md,
+        borderWidth: 1,
+        borderColor: 'rgba(239,68,68,0.25)',
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+        marginBottom: 12,
+    },
+    overdueText: {
+        fontSize: 13,
+        color: '#FCA5A5',
+        fontWeight: '600',
+        flex: 1,
     },
 
     // ── Today status pill ──────────────────────────────────────────────────────

@@ -23,6 +23,7 @@ import {
     scheduleReminderNotifications,
     scheduleTestNotification,
 } from '@/lib/notifications';
+import { isPastNoResponseWindow } from '@/lib/reminderStatus';
 
 type ReminderStatus = 'pending' | 'taken' | 'snoozed' | 'skipped' | 'missed';
 
@@ -180,16 +181,63 @@ export default function RecipientDashboard() {
             return;
         }
 
+        const now = new Date();
+
         const remindersWithStatus = todaysReminders.map((reminder) => {
             const matchingLog = logs?.find((log) => log.reminder_id === reminder.id);
-            return {
-                ...reminder,
-                today_status: (matchingLog?.status as ReminderStatus) || 'pending',
-            };
+            const logStatus   = matchingLog?.status as ReminderStatus | undefined;
+
+            // Keep any terminal status (taken / snoozed / skipped / missed already in DB).
+            if (logStatus && logStatus !== 'pending') {
+                return { ...reminder, today_status: logStatus };
+            }
+            // No log yet, or still pending — check if the response window has expired.
+            const today_status: ReminderStatus = isPastNoResponseWindow(
+                reminder.time_of_day,
+                reminder.no_response_minutes
+            )
+                ? 'missed'
+                : 'pending';
+            return { ...reminder, today_status };
         });
 
         setReminders(remindersWithStatus);
         setLoading(false);
+
+        // Write missed logs to the DB so the caregiver dashboard reflects them.
+        // Fire-and-forget: the recipient UI already shows the correct computed
+        // status without waiting for the DB write.
+        // Upsert on (reminder_id, occurrence_date) — never creates duplicates.
+        const missedToSync = remindersWithStatus.filter((r) => {
+            if (r.today_status !== 'missed') return false;
+            const existing = logs?.find((l) => l.reminder_id === r.id);
+            // Only upsert when there is no log yet or the existing row is still pending.
+            return !existing || existing.status === 'pending';
+        });
+
+        if (missedToSync.length > 0) {
+            const nowIso = now.toISOString();
+            supabase
+                .from('reminder_logs')
+                .upsert(
+                    missedToSync.map((r) => ({
+                        reminder_id:     r.id,
+                        connection_id:   r.connection_id,
+                        caregiver_id:    r.caregiver_id,
+                        recipient_id:    r.recipient_id,
+                        occurrence_date: todayDate,
+                        scheduled_for:   buildScheduledForIso(r.time_of_day),
+                        status:          'missed' as const,
+                        completed_at:    null,
+                        snoozed_until:   null,
+                        updated_at:      nowIso,
+                    })),
+                    { onConflict: 'reminder_id,occurrence_date' }
+                )
+                .then(({ error: syncErr }) => {
+                    if (syncErr) console.error('[RecipientDashboard] Missed log sync failed:', syncErr.message);
+                });
+        }
     }
 
     useFocusEffect(useCallback(() => { loadReminders(); }, []));

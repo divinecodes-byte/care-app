@@ -17,6 +17,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { RADIUS, SHADOW, T } from '@/constants/theme';
+import { buildTimeString, TimePickerField } from '@/components/TimePickerField';
 import { supabase } from '@/lib/supabase';
 
 type ReminderType = 'medication' | 'hydration' | 'appointment' | 'meal' | 'exercise' | 'other';
@@ -25,13 +26,13 @@ type Frequency    = 'daily' | 'weekdays' | 'weekends';
 const REMINDER_TYPES: ReminderType[] = ['medication', 'hydration', 'appointment', 'meal', 'exercise', 'other'];
 const FREQUENCIES:    Frequency[]    = ['daily', 'weekdays', 'weekends'];
 
-const TYPE_ICONS: Record<ReminderType, string> = {
-    medication:  '💊',
-    hydration:   '💧',
-    appointment: '📅',
-    meal:        '🍽️',
-    exercise:    '🏃',
-    other:       '•',
+const TYPE_ICON_NAMES: Record<ReminderType, string> = {
+    medication:  'medical-outline',
+    hydration:   'water-outline',
+    appointment: 'calendar-outline',
+    meal:        'restaurant-outline',
+    exercise:    'walk-outline',
+    other:       'ellipsis-horizontal-outline',
 };
 
 const TYPE_LABELS: Record<ReminderType, string> = {
@@ -49,110 +50,10 @@ const FREQUENCY_LABELS: Record<Frequency, string> = {
     weekends: 'Sat–Sun',
 };
 
-const NO_RESPONSE_OPTIONS = [15, 30, 45, 60, 90, 120];
+const NO_RESPONSE_OPTIONS = [1, 5, 10, 15, 30, 60];
 
 function formatResponseMinutes(m: number): string {
     return m < 60 ? `${m} min` : `${m / 60} hr`;
-}
-
-// ─── Inline time picker ───────────────────────────────────────────────────────
-
-type TimePickerProps = {
-    hour: number;        // 1–12
-    minute: number;      // 0–59
-    meridiem: 'AM' | 'PM';
-    onChangeHour: (h: number) => void;
-    onChangeMinute: (m: number) => void;
-    onChangeMeridiem: (m: 'AM' | 'PM') => void;
-};
-
-function TimePicker({ hour, minute, meridiem, onChangeHour, onChangeMinute, onChangeMeridiem }: TimePickerProps) {
-    const [open, setOpen] = useState(false);
-
-    const displayLabel = `${hour}:${String(minute).padStart(2, '0')} ${meridiem}`;
-
-    function adjustHour(delta: number) {
-        onChangeHour(((hour - 1 + delta + 12) % 12) + 1);
-    }
-
-    function adjustMinute(delta: number) {
-        onChangeMinute((minute + delta + 60) % 60);
-    }
-
-    return (
-        <View>
-            {/* Tappable display row */}
-            <TouchableOpacity
-                style={[styles.timeButton, open && styles.timeButtonOpen]}
-                onPress={() => setOpen((v) => !v)}
-                activeOpacity={0.8}
-            >
-                <Ionicons name="time-outline" size={20} color={T.primary} />
-                <Text style={styles.timeButtonText}>{displayLabel}</Text>
-                <Ionicons
-                    name={open ? 'chevron-up' : 'chevron-down'}
-                    size={16}
-                    color={T.textMuted}
-                />
-            </TouchableOpacity>
-
-            {/* Expanded picker */}
-            {open && (
-                <View style={styles.pickerPanel}>
-                    {/* Hour column */}
-                    <View style={styles.pickerColumn}>
-                        <TouchableOpacity style={styles.pickerArrow} onPress={() => adjustHour(1)} activeOpacity={0.7}>
-                            <Ionicons name="chevron-up" size={24} color={T.primary} />
-                        </TouchableOpacity>
-                        <Text style={styles.pickerValue}>{String(hour).padStart(2, '0')}</Text>
-                        <TouchableOpacity style={styles.pickerArrow} onPress={() => adjustHour(-1)} activeOpacity={0.7}>
-                            <Ionicons name="chevron-down" size={24} color={T.primary} />
-                        </TouchableOpacity>
-                        <Text style={styles.pickerUnit}>hr</Text>
-                    </View>
-
-                    <Text style={styles.pickerColon}>:</Text>
-
-                    {/* Minute column */}
-                    <View style={styles.pickerColumn}>
-                        <TouchableOpacity style={styles.pickerArrow} onPress={() => adjustMinute(5)} activeOpacity={0.7}>
-                            <Ionicons name="chevron-up" size={24} color={T.primary} />
-                        </TouchableOpacity>
-                        <Text style={styles.pickerValue}>{String(minute).padStart(2, '0')}</Text>
-                        <TouchableOpacity style={styles.pickerArrow} onPress={() => adjustMinute(-5)} activeOpacity={0.7}>
-                            <Ionicons name="chevron-down" size={24} color={T.primary} />
-                        </TouchableOpacity>
-                        <Text style={styles.pickerUnit}>min</Text>
-                    </View>
-
-                    {/* AM / PM toggle */}
-                    <View style={styles.meridiemWrap}>
-                        {(['AM', 'PM'] as const).map((m) => (
-                            <TouchableOpacity
-                                key={m}
-                                style={[styles.meridiemBtn, meridiem === m && styles.meridiemBtnActive]}
-                                onPress={() => onChangeMeridiem(m)}
-                                activeOpacity={0.75}
-                            >
-                                <Text style={[styles.meridiemText, meridiem === m && styles.meridiemTextActive]}>
-                                    {m}
-                                </Text>
-                            </TouchableOpacity>
-                        ))}
-                    </View>
-                </View>
-            )}
-        </View>
-    );
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function buildTimeString(hour: number, minute: number, meridiem: 'AM' | 'PM'): string {
-    let h = hour;
-    if (meridiem === 'AM' && h === 12) h = 0;
-    if (meridiem === 'PM' && h !== 12) h += 12;
-    return `${String(h).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00`;
 }
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
@@ -161,17 +62,17 @@ export default function CreateReminderScreen() {
     const [title, setTitle]                         = useState('');
     const [reminderType, setReminderType]           = useState<ReminderType>('medication');
     const [notes, setNotes]                         = useState('');
-    const [pickerHour, setPickerHour]               = useState(8);
-    const [pickerMinute, setPickerMinute]           = useState(0);
-    const [pickerMeridiem, setPickerMeridiem]       = useState<'AM' | 'PM'>('AM');
+    const [timeValue, setTimeValue]                 = useState<Date>(() => {
+        const d = new Date();
+        d.setHours(8, 0, 0, 0);
+        return d;
+    });
     const [frequency, setFrequency]                 = useState<Frequency>('daily');
-    const [noResponseMinutes, setNoResponseMinutes] = useState(30);
+    const [noResponseMinutes, setNoResponseMinutes] = useState(15);
     const [loading, setLoading]                     = useState(false);
     const [focused, setFocused]                     = useState<string | null>(null);
 
     async function saveReminder() {
-        const timeOfDay = buildTimeString(pickerHour, pickerMinute, pickerMeridiem);
-
         if (!title.trim()) {
             Alert.alert('Missing title', 'Please enter a reminder name.');
             return;
@@ -219,7 +120,7 @@ export default function CreateReminderScreen() {
             title:               title.trim(),
             reminder_type:       reminderType,
             notes:               notes.trim() || null,
-            time_of_day:         timeOfDay,
+            time_of_day:         buildTimeString(timeValue),
             frequency,
             no_response_minutes: noResponseMinutes,
             is_active:           true,
@@ -301,7 +202,11 @@ export default function CreateReminderScreen() {
                                     onPress={() => setReminderType(type)}
                                     activeOpacity={0.75}
                                 >
-                                    <Text style={styles.typeChipEmoji}>{TYPE_ICONS[type]}</Text>
+                                    <Ionicons
+                                        name={TYPE_ICON_NAMES[type] as any}
+                                        size={15}
+                                        color={reminderType === type ? T.primary : T.textMuted}
+                                    />
                                     <Text
                                         style={[
                                             styles.typeChipText,
@@ -325,14 +230,7 @@ export default function CreateReminderScreen() {
                         </View>
 
                         <Text style={styles.label}>Time of day</Text>
-                        <TimePicker
-                            hour={pickerHour}
-                            minute={pickerMinute}
-                            meridiem={pickerMeridiem}
-                            onChangeHour={setPickerHour}
-                            onChangeMinute={setPickerMinute}
-                            onChangeMeridiem={setPickerMeridiem}
-                        />
+                        <TimePickerField value={timeValue} onChange={setTimeValue} />
 
                         <Text style={[styles.label, { marginTop: 18 }]}>Frequency</Text>
                         <View style={styles.frequencyRow}>
@@ -341,15 +239,15 @@ export default function CreateReminderScreen() {
                                     key={item}
                                     style={[
                                         styles.frequencyChip,
-                                        frequency === item && styles.typeChipActive,
+                                        frequency === item && styles.chipActive,
                                     ]}
                                     onPress={() => setFrequency(item)}
                                     activeOpacity={0.75}
                                 >
                                     <Text
                                         style={[
-                                            styles.typeChipText,
-                                            frequency === item && styles.typeChipTextActive,
+                                            styles.chipText,
+                                            frequency === item && styles.chipTextActive,
                                         ]}
                                     >
                                         {FREQUENCY_LABELS[item]}
@@ -359,34 +257,34 @@ export default function CreateReminderScreen() {
                         </View>
                     </View>
 
-                    {/* ── Section 3: Response & Notes ─────────────────────── */}
+                    {/* ── Section 3: Alerts ───────────────────────────────── */}
                     <View style={[styles.sectionCard, SHADOW.xs]}>
                         <View style={styles.sectionHeader}>
                             <View style={[styles.sectionIconWrap, { backgroundColor: T.successLight }]}>
-                                <Ionicons name="settings-outline" size={18} color={T.success} />
+                                <Ionicons name="timer-outline" size={18} color={T.success} />
                             </View>
-                            <Text style={styles.sectionTitle}>Settings</Text>
+                            <Text style={styles.sectionTitle}>Alerts</Text>
                         </View>
 
-                        <Text style={styles.label}>Alert if no response after</Text>
-                        <View style={styles.noResponseGrid}>
+                        <Text style={styles.label}>Mark as missed after</Text>
+                        <View style={styles.chipGrid}>
                             {[NO_RESPONSE_OPTIONS.slice(0, 3), NO_RESPONSE_OPTIONS.slice(3)].map(
                                 (row, ri) => (
-                                    <View key={ri} style={styles.noResponseRow}>
+                                    <View key={ri} style={styles.chipRow}>
                                         {row.map((opt) => (
                                             <TouchableOpacity
                                                 key={opt}
                                                 style={[
                                                     styles.noResponseChip,
-                                                    noResponseMinutes === opt && styles.noResponseChipActive,
+                                                    noResponseMinutes === opt && styles.chipActive,
                                                 ]}
                                                 onPress={() => setNoResponseMinutes(opt)}
                                                 activeOpacity={0.75}
                                             >
                                                 <Text
                                                     style={[
-                                                        styles.noResponseChipText,
-                                                        noResponseMinutes === opt && styles.noResponseChipTextActive,
+                                                        styles.chipText,
+                                                        noResponseMinutes === opt && styles.chipTextActive,
                                                     ]}
                                                 >
                                                     {formatResponseMinutes(opt)}
@@ -544,99 +442,6 @@ const styles = StyleSheet.create({
         lineHeight: 17,
     },
 
-    // ── Time picker ───────────────────────────────────────────────────
-    timeButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10,
-        backgroundColor: T.bgAlt,
-        borderRadius: RADIUS.lg,
-        paddingHorizontal: 14,
-        paddingVertical: Platform.OS === 'ios' ? 14 : 12,
-        borderWidth: 1.5,
-        borderColor: 'transparent',
-    },
-    timeButtonOpen: {
-        backgroundColor: T.bgSurface,
-        borderColor: T.borderFocus,
-        borderBottomLeftRadius: 0,
-        borderBottomRightRadius: 0,
-    },
-    timeButtonText: {
-        flex: 1,
-        fontSize: 17,
-        fontWeight: '700',
-        color: T.textPrimary,
-        letterSpacing: -0.2,
-    },
-    pickerPanel: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 8,
-        backgroundColor: T.bgSurface,
-        borderWidth: 1.5,
-        borderTopWidth: 0,
-        borderColor: T.borderFocus,
-        borderBottomLeftRadius: RADIUS.lg,
-        borderBottomRightRadius: RADIUS.lg,
-        paddingVertical: 16,
-        paddingHorizontal: 12,
-    },
-    pickerColumn: {
-        alignItems: 'center',
-        gap: 4,
-        minWidth: 64,
-    },
-    pickerArrow: {
-        padding: 6,
-    },
-    pickerValue: {
-        fontSize: 32,
-        fontWeight: '800',
-        color: T.textPrimary,
-        letterSpacing: -1,
-        lineHeight: 40,
-    },
-    pickerUnit: {
-        fontSize: 11,
-        fontWeight: '600',
-        color: T.textMuted,
-        letterSpacing: 0.4,
-        textTransform: 'uppercase',
-        marginTop: 2,
-    },
-    pickerColon: {
-        fontSize: 28,
-        fontWeight: '800',
-        color: T.textPrimary,
-        marginBottom: 18,
-        alignSelf: 'center',
-    },
-    meridiemWrap: {
-        borderRadius: RADIUS.lg,
-        overflow: 'hidden',
-        borderWidth: 1.5,
-        borderColor: T.border,
-        marginLeft: 8,
-    },
-    meridiemBtn: {
-        paddingVertical: 14,
-        paddingHorizontal: 18,
-        backgroundColor: T.bgAlt,
-    },
-    meridiemBtnActive: {
-        backgroundColor: T.primary,
-    },
-    meridiemText: {
-        fontSize: 15,
-        fontWeight: '700',
-        color: T.textMuted,
-    },
-    meridiemTextActive: {
-        color: T.textInverse,
-    },
-
     // ── Type chip grid ────────────────────────────────────────────────
     typeGrid: {
         flexDirection: 'row',
@@ -654,15 +459,29 @@ const styles = StyleSheet.create({
         borderWidth: 1.5,
         borderColor: 'transparent',
     },
-    typeChipActive: {
+
+    // ── Shared chip styles ────────────────────────────────────────────
+    chipActive: {
         backgroundColor: T.primaryLight,
         borderColor: T.primary,
     },
-    typeChipEmoji: { fontSize: 14 },
+    chipText: {
+        color: T.textSecondary,
+        fontSize: 13,
+        fontWeight: '600',
+    },
+    chipTextActive: {
+        color: T.primary,
+        fontWeight: '700',
+    },
     typeChipText: {
         color: T.textSecondary,
         fontSize: 13,
         fontWeight: '600',
+    },
+    typeChipActive: {
+        backgroundColor: T.primaryLight,
+        borderColor: T.primary,
     },
     typeChipTextActive: {
         color: T.primary,
@@ -681,10 +500,9 @@ const styles = StyleSheet.create({
         borderColor: 'transparent',
     },
 
-
     // ── No-response chip grid ─────────────────────────────────────────
-    noResponseGrid: { gap: 8 },
-    noResponseRow:  { flexDirection: 'row', gap: 8 },
+    chipGrid: { gap: 8 },
+    chipRow:  { flexDirection: 'row', gap: 8 },
     noResponseChip: {
         flex: 1,
         backgroundColor: T.bgAlt,
@@ -693,19 +511,6 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         borderWidth: 1.5,
         borderColor: 'transparent',
-    },
-    noResponseChipActive: {
-        backgroundColor: T.primaryLight,
-        borderColor: T.primary,
-    },
-    noResponseChipText: {
-        fontSize: 14,
-        fontWeight: '600',
-        color: T.textSecondary,
-    },
-    noResponseChipTextActive: {
-        color: T.primary,
-        fontWeight: '700',
     },
 
     // ── Save button ───────────────────────────────────────────────────
