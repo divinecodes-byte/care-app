@@ -1,5 +1,8 @@
+import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
+
+import { supabase } from '@/lib/supabase';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -104,6 +107,67 @@ export async function scheduleReminderNotifications(
 
 export async function cancelAllReminderNotifications(): Promise<void> {
     await Notifications.cancelAllScheduledNotificationsAsync();
+}
+
+// ─── Push token registration ──────────────────────────────────────────────────
+
+export type PushTokenResult =
+    | { ok: true }
+    | { ok: false; reason: 'no-permission' | 'expo-go' | 'error'; message: string };
+
+/**
+ * Request permission, fetch the Expo push token, and upsert it into push_tokens.
+ * Safe to call on every caregiver dashboard focus — idempotent via upsert.
+ * Handles Expo Go gracefully: returns ok:false with a clear message instead of crashing.
+ */
+export async function registerCaregiverPushToken(caregiverId: string): Promise<PushTokenResult> {
+    const { status: existing } = await Notifications.getPermissionsAsync();
+    let finalStatus = existing;
+    if (existing !== 'granted') {
+        const { status } = await Notifications.requestPermissionsAsync();
+        finalStatus = status;
+    }
+    if (finalStatus !== 'granted') {
+        return {
+            ok: false,
+            reason: 'no-permission',
+            message: 'Enable notifications in Settings to receive caregiver alerts.',
+        };
+    }
+
+    try {
+        const projectId = (Constants.expoConfig?.extra as any)?.eas?.projectId as string | undefined;
+        const { data: token } = await Notifications.getExpoPushTokenAsync(
+            projectId ? { projectId } : undefined
+        );
+
+        await supabase.from('push_tokens').upsert(
+            {
+                user_id:         caregiverId,
+                expo_push_token: token,
+                platform:        Platform.OS,
+                updated_at:      new Date().toISOString(),
+            },
+            { onConflict: 'expo_push_token' }
+        );
+
+        return { ok: true };
+    } catch (err: any) {
+        const msg = String(err?.message ?? '').toLowerCase();
+        const isExpoGoError =
+            msg.includes('expo go') ||
+            msg.includes('development build') ||
+            msg.includes('project id') ||
+            msg.includes('standalone') ||
+            msg.includes('must be a standalone');
+        return {
+            ok: false,
+            reason: isExpoGoError ? 'expo-go' : 'error',
+            message: isExpoGoError
+                ? 'Push alerts require a development build. Preferences are saved and will activate when you upgrade.'
+                : 'Could not register for push notifications. Preferences are saved.',
+        };
+    }
 }
 
 // ─── Dev helper ───────────────────────────────────────────────────────────────

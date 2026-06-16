@@ -8,6 +8,7 @@ import {
     Pressable,
     ScrollView,
     StyleSheet,
+    Switch,
     Text,
     TouchableOpacity,
     View,
@@ -15,6 +16,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { RADIUS, T } from '@/constants/theme';
+import { registerCaregiverPushToken } from '@/lib/notifications';
 import { supabase } from '@/lib/supabase';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -34,6 +36,13 @@ type ProfileData = {
     connectionOk:     boolean;
 };
 
+type NotifPrefs = {
+    notify_missed:  boolean;
+    notify_skipped: boolean;
+    notify_snoozed: boolean;
+    notify_taken:   boolean;
+};
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function SettingsSheet({ visible, onClose }: Props) {
@@ -45,12 +54,18 @@ export function SettingsSheet({ visible, onClose }: Props) {
         fullName: '', email: '', role: '', connectionStatus: '', connectionOk: false,
     });
 
+    // Caregiver notification prefs
+    const [userId,       setUserId]       = useState<string | null>(null);
+    const [notifPrefs,   setNotifPrefs]   = useState<NotifPrefs | null>(null);
+    const [pushTokenMsg, setPushTokenMsg] = useState<string | null>(null);
+
     useEffect(() => {
         if (visible) fetchProfile();
     }, [visible]);
 
     async function fetchProfile() {
         setLoading(true);
+        setPushTokenMsg(null);
 
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) { setLoading(false); return; }
@@ -66,7 +81,6 @@ export function SettingsSheet({ visible, onClose }: Props) {
         let connectionOk     = false;
 
         if (role === 'caregiver') {
-            // 1. Prefer accepted connection over pending
             const { data: accepted } = await supabase
                 .from('connections')
                 .select('recipient_id')
@@ -85,7 +99,6 @@ export function SettingsSheet({ visible, onClose }: Props) {
                 connectionStatus = `Connected to ${recipientProfile?.full_name ?? 'Loved One'}`;
                 connectionOk     = true;
             } else {
-                // 2. Fall back: check for pending
                 const { data: pending } = await supabase
                     .from('connections')
                     .select('id')
@@ -97,6 +110,14 @@ export function SettingsSheet({ visible, onClose }: Props) {
                     ? 'Pending — awaiting acceptance'
                     : 'No loved one connected';
             }
+
+            setUserId(user.id);
+            // Load notification prefs (awaited — content waits for prefs before showing)
+            await loadNotifPrefs(user.id);
+            // Register push token in background — don't block the sheet from opening
+            registerCaregiverPushToken(user.id).then(result => {
+                if (!result.ok) setPushTokenMsg(result.message);
+            });
 
         } else if (role === 'recipient') {
             const { data: conn } = await supabase
@@ -130,6 +151,64 @@ export function SettingsSheet({ visible, onClose }: Props) {
         setLoading(false);
     }
 
+    async function loadNotifPrefs(uid: string) {
+        console.log('[NotifPrefs] loading for caregiver_id:', uid);
+
+        const { data, error } = await supabase
+            .from('notification_preferences')
+            .select('notify_missed, notify_skipped, notify_snoozed, notify_taken')
+            .eq('caregiver_id', uid)
+            .maybeSingle();
+
+        if (error) {
+            console.error('[NotifPrefs] fetch error:', error.message);
+        }
+
+        console.log('[NotifPrefs] fetched row:', data);
+
+        if (data) {
+            setNotifPrefs({
+                notify_missed:  data.notify_missed,
+                notify_skipped: data.notify_skipped,
+                notify_snoozed: data.notify_snoozed,
+                notify_taken:   data.notify_taken,
+            });
+        } else {
+            const defaults: NotifPrefs = {
+                notify_missed:  true,
+                notify_skipped: true,
+                notify_snoozed: false,
+                notify_taken:   false,
+            };
+            const { error: insertError } = await supabase
+                .from('notification_preferences')
+                .insert({ caregiver_id: uid, ...defaults });
+            if (insertError) {
+                console.error('[NotifPrefs] insert error:', insertError.message);
+            }
+            setNotifPrefs(defaults);
+        }
+    }
+
+    async function updateNotifPref(key: keyof NotifPrefs, value: boolean) {
+        if (!userId) return;
+
+        // Optimistic update
+        const previous = notifPrefs;
+        setNotifPrefs(prev => prev ? { ...prev, [key]: value } : prev);
+
+        const { error } = await supabase
+            .from('notification_preferences')
+            .update({ [key]: value, updated_at: new Date().toISOString() })
+            .eq('caregiver_id', userId);
+
+        if (error) {
+            console.error('[NotifPrefs] update error:', error.message);
+            // Revert optimistic change
+            setNotifPrefs(previous);
+        }
+    }
+
     async function handleSignOut() {
         setSigningOut(true);
         await supabase.auth.signOut();
@@ -152,18 +231,19 @@ export function SettingsSheet({ visible, onClose }: Props) {
             transparent
             onRequestClose={onClose}
         >
-            {/* Dimmed backdrop — tap outside to close */}
-            <Pressable style={styles.backdrop} onPress={onClose}>
-
-                {/*
-                 * onStartShouldSetResponder stops taps inside the sheet from
-                 * bubbling up to the backdrop Pressable.
-                 */}
-                <View
-                    style={[styles.sheet, { height: SHEET_HEIGHT }]}
-                    onStartShouldSetResponder={() => true}
-                >
-                    {/* Decorative handle — no drag behavior */}
+            {/*
+             * Outer View carries the dim background and is NOT a touchable,
+             * so it never interferes with ScrollView's responder negotiation.
+             *
+             * Inside it, a Pressable sibling fills the area *above* the sheet
+             * (flex:1). Tapping there closes the modal. The sheet itself is a
+             * plain View — no Pressable wrapper — so ScrollView can freely
+             * steal the touch responder for scrolling.
+             */}
+            <View style={styles.backdrop}>
+                <Pressable style={styles.backdropTap} onPress={onClose} />
+                <View style={[styles.sheet, { height: SHEET_HEIGHT }]}>
+                    {/* Decorative handle */}
                     <View style={styles.handleRow}>
                         <View style={styles.handle} />
                     </View>
@@ -230,13 +310,64 @@ export function SettingsSheet({ visible, onClose }: Props) {
                                 />
                             </Card>
 
-                            {/* ── Preferences ────────────────────────────────── */}
-                            <SectionLabel text="Preferences" />
-                            <Card>
-                                <PlaceholderRow icon="notifications-outline" label="Notifications" />
-                                <Sep />
-                                <PlaceholderRow icon="alarm-outline"         label="Snooze duration" />
-                            </Card>
+                            {/* ── Notifications (caregiver) / Preferences (recipient) ── */}
+                            {profile.role === 'caregiver' ? (
+                                <>
+                                    <SectionLabel text="Notifications" />
+                                    <Card>
+                                        <ToggleRow
+                                            icon="alert-circle-outline"
+                                            label="Missed reminders"
+                                            value={notifPrefs?.notify_missed ?? true}
+                                            onChange={v => updateNotifPref('notify_missed', v)}
+                                        />
+                                        <Sep />
+                                        <ToggleRow
+                                            icon="ban-outline"
+                                            label="Skipped reminders"
+                                            value={notifPrefs?.notify_skipped ?? true}
+                                            onChange={v => updateNotifPref('notify_skipped', v)}
+                                        />
+                                        <Sep />
+                                        <ToggleRow
+                                            icon="time-outline"
+                                            label="Snoozed reminders"
+                                            value={notifPrefs?.notify_snoozed ?? false}
+                                            onChange={v => updateNotifPref('notify_snoozed', v)}
+                                        />
+                                        <Sep />
+                                        <ToggleRow
+                                            icon="checkmark-circle-outline"
+                                            label="Completed reminders"
+                                            value={notifPrefs?.notify_taken ?? false}
+                                            onChange={v => updateNotifPref('notify_taken', v)}
+                                        />
+                                        {pushTokenMsg ? (
+                                            <>
+                                                <Sep />
+                                                <View style={styles.pushBanner}>
+                                                    <Ionicons
+                                                        name="information-circle-outline"
+                                                        size={14}
+                                                        color={T.textMuted}
+                                                        style={styles.pushBannerIcon}
+                                                    />
+                                                    <Text style={styles.pushBannerText}>{pushTokenMsg}</Text>
+                                                </View>
+                                            </>
+                                        ) : null}
+                                    </Card>
+                                </>
+                            ) : (
+                                <>
+                                    <SectionLabel text="Preferences" />
+                                    <Card>
+                                        <PlaceholderRow icon="notifications-outline" label="Notifications" />
+                                        <Sep />
+                                        <PlaceholderRow icon="alarm-outline"         label="Snooze duration" />
+                                    </Card>
+                                </>
+                            )}
 
                             {/* ── Support ────────────────────────────────────── */}
                             <SectionLabel text="Support" />
@@ -265,7 +396,7 @@ export function SettingsSheet({ visible, onClose }: Props) {
                         </ScrollView>
                     )}
                 </View>
-            </Pressable>
+            </View>
         </Modal>
     );
 }
@@ -297,6 +428,27 @@ function Row({
     );
 }
 
+function ToggleRow({
+    icon,
+    label,
+    value,
+    onChange,
+}: { icon: string; label: string; value: boolean; onChange: (v: boolean) => void }) {
+    return (
+        <View style={styles.toggleRow}>
+            <Ionicons name={icon as any} size={17} color={T.textMuted} style={styles.rowIcon} />
+            <Text style={styles.toggleLabel}>{label}</Text>
+            <Switch
+                value={value}
+                onValueChange={onChange}
+                trackColor={{ false: T.border, true: T.primaryMid }}
+                thumbColor={value ? T.primary : T.bgSurface}
+                ios_backgroundColor={T.border}
+            />
+        </View>
+    );
+}
+
 function PlaceholderRow({ icon, label }: { icon: string; label: string }) {
     return (
         <View style={styles.row}>
@@ -321,7 +473,10 @@ const styles = StyleSheet.create({
     backdrop: {
         flex:            1,
         backgroundColor: 'rgba(0,0,0,0.45)',
-        justifyContent:  'flex-end',
+        // column layout: backdropTap (flex:1) fills space above sheet; sheet sits below
+    },
+    backdropTap: {
+        flex: 1,
     },
     sheet: {
         backgroundColor:      T.bgSurface,
@@ -440,6 +595,39 @@ const styles = StyleSheet.create({
         fontSize:  13,
         color:     T.textMuted,
         fontStyle: 'italic',
+    },
+
+    // ── Toggle row ────────────────────────────────────────────────────────────
+    toggleRow: {
+        flexDirection:     'row',
+        alignItems:        'center',
+        paddingVertical:   11,
+        paddingHorizontal: 16,
+        gap:               12,
+    },
+    toggleLabel: {
+        flex:       1,
+        fontSize:   15,
+        fontWeight: '500',
+        color:      T.textPrimary,
+    },
+
+    // ── Push token banner ─────────────────────────────────────────────────────
+    pushBanner: {
+        flexDirection:     'row',
+        alignItems:        'flex-start',
+        paddingVertical:   10,
+        paddingHorizontal: 16,
+        gap:               7,
+    },
+    pushBannerIcon: {
+        marginTop: 1,
+    },
+    pushBannerText: {
+        flex:       1,
+        fontSize:   12,
+        color:      T.textMuted,
+        lineHeight: 17,
     },
 
     // Value variants
