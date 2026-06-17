@@ -39,6 +39,7 @@ type Reminder = {
     frequency: 'daily' | 'weekdays' | 'weekends';
     no_response_minutes: number;
     today_status?: ReminderStatus;
+    snoozed_until?: string | null;
 };
 
 const TYPE_ICONS: Record<string, string> = {
@@ -115,6 +116,42 @@ function formatDayLabel() {
     });
 }
 
+function getTimeHint(reminder: Reminder): string | null {
+    const status = reminder.today_status;
+
+    if (status === 'snoozed' && reminder.snoozed_until) {
+        const until = new Date(reminder.snoozed_until);
+        if (until.getTime() <= Date.now()) return 'Snooze ended';
+        const h = until.getHours();
+        const m = until.getMinutes();
+        const suffix = h >= 12 ? 'PM' : 'AM';
+        const displayH = h === 0 ? 12 : h > 12 ? h - 12 : h;
+        return `Until ${displayH}:${String(m).padStart(2, '0')} ${suffix}`;
+    }
+
+    if (status === 'pending') {
+        const [rh, rm] = reminder.time_of_day.split(':').map(Number);
+        const today = new Date();
+        const scheduled = new Date(today.getFullYear(), today.getMonth(), today.getDate(), rh, rm, 0, 0);
+        const diffMin = Math.round((scheduled.getTime() - Date.now()) / 60000);
+
+        if (diffMin > 60) {
+            const hrs  = Math.floor(diffMin / 60);
+            const mins = diffMin % 60;
+            return mins > 0 ? `in ${hrs}h ${mins}m` : `in ${hrs}h`;
+        }
+        if (diffMin > 1)  return `in ${diffMin} min`;
+        if (diffMin >= 0) return 'now';
+
+        // Past scheduled time but still inside the response window
+        const missedAt   = new Date(scheduled.getTime() + reminder.no_response_minutes * 60 * 1000);
+        const windowLeft = Math.round((missedAt.getTime() - Date.now()) / 60000);
+        if (windowLeft > 0) return `${windowLeft} min left`;
+    }
+
+    return null;
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function RecipientDashboard() {
@@ -170,7 +207,7 @@ export default function RecipientDashboard() {
 
         const { data: logs, error: logsError } = await supabase
             .from('reminder_logs')
-            .select('reminder_id, status')
+            .select('reminder_id, status, snoozed_until')
             .eq('recipient_id', user.id)
             .eq('occurrence_date', todayDate)
             .in('reminder_id', reminderIds);
@@ -184,12 +221,13 @@ export default function RecipientDashboard() {
         const now = new Date();
 
         const remindersWithStatus = todaysReminders.map((reminder) => {
-            const matchingLog = logs?.find((log) => log.reminder_id === reminder.id);
-            const logStatus   = matchingLog?.status as ReminderStatus | undefined;
+            const matchingLog  = logs?.find((log) => log.reminder_id === reminder.id);
+            const logStatus    = matchingLog?.status as ReminderStatus | undefined;
+            const snoozedUntil = (matchingLog as any)?.snoozed_until as string | null | undefined;
 
             // Keep any terminal status (taken / snoozed / skipped / missed already in DB).
             if (logStatus && logStatus !== 'pending') {
-                return { ...reminder, today_status: logStatus };
+                return { ...reminder, today_status: logStatus, snoozed_until: snoozedUntil ?? null };
             }
             // No log yet, or still pending — check if the response window has expired.
             const today_status: ReminderStatus = isPastNoResponseWindow(
@@ -198,7 +236,7 @@ export default function RecipientDashboard() {
             )
                 ? 'missed'
                 : 'pending';
-            return { ...reminder, today_status };
+            return { ...reminder, today_status, snoozed_until: null };
         });
 
         setReminders(remindersWithStatus);
@@ -308,11 +346,6 @@ export default function RecipientDashboard() {
                     </TouchableOpacity>
                 </View>
 
-                <SettingsSheet
-                    visible={settingsVisible}
-                    onClose={() => setSettingsVisible(false)}
-                />
-
                 {/* Notification permission denied notice */}
                 {notifDenied && !loading && (
                     <View style={styles.notifDeniedBanner}>
@@ -389,20 +422,40 @@ export default function RecipientDashboard() {
                             )}
 
                             {/* Status row */}
-                            <View style={styles.statusRow}>
-                                <Text style={styles.statusLabel}>Today's status</Text>
-                                <View style={[styles.statusPill, { backgroundColor: statusInfo.bg }]}>
-                                    <Text style={[styles.statusPillText, { color: statusInfo.text }]}>
-                                        {formatStatus(reminder.today_status)}
-                                    </Text>
-                                </View>
-                            </View>
+                            {(() => {
+                                const timeHint = getTimeHint(reminder);
+                                return (
+                                    <View style={styles.statusRow}>
+                                        <Text style={styles.statusLabel}>Today's status</Text>
+                                        <View style={styles.statusRight}>
+                                            {timeHint ? (
+                                                <Text style={styles.timeHint}>{timeHint}</Text>
+                                            ) : null}
+                                            <View style={[styles.statusPill, { backgroundColor: statusInfo.bg }]}>
+                                                <Text style={[styles.statusPillText, { color: statusInfo.text }]}>
+                                                    {formatStatus(reminder.today_status)}
+                                                </Text>
+                                            </View>
+                                        </View>
+                                    </View>
+                                );
+                            })()}
 
                             {/* Action buttons */}
                             {isSaving ? (
                                 <View style={[styles.savingBox, SHADOW.xs]}>
                                     <ActivityIndicator color={T.primary} />
                                     <Text style={styles.savingText}>Saving…</Text>
+                                </View>
+                            ) : reminder.today_status === 'taken' ? (
+                                <View style={styles.respondedBox}>
+                                    <Ionicons name="checkmark-circle" size={20} color={T.success} />
+                                    <Text style={[styles.respondedText, { color: T.success }]}>Marked as taken</Text>
+                                </View>
+                            ) : reminder.today_status === 'skipped' ? (
+                                <View style={styles.respondedBox}>
+                                    <Ionicons name="remove-circle-outline" size={20} color={T.textMuted} />
+                                    <Text style={[styles.respondedText, { color: T.textMuted }]}>Skipped for today</Text>
                                 </View>
                             ) : (
                                 <View style={styles.actionArea}>
@@ -441,8 +494,8 @@ export default function RecipientDashboard() {
                     );
                 })}
 
-                {/* ── Dev helper: test notification (remove before production) ── */}
-                {!loading && reminders.length > 0 && (
+                {/* ── Dev helper: test notification ── */}
+                {__DEV__ && !loading && reminders.length > 0 && (
                     <TouchableOpacity
                         style={styles.testNotifButton}
                         activeOpacity={0.7}
@@ -459,6 +512,11 @@ export default function RecipientDashboard() {
                     </TouchableOpacity>
                 )}
             </ScrollView>
+
+            <SettingsSheet
+                visible={settingsVisible}
+                onClose={() => setSettingsVisible(false)}
+            />
         </SafeAreaView>
     );
 }
@@ -620,6 +678,16 @@ const styles = StyleSheet.create({
         color: T.textMuted,
         fontWeight: '600',
     },
+    statusRight: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    timeHint: {
+        fontSize: 12,
+        color: T.textMuted,
+        fontWeight: '500',
+    },
     statusPill: {
         paddingHorizontal: 10,
         paddingVertical: 5,
@@ -719,6 +787,21 @@ const styles = StyleSheet.create({
         color: '#92400E',
         fontWeight: '500',
         lineHeight: 18,
+    },
+
+    // ── Already-responded state ───────────────────────────────────────
+    respondedBox: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        paddingVertical: 16,
+        backgroundColor: T.bgAlt,
+        borderRadius: RADIUS.xl,
+    },
+    respondedText: {
+        fontSize: 15,
+        fontWeight: '600',
     },
 
     // ── Dev test notification button ───────────────────────────────────

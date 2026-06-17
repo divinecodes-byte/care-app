@@ -98,8 +98,8 @@ function formatTime(time: string): string {
 
 function formatFrequency(freq: Reminder['frequency']): string {
     if (freq === 'daily') return 'Every day';
-    if (freq === 'weekdays') return 'Weekdays only';
-    if (freq === 'weekends') return 'Weekends only';
+    if (freq === 'weekdays') return 'Weekdays';
+    if (freq === 'weekends') return 'Weekends';
     return freq;
 }
 

@@ -152,8 +152,6 @@ export function SettingsSheet({ visible, onClose }: Props) {
     }
 
     async function loadNotifPrefs(uid: string) {
-        console.log('[NotifPrefs] loading for caregiver_id:', uid);
-
         const { data, error } = await supabase
             .from('notification_preferences')
             .select('notify_missed, notify_skipped, notify_snoozed, notify_taken')
@@ -161,10 +159,8 @@ export function SettingsSheet({ visible, onClose }: Props) {
             .maybeSingle();
 
         if (error) {
-            console.error('[NotifPrefs] fetch error:', error.message);
+            console.warn('[settings] notification prefs fetch failed:', error.message);
         }
-
-        console.log('[NotifPrefs] fetched row:', data);
 
         if (data) {
             setNotifPrefs({
@@ -222,6 +218,12 @@ export function SettingsSheet({ visible, onClose }: Props) {
         : profile.role === 'recipient' ? 'Recipient'
         : profile.role;
 
+    function getInitials(name: string): string {
+        const parts = name.split(' ').filter(Boolean);
+        if (parts.length === 0) return '?';
+        return parts.slice(0, 2).map(w => w[0]?.toUpperCase() ?? '').join('');
+    }
+
     // ── Render ────────────────────────────────────────────────────────────────
 
     return (
@@ -276,6 +278,28 @@ export function SettingsSheet({ visible, onClose }: Props) {
                             showsVerticalScrollIndicator={false}
                             bounces
                         >
+                            {/* ── Profile hero ───────────────────────────────── */}
+                            <View style={styles.profileHero}>
+                                <View style={[
+                                    styles.avatarCircle,
+                                    { backgroundColor: profile.role === 'caregiver' ? T.primary : T.success },
+                                ]}>
+                                    <Text style={styles.avatarInitials}>{getInitials(profile.fullName)}</Text>
+                                </View>
+                                <Text style={styles.avatarName}>{profile.fullName}</Text>
+                                <View style={[
+                                    styles.avatarRolePill,
+                                    { backgroundColor: profile.role === 'caregiver' ? T.primaryLight : T.successLight },
+                                ]}>
+                                    <Text style={[
+                                        styles.avatarRoleText,
+                                        { color: profile.role === 'caregiver' ? T.primary : T.success },
+                                    ]}>
+                                        {roleLabel}
+                                    </Text>
+                                </View>
+                            </View>
+
                             {/* ── Profile ────────────────────────────────────── */}
                             <SectionLabel text="Profile" />
                             <Card>
@@ -468,6 +492,45 @@ function Sep() {
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
+
+    // ── Profile hero ─────────────────────────────────────────────────────────
+    profileHero: {
+        alignItems:    'center',
+        paddingTop:    8,
+        paddingBottom: 4,
+    },
+    avatarCircle: {
+        width:           64,
+        height:          64,
+        borderRadius:    RADIUS.full,
+        justifyContent:  'center',
+        alignItems:      'center',
+        marginBottom:    10,
+    },
+    avatarInitials: {
+        fontSize:      24,
+        fontWeight:    '700',
+        color:         '#FFFFFF',
+        letterSpacing: 0.5,
+    },
+    avatarName: {
+        fontSize:      18,
+        fontWeight:    '700',
+        color:         T.textPrimary,
+        letterSpacing: -0.3,
+        marginBottom:  6,
+        textAlign:     'center',
+    },
+    avatarRolePill: {
+        paddingHorizontal: 12,
+        paddingVertical:   4,
+        borderRadius:      RADIUS.full,
+    },
+    avatarRoleText: {
+        fontSize:   12,
+        fontWeight: '700',
+        letterSpacing: 0.3,
+    },
 
     // ── Layout ────────────────────────────────────────────────────────────────
     backdrop: {

@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -38,6 +38,24 @@ export default function InviteRecipientScreen() {
     const [inviteCode, setInviteCode] = useState('');
     const [loading, setLoading]       = useState(false);
 
+    // Restore any existing pending invite so the user sees their code immediately
+    // and we never create duplicate pending connection rows.
+    useEffect(() => {
+        (async () => {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) return;
+            const { data } = await supabase
+                .from('connections')
+                .select('invite_code')
+                .eq('caregiver_id', user.id)
+                .eq('status', 'pending')
+                .order('created_at', { ascending: false })
+                .limit(1)
+                .maybeSingle();
+            if (data?.invite_code) setInviteCode(data.invite_code);
+        })();
+    }, []);
+
     async function createInviteCode() {
         if (Platform.OS === 'ios') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         setLoading(true);
@@ -52,16 +70,35 @@ export default function InviteRecipientScreen() {
 
         const code = generateInviteCode();
 
-        const { error } = await supabase.from('connections').insert({
-            caregiver_id: user.id,
-            invite_code:  code,
-            status:       'pending',
-        });
+        // Reuse an existing pending row (update its code) rather than inserting a
+        // new one. This prevents orphaned pending connections from accumulating.
+        const { data: existing } = await supabase
+            .from('connections')
+            .select('id')
+            .eq('caregiver_id', user.id)
+            .eq('status', 'pending')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+        const { error } = existing?.id
+            ? await supabase
+                  .from('connections')
+                  .update({ invite_code: code })
+                  .eq('id', existing.id)
+            : await supabase.from('connections').insert({
+                  caregiver_id: user.id,
+                  invite_code:  code,
+                  status:       'pending',
+              });
 
         setLoading(false);
 
         if (error) {
-            Alert.alert('Invite error', error.message);
+            Alert.alert(
+                'Could not save invite code',
+                'Please try again. If the problem continues, check your connection.'
+            );
             return;
         }
 

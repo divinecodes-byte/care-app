@@ -404,6 +404,17 @@ export default function ReminderAlertScreen() {
                         <ActivityIndicator color="#93C5FD" />
                         <Text style={styles.savingText}>Saving…</Text>
                     </View>
+                ) : todayStatus === 'taken' || todayStatus === 'skipped' ? (
+                    <View style={styles.respondedBox}>
+                        <Ionicons
+                            name={todayStatus === 'taken' ? 'checkmark-circle' : 'remove-circle-outline'}
+                            size={28}
+                            color={todayStatus === 'taken' ? '#4ADE80' : 'rgba(255,255,255,0.4)'}
+                        />
+                        <Text style={styles.respondedText}>
+                            {todayStatus === 'taken' ? 'Marked as taken' : 'Skipped for today'}
+                        </Text>
+                    </View>
                 ) : (
                     <>
                         <TouchableOpacity
@@ -435,7 +446,9 @@ export default function ReminderAlertScreen() {
                 )}
 
                 <Text style={styles.footerText}>
-                    {isOverdue
+                    {todayStatus === 'taken' || todayStatus === 'skipped'
+                        ? 'Your caregiver can see your response.'
+                        : isOverdue
                         ? 'You can still respond — your caregiver will see your update.'
                         : 'Your caregiver will see your response.'}
                 </Text>
@@ -734,5 +747,20 @@ const styles = StyleSheet.create({
         textAlign: 'center',
         lineHeight: 18,
         paddingBottom: 4,
+    },
+
+    // ── Already-responded state ────────────────────────────────────────────────
+    respondedBox: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 10,
+        paddingVertical: 20,
+    },
+    respondedText: {
+        color: 'rgba(255,255,255,0.7)',
+        fontSize: 17,
+        fontWeight: '600',
+        letterSpacing: -0.2,
     },
 });

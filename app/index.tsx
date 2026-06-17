@@ -2,13 +2,28 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { useEffect } from 'react';
 import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { RADIUS, SHADOW, T } from '@/constants/theme';
+import { supabase } from '@/lib/supabase';
 
 export default function HomeScreen() {
     const insets = useSafeAreaInsets();
+
+    useEffect(() => {
+        supabase.auth.getSession().then(async ({ data: { session } }) => {
+            if (!session?.user) return;
+            const { data } = await supabase
+                .from('profiles')
+                .select('role')
+                .eq('id', session.user.id)
+                .maybeSingle();
+            if (data?.role === 'caregiver') router.replace('/caregiver-dashboard');
+            else if (data?.role === 'recipient') router.replace('/recipient-dashboard');
+        });
+    }, []);
 
     function navigate(href: '/signup' | '/signin') {
         if (Platform.OS === 'ios') {

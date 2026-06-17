@@ -1084,7 +1084,11 @@ export default function CaregiverDashboard() {
                 <View style={styles.header}>
                     <View style={styles.headerTextBlock}>
                         <Text style={styles.heading}>Care Overview</Text>
-                        <Text style={styles.subheading}>Loved one care activity</Text>
+                        <Text style={styles.subheading}>
+                            {!connectionLoading && connectionSummary.status === 'accepted' && connectionSummary.recipientName
+                                ? `Tracking ${connectionSummary.recipientName}'s care`
+                                : 'Loved one care activity'}
+                        </Text>
                     </View>
 
                     <View style={styles.headerActions}>
