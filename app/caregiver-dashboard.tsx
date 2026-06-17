@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Platform,
@@ -16,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { SettingsSheet } from '@/components/settings-sheet';
 import { RADIUS, SHADOW, T } from '@/constants/theme';
+import { registerCaregiverPushToken } from '@/lib/notifications';
 import { supabase } from '@/lib/supabase';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -484,6 +485,8 @@ export default function CaregiverDashboard() {
     const [connectionLoading, setConnectionLoading] = useState(true);
     const [dashboardLoading, setDashboardLoading]   = useState(true);
 
+    const pushRegistrationAttemptedRef = useRef(false);
+
     const [connectionSummary, setConnectionSummary] = useState<ConnectionSummary>({ id: '', status: 'none' });
     const [todayData, setTodayData]                 = useState<DayData | null>(null);
     const [weeklyData, setWeeklyData]               = useState<DayData[]>([]);
@@ -502,6 +505,17 @@ export default function CaregiverDashboard() {
             setConnectionLoading(false);
             setDashboardLoading(false);
             return;
+        }
+
+        if (!pushRegistrationAttemptedRef.current) {
+            pushRegistrationAttemptedRef.current = true;
+            registerCaregiverPushToken(user.id)
+                .then((result) => {
+                    if (!result.ok) {
+                        console.warn('[caregiver-dashboard] push registration failed', result);
+                    }
+                })
+                .catch((err) => console.warn('[caregiver-dashboard] push registration error:', err));
         }
 
         const { data: connections, error: connectionError } = await supabase
