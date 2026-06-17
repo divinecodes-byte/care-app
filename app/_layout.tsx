@@ -3,6 +3,7 @@ import { router, Stack } from 'expo-router';
 import { useEffect, useRef } from 'react';
 
 import { setupAndroidChannel } from '@/lib/notifications';
+import { supabase } from '@/lib/supabase';
 
 // Show the notification banner even when the app is in the foreground.
 // The recipient still has to tap it (or tap the card) to open the alert screen.
@@ -16,17 +17,46 @@ Notifications.setNotificationHandler({
 });
 
 export default function RootLayout() {
-    // Track the last routed notification ID so we never navigate twice for the
-    // same tap (the cold-launch check and the live listener can both fire).
+    // Dedup guard — the cold-launch path and the live listener can both fire for
+    // the same tap on iOS; only route once per notification identifier.
     const handledNotifRef = useRef<string | undefined>(undefined);
 
-    function routeToReminder(response: Notifications.NotificationResponse) {
-        const notifId    = response.notification.request.identifier;
-        const reminderId = response.notification.request.content.data?.reminderId as string | undefined;
-        if (!reminderId) return;
-        if (handledNotifRef.current === notifId) return; // already handled
+    async function routeNotification(response: Notifications.NotificationResponse) {
+        const notifId = response.notification.request.identifier;
+        if (handledNotifRef.current === notifId) return;
         handledNotifRef.current = notifId;
-        router.push({ pathname: '/reminder-alert', params: { reminderId } });
+
+        const data = (response.notification.request.content.data ?? {}) as Record<string, unknown>;
+        const reminderId = data.reminderId as string | undefined;
+
+        if (data.type === 'caregiver_reminder_event') {
+            // Verify the currently signed-in user is actually a caregiver before
+            // opening caregiver screens. On a shared test device the push token may
+            // belong to a session that has since been swapped out.
+            const { data: { session } } = await supabase.auth.getSession();
+            if (!session?.user) {
+                router.push('/');
+                return;
+            }
+            const { data: profile } = await supabase
+                .from('profiles')
+                .select('role')
+                .eq('id', session.user.id)
+                .maybeSingle();
+
+            if (profile?.role === 'caregiver') {
+                router.push('/caregiver-dashboard');
+            } else {
+                // Signed in as a different role — route to their own dashboard safely.
+                router.push('/recipient-dashboard');
+            }
+            return;
+        }
+
+        // Recipient local reminder notification — open the full-screen alert.
+        if (reminderId) {
+            router.push({ pathname: '/reminder-alert', params: { reminderId } });
+        }
     }
 
     useEffect(() => {
@@ -35,7 +65,7 @@ export default function RootLayout() {
         // Handles foreground, background, and cold-launch taps.
         // expo-notifications 0.32 queues the initial response on iOS so the
         // listener receives it even when the app was fully killed.
-        const sub = Notifications.addNotificationResponseReceivedListener(routeToReminder);
+        const sub = Notifications.addNotificationResponseReceivedListener(routeNotification);
         return () => sub.remove();
     }, []);
 
