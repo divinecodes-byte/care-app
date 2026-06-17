@@ -113,7 +113,7 @@ export async function cancelAllReminderNotifications(): Promise<void> {
 
 export type PushTokenResult =
     | { ok: true }
-    | { ok: false; reason: 'no-permission' | 'expo-go' | 'error'; message: string };
+    | { ok: false; reason: 'no-permission' | 'project_id_missing' | 'expo-go' | 'error'; message: string };
 
 /**
  * Request permission, fetch the Expo push token, and upsert it into push_tokens.
@@ -135,11 +135,20 @@ export async function registerCaregiverPushToken(caregiverId: string): Promise<P
         };
     }
 
+    const projectId: string | undefined =
+        Constants.easConfig?.projectId ??
+        (Constants.expoConfig?.extra as any)?.eas?.projectId;
+
+    if (!projectId) {
+        return {
+            ok: false,
+            reason: 'project_id_missing',
+            message: 'Push notifications need a development build project ID. Preferences are saved.',
+        };
+    }
+
     try {
-        const projectId = (Constants.expoConfig?.extra as any)?.eas?.projectId as string | undefined;
-        const { data: token } = await Notifications.getExpoPushTokenAsync(
-            projectId ? { projectId } : undefined
-        );
+        const { data: token } = await Notifications.getExpoPushTokenAsync({ projectId });
 
         await supabase.from('push_tokens').upsert(
             {
