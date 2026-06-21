@@ -155,10 +155,19 @@ export async function registerCaregiverPushToken(caregiverId: string): Promise<P
                 user_id:         caregiverId,
                 expo_push_token: token,
                 platform:        Platform.OS,
+                is_active:       true,
                 updated_at:      new Date().toISOString(),
             },
             { onConflict: 'expo_push_token' }
         );
+
+        // A user can re-register from a new device/install and end up with
+        // multiple tokens. Only the one we just upserted should stay active.
+        await supabase
+            .from('push_tokens')
+            .update({ is_active: false })
+            .eq('user_id', caregiverId)
+            .neq('expo_push_token', token);
 
         return { ok: true };
     } catch (err: any) {

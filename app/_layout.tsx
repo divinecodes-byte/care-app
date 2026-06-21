@@ -3,7 +3,6 @@ import { router, Stack } from 'expo-router';
 import { useEffect, useRef } from 'react';
 
 import { setupAndroidChannel } from '@/lib/notifications';
-import { supabase } from '@/lib/supabase';
 
 // Show the notification banner even when the app is in the foreground.
 // The recipient still has to tap it (or tap the card) to open the alert screen.
@@ -21,7 +20,7 @@ export default function RootLayout() {
     // the same tap on iOS; only route once per notification identifier.
     const handledNotifRef = useRef<string | undefined>(undefined);
 
-    async function routeNotification(response: Notifications.NotificationResponse) {
+    function routeNotification(response: Notifications.NotificationResponse) {
         const notifId = response.notification.request.identifier;
         if (handledNotifRef.current === notifId) return;
         handledNotifRef.current = notifId;
@@ -30,26 +29,10 @@ export default function RootLayout() {
         const reminderId = data.reminderId as string | undefined;
 
         if (data.type === 'caregiver_reminder_event') {
-            // Verify the currently signed-in user is actually a caregiver before
-            // opening caregiver screens. On a shared test device the push token may
-            // belong to a session that has since been swapped out.
-            const { data: { session } } = await supabase.auth.getSession();
-            if (!session?.user) {
-                router.push('/');
-                return;
-            }
-            const { data: profile } = await supabase
-                .from('profiles')
-                .select('role')
-                .eq('id', session.user.id)
-                .maybeSingle();
-
-            if (profile?.role === 'caregiver') {
-                router.push('/caregiver-dashboard');
-            } else {
-                // Signed in as a different role — route to their own dashboard safely.
-                router.push('/recipient-dashboard');
-            }
+            // Caregiver push notifications never open the recipient's full-screen
+            // reminder alert (and its Taken/Snooze/Skip actions) — for now they
+            // just take the caregiver to their dashboard.
+            router.push('/caregiver-dashboard');
             return;
         }
 
