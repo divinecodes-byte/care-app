@@ -1,4 +1,3 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
 import { useState } from 'react';
@@ -91,16 +90,6 @@ export default function SignupScreen() {
                     keyboardShouldPersistTaps="handled"
                     showsVerticalScrollIndicator={false}
                 >
-                    {/* Back button */}
-                    <TouchableOpacity
-                        style={styles.backButton}
-                        onPress={() => router.back()}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    >
-                        <Ionicons name="chevron-back" size={22} color={T.primary} />
-                        <Text style={styles.backText}>Back</Text>
-                    </TouchableOpacity>
-
                     {/* Header */}
                     <Text style={styles.heading}>Create your account</Text>
                     <Text style={styles.subheading}>
@@ -205,19 +194,6 @@ const styles = StyleSheet.create({
         paddingBottom: 32,
     },
 
-    // ── Navigation ────────────────────────────────────────────────────
-    backButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: 32,
-        alignSelf: 'flex-start',
-    },
-    backText: {
-        fontSize: 16,
-        fontWeight: '600',
-        color: T.primary,
-        marginLeft: 2,
-    },
 
     // ── Header ────────────────────────────────────────────────────────
     heading: {

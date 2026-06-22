@@ -30,6 +30,8 @@ type Reminder = {
     frequency: 'daily' | 'weekdays' | 'weekends';
     no_response_minutes: number;
     created_at: string;
+    is_active: boolean;
+    updated_at: string;
 };
 
 type ReminderLog = {
@@ -107,11 +109,24 @@ function formatDateLabel(date: Date): string {
     return date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
-function getAnalyticsStartDate(connectionAcceptedAt: string, reminderCreatedAt: string): Date {
+function getAnalyticsStartDate(
+    connectionAcceptedAt: string,
+    reminderCreatedAt: string,
+    timeOfDay: string
+): Date {
     const connDate = new Date(connectionAcceptedAt);
     const remDate  = new Date(reminderCreatedAt);
     const later    = connDate > remDate ? connDate : remDate;
-    return new Date(later.getFullYear(), later.getMonth(), later.getDate(), 0, 0, 0, 0);
+
+    // If the reminder/connection only became eligible after today's
+    // scheduled window had already passed, the first occurrence is the
+    // next calendar day — today must never be backfilled as missed.
+    const [h, m] = timeOfDay.split(':').map(Number);
+    const scheduledOnLaterDate = new Date(
+        later.getFullYear(), later.getMonth(), later.getDate(), h, m, 0, 0
+    );
+    const laterDateStart = new Date(later.getFullYear(), later.getMonth(), later.getDate(), 0, 0, 0, 0);
+    return later > scheduledOnLaterDate ? addDays(laterDateStart, 1) : laterDateStart;
 }
 
 function shouldShowOnDate(frequency: Reminder['frequency'], date: Date): boolean {
@@ -129,9 +144,21 @@ function isReminderEligibleOnDate(
     connectionAcceptedAt: string
 ): boolean {
     if (!shouldShowOnDate(reminder.frequency, date)) return false;
-    const start     = getAnalyticsStartDate(connectionAcceptedAt, reminder.created_at);
+    const start     = getAnalyticsStartDate(connectionAcceptedAt, reminder.created_at, reminder.time_of_day);
     const dateStart = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
-    return dateStart >= start;
+    if (dateStart < start) return false;
+
+    // Soft-deleted reminders keep their past logs/history, but aren't
+    // eligible for any date after they were deactivated.
+    if (!reminder.is_active) {
+        const deactivatedAt = new Date(reminder.updated_at);
+        const deactivatedDateStart = new Date(
+            deactivatedAt.getFullYear(), deactivatedAt.getMonth(), deactivatedAt.getDate(), 0, 0, 0, 0
+        );
+        if (dateStart > deactivatedDateStart) return false;
+    }
+
+    return true;
 }
 
 function buildScheduledDateTime(dateString: string, timeOfDay: string): Date {
@@ -297,7 +324,7 @@ export default function ReminderDetailsScreen() {
         const { data: rem, error: remErr } = await supabase
             .from('reminders')
             .select(
-                'id, connection_id, caregiver_id, recipient_id, title, reminder_type, notes, time_of_day, frequency, no_response_minutes, created_at'
+                'id, connection_id, caregiver_id, recipient_id, title, reminder_type, notes, time_of_day, frequency, no_response_minutes, created_at, is_active, updated_at'
             )
             .eq('id', reminderId)
             .maybeSingle();
@@ -337,7 +364,7 @@ export default function ReminderDetailsScreen() {
         const logs         = (logsData || []) as ReminderLog[];
         const reminderData = rem as Reminder;
 
-        const startDate = getAnalyticsStartDate(acceptedAt, reminderData.created_at);
+        const startDate = getAnalyticsStartDate(acceptedAt, reminderData.created_at, reminderData.time_of_day);
         setAnalyticsStartLabel(
             startDate.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })
         );
@@ -411,11 +438,15 @@ export default function ReminderDetailsScreen() {
                     {/* ── Reminder info ── */}
                     <View style={[styles.card, SHADOW.xs]}>
                         <View style={styles.typePill}>
-                            <Text style={styles.typePillText}>{reminder.reminder_type}</Text>
+                            <Text style={styles.typePillText}>
+                                {reminder.reminder_type}{!reminder.is_active ? ' · Deleted' : ''}
+                            </Text>
                         </View>
                         <Text style={styles.reminderTitle}>{reminder.title}</Text>
                         <Text style={styles.reminderMeta}>
-                            {formatTime(reminder.time_of_day)} · {formatFrequency(reminder.frequency)}
+                            {reminder.is_active
+                                ? `${formatTime(reminder.time_of_day)} · ${formatFrequency(reminder.frequency)}`
+                                : 'No longer scheduled — showing historical data'}
                         </Text>
 
                         {reminder.notes ? (

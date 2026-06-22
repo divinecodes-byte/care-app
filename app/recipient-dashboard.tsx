@@ -23,7 +23,7 @@ import {
     scheduleReminderNotifications,
     scheduleTestNotification,
 } from '@/lib/notifications';
-import { isPastNoResponseWindow } from '@/lib/reminderStatus';
+import { getFirstEligibleDateString, isPastNoResponseWindow } from '@/lib/reminderStatus';
 
 type ReminderStatus = 'pending' | 'taken' | 'snoozed' | 'skipped' | 'missed';
 
@@ -38,6 +38,7 @@ type Reminder = {
     time_of_day: string;
     frequency: 'daily' | 'weekdays' | 'weekends';
     no_response_minutes: number;
+    created_at: string;
     today_status?: ReminderStatus;
     snoozed_until?: string | null;
 };
@@ -168,13 +169,13 @@ export default function RecipientDashboard() {
 
         if (userError || !user) {
             setLoading(false);
-            Alert.alert('Not signed in', 'Please sign in again.');
+            router.replace('/signin');
             return;
         }
 
         const { data, error } = await supabase
             .from('reminders')
-            .select('id, connection_id, caregiver_id, recipient_id, title, reminder_type, notes, time_of_day, frequency, no_response_minutes')
+            .select('id, connection_id, caregiver_id, recipient_id, title, reminder_type, notes, time_of_day, frequency, no_response_minutes, created_at')
             .eq('recipient_id', user.id)
             .eq('is_active', true)
             .order('time_of_day', { ascending: true });
@@ -194,7 +195,15 @@ export default function RecipientDashboard() {
             scheduleReminderNotifications(data || []).catch(console.warn);
         }
 
-        const todaysReminders = (data || []).filter((r) => shouldShowToday(r.frequency));
+        const todayDate = getTodayDateString();
+
+        // Exclude reminders not yet eligible today — a reminder created today
+        // after its scheduled time-of-day already passed shouldn't be treated
+        // as missed; its first occurrence is tomorrow.
+        const todaysReminders = (data || []).filter((r) =>
+            shouldShowToday(r.frequency) &&
+            getFirstEligibleDateString(r.created_at, r.time_of_day) <= todayDate
+        );
 
         if (todaysReminders.length === 0) {
             setReminders([]);
@@ -202,7 +211,6 @@ export default function RecipientDashboard() {
             return;
         }
 
-        const todayDate  = getTodayDateString();
         const reminderIds = todaysReminders.map((r) => r.id);
 
         const { data: logs, error: logsError } = await supabase

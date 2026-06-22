@@ -35,6 +35,8 @@ type Reminder = {
     frequency: 'daily' | 'weekdays' | 'weekends';
     no_response_minutes: number;
     created_at: string;
+    is_active: boolean;
+    updated_at: string;
 };
 
 type ReminderLog = {
@@ -83,6 +85,7 @@ type ReminderBreakdownItem = {
     snoozed: number;
     pending: number;
     adherence: number;
+    isActive: boolean;
 };
 
 type ConnectionSummary = {
@@ -172,11 +175,24 @@ function buildScheduledDateTime(dateString: string, timeOfDay: string): Date {
 
 // ─── Analytics helpers ────────────────────────────────────────────────────────
 
-function getAnalyticsStartDate(connectionAcceptedAt: string, reminderCreatedAt: string): Date {
+function getAnalyticsStartDate(
+    connectionAcceptedAt: string,
+    reminderCreatedAt: string,
+    timeOfDay: string
+): Date {
     const connDate = new Date(connectionAcceptedAt);
     const remDate  = new Date(reminderCreatedAt);
     const later    = connDate > remDate ? connDate : remDate;
-    return new Date(later.getFullYear(), later.getMonth(), later.getDate(), 0, 0, 0, 0);
+
+    // If the reminder/connection only became eligible after today's
+    // scheduled window had already passed, the first occurrence is the
+    // next calendar day — today must never be backfilled as missed.
+    const [h, m] = timeOfDay.split(':').map(Number);
+    const scheduledOnLaterDate = new Date(
+        later.getFullYear(), later.getMonth(), later.getDate(), h, m, 0, 0
+    );
+    const laterDateStart = new Date(later.getFullYear(), later.getMonth(), later.getDate(), 0, 0, 0, 0);
+    return later > scheduledOnLaterDate ? addDays(laterDateStart, 1) : laterDateStart;
 }
 
 function isReminderEligibleOnDate(
@@ -185,9 +201,22 @@ function isReminderEligibleOnDate(
     connectionAcceptedAt: string
 ): boolean {
     if (!shouldShowOnDate(reminder.frequency, date)) return false;
-    const start     = getAnalyticsStartDate(connectionAcceptedAt, reminder.created_at);
+    const start     = getAnalyticsStartDate(connectionAcceptedAt, reminder.created_at, reminder.time_of_day);
     const dateStart = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
-    return dateStart >= start;
+    if (dateStart < start) return false;
+
+    // Soft-deleted reminders keep their past logs/history, but stop being
+    // eligible for any date after they were deactivated (no future/missed
+    // occurrences once deleted).
+    if (!reminder.is_active) {
+        const deactivatedAt = new Date(reminder.updated_at);
+        const deactivatedDateStart = new Date(
+            deactivatedAt.getFullYear(), deactivatedAt.getMonth(), deactivatedAt.getDate(), 0, 0, 0, 0
+        );
+        if (dateStart > deactivatedDateStart) return false;
+    }
+
+    return true;
 }
 
 function getComputedStatus(
@@ -305,6 +334,7 @@ function buildReminderBreakdown(
             snoozed,
             pending,
             adherence: scheduled === 0 ? 0 : Math.round((completed / scheduled) * 100),
+            isActive: reminder.is_active,
         };
     });
 }
@@ -425,9 +455,18 @@ function BreakdownCard({ item }: { item: ReminderBreakdownItem }) {
         >
             <View style={styles.bcHeader}>
                 <View style={{ flex: 1 }}>
-                    <Text style={styles.bcName} numberOfLines={1}>{item.name}</Text>
+                    <View style={styles.bcNameRow}>
+                        <Text style={styles.bcName} numberOfLines={1}>{item.name}</Text>
+                        {!item.isActive && (
+                            <View style={styles.bcDeletedPill}>
+                                <Text style={styles.bcDeletedText}>Deleted</Text>
+                            </View>
+                        )}
+                    </View>
                     <Text style={styles.bcMeta}>
-                        {formatTime(item.time_of_day)} · {formatFrequency(item.frequency)}
+                        {item.isActive
+                            ? `${formatTime(item.time_of_day)} · ${formatFrequency(item.frequency)}`
+                            : 'No longer scheduled'}
                     </Text>
                 </View>
                 <View style={styles.bcAdherenceBlock}>
@@ -501,9 +540,9 @@ export default function CaregiverDashboard() {
         const { data: { user }, error: userError } = await supabase.auth.getUser();
 
         if (userError || !user) {
-            setConnectionSummary({ id: '', status: 'none' });
             setConnectionLoading(false);
             setDashboardLoading(false);
+            router.replace('/signin');
             return;
         }
 
@@ -579,11 +618,10 @@ export default function CaregiverDashboard() {
         const { data: remindersData, error: remindersError } = await supabase
             .from('reminders')
             .select(
-                'id, connection_id, caregiver_id, recipient_id, title, reminder_type, notes, time_of_day, frequency, no_response_minutes, created_at'
+                'id, connection_id, caregiver_id, recipient_id, title, reminder_type, notes, time_of_day, frequency, no_response_minutes, created_at, is_active, updated_at'
             )
             .eq('caregiver_id', user.id)
             .eq('connection_id', acceptedConnection.id)
-            .eq('is_active', true)
             .order('time_of_day', { ascending: true });
 
         if (remindersError) {
@@ -1538,12 +1576,29 @@ const styles = StyleSheet.create({
         marginBottom: 12,
         gap: 12,
     },
+    bcNameRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        marginBottom: 3,
+    },
     bcName: {
         fontSize: 16,
         fontWeight: '700',
         color: T.textPrimary,
         letterSpacing: -0.3,
-        marginBottom: 3,
+        flexShrink: 1,
+    },
+    bcDeletedPill: {
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: RADIUS.full,
+        backgroundColor: T.bgAlt,
+    },
+    bcDeletedText: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: T.textMuted,
     },
     bcMeta: { fontSize: 13, color: T.textMuted, fontWeight: '500' },
     bcAdherenceBlock: { alignItems: 'flex-end', flexShrink: 0 },

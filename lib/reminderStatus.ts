@@ -25,6 +25,28 @@ export function buildSnoozedUntilIso(minutes = 10): string {
 }
 
 /**
+ * The first calendar date ("YYYY-MM-DD", local time) a reminder is eligible
+ * to fire, given when it was created and its daily time-of-day.
+ *
+ * A reminder created today after today's time-of-day has already passed
+ * (e.g. created at 8:30 PM for an 8:00 AM reminder) is not eligible until
+ * tomorrow — today must never be treated as missed in that case.
+ */
+export function getFirstEligibleDateString(createdAt: string, timeOfDay: string): string {
+    const created = new Date(createdAt);
+    const [h, m]  = timeOfDay.split(':').map(Number);
+    const scheduledOnCreatedDate = new Date(
+        created.getFullYear(), created.getMonth(), created.getDate(), h, m, 0, 0
+    );
+
+    const firstEligible = created > scheduledOnCreatedDate
+        ? new Date(created.getFullYear(), created.getMonth(), created.getDate() + 1, 0, 0, 0, 0)
+        : new Date(created.getFullYear(), created.getMonth(), created.getDate(), 0, 0, 0, 0);
+
+    return `${firstEligible.getFullYear()}-${String(firstEligible.getMonth() + 1).padStart(2, '0')}-${String(firstEligible.getDate()).padStart(2, '0')}`;
+}
+
+/**
  * Returns true when the scheduled time + no-response window has already
  * expired for today's occurrence, using the current local clock.
  *

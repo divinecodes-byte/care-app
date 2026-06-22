@@ -16,7 +16,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { RADIUS, SHADOW, T } from '@/constants/theme';
-import { isPastNoResponseWindow } from '@/lib/reminderStatus';
+import { getFirstEligibleDateString, isPastNoResponseWindow } from '@/lib/reminderStatus';
 import { supabase } from '@/lib/supabase';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -35,6 +35,7 @@ type Reminder = {
     frequency: string;
     no_response_minutes: number;
     is_active: boolean;
+    created_at: string;
 };
 
 // ─── Pure helpers ─────────────────────────────────────────────────────────────
@@ -148,7 +149,7 @@ export default function ReminderAlertScreen() {
 
         const { data: reminderData, error: reminderError } = await supabase
             .from('reminders')
-            .select('id, connection_id, caregiver_id, recipient_id, title, reminder_type, notes, time_of_day, frequency, no_response_minutes, is_active')
+            .select('id, connection_id, caregiver_id, recipient_id, title, reminder_type, notes, time_of_day, frequency, no_response_minutes, is_active, created_at')
             .eq('id', reminderId)
             .maybeSingle();
 
@@ -178,14 +179,21 @@ export default function ReminderAlertScreen() {
 
         setReminder(reminderData as Reminder);
 
+        const todayDate = getTodayDateString();
+
+        // A reminder created today after today's scheduled time already
+        // passed isn't eligible until tomorrow — never treat it as overdue
+        // or missed for today.
+        const eligibleToday =
+            getFirstEligibleDateString(reminderData.created_at, reminderData.time_of_day) <= todayDate;
+
         // Compute overdue state once so the UI reflects it immediately.
-        const overdue = isPastNoResponseWindow(
+        const overdue = eligibleToday && isPastNoResponseWindow(
             reminderData.time_of_day,
             reminderData.no_response_minutes
         );
         setIsOverdue(overdue);
 
-        const todayDate = getTodayDateString();
         const { data: logData } = await supabase
             .from('reminder_logs')
             .select('status')
