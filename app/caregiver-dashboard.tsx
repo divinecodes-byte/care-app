@@ -307,7 +307,10 @@ function buildReminderBreakdown(
     connectionAcceptedAt: string
 ): ReminderBreakdownItem[] {
     const todayString = getLocalDateString(new Date());
-    return reminders.map((reminder) => {
+    // Deleted/inactive reminders keep contributing their past logs to
+    // analytics (via isReminderEligibleOnDate below), but must not appear
+    // as cards in the active reminder breakdown.
+    return reminders.filter((reminder) => reminder.is_active).map((reminder) => {
         let scheduled = 0, completed = 0, missed = 0, skipped = 0, snoozed = 0, pending = 0;
         monthDates.forEach((date) => {
             const dateString = getLocalDateString(date);
