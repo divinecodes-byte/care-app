@@ -52,6 +52,7 @@ type ReminderDisplay = {
     name: string;
     time: string;
     status: ReminderStatus;
+    isActive: boolean;
 };
 
 type DayData = {
@@ -198,23 +199,19 @@ function getAnalyticsStartDate(
 function isReminderEligibleOnDate(
     reminder: Reminder,
     date: Date,
-    connectionAcceptedAt: string
+    connectionAcceptedAt: string,
+    hasLogOnDate: boolean
 ): boolean {
     if (!shouldShowOnDate(reminder.frequency, date)) return false;
     const start     = getAnalyticsStartDate(connectionAcceptedAt, reminder.created_at, reminder.time_of_day);
     const dateStart = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
     if (dateStart < start) return false;
 
-    // Soft-deleted reminders keep their past logs/history, but stop being
-    // eligible for any date after they were deactivated (no future/missed
-    // occurrences once deleted).
-    if (!reminder.is_active) {
-        const deactivatedAt = new Date(reminder.updated_at);
-        const deactivatedDateStart = new Date(
-            deactivatedAt.getFullYear(), deactivatedAt.getMonth(), deactivatedAt.getDate(), 0, 0, 0, 0
-        );
-        if (dateStart > deactivatedDateStart) return false;
-    }
+    // Soft-deleted reminders keep their real past logs/history, but must
+    // never surface via virtual scheduled/pending/missed computation — not
+    // even on the day they were deactivated. Without an actual log there is
+    // nothing to show for an inactive reminder on a given date.
+    if (!reminder.is_active) return hasLogOnDate;
 
     return true;
 }
@@ -244,19 +241,23 @@ function buildDayData(
     const isFuture    = dateString > todayString;
 
     const scheduledReminders = reminders.filter((r) => shouldShowOnDate(r.frequency, date));
-    const eligibleReminders  = scheduledReminders.filter((r) =>
-        isReminderEligibleOnDate(r, date, connectionAcceptedAt)
-    );
+    const eligibleReminders  = scheduledReminders.filter((r) => {
+        const hasLogOnDate = logs.some(
+            (l) => l.reminder_id === r.id && l.occurrence_date === dateString
+        );
+        return isReminderEligibleOnDate(r, date, connectionAcceptedAt, hasLogOnDate);
+    });
 
     const reminderDisplays: ReminderDisplay[] = eligibleReminders.map((reminder) => {
         const log = logs.find(
             (l) => l.reminder_id === reminder.id && l.occurrence_date === dateString
         );
         return {
-            id:     reminder.id,
-            name:   reminder.title,
-            time:   formatTime(reminder.time_of_day),
-            status: getComputedStatus(reminder, dateString, todayString, log),
+            id:       reminder.id,
+            name:     reminder.title,
+            time:     formatTime(reminder.time_of_day),
+            status:   getComputedStatus(reminder, dateString, todayString, log),
+            isActive: reminder.is_active,
         };
     });
 
@@ -315,8 +316,8 @@ function buildReminderBreakdown(
         monthDates.forEach((date) => {
             const dateString = getLocalDateString(date);
             if (dateString > todayString) return;
-            if (!isReminderEligibleOnDate(reminder, date, connectionAcceptedAt)) return;
-            const log    = logs.find((l) => l.reminder_id === reminder.id && l.occurrence_date === dateString);
+            const log = logs.find((l) => l.reminder_id === reminder.id && l.occurrence_date === dateString);
+            if (!isReminderEligibleOnDate(reminder, date, connectionAcceptedAt, !!log)) return;
             const status = getComputedStatus(reminder, dateString, todayString, log);
             if (status === 'pending') { pending += 1; return; }
             scheduled += 1;
@@ -395,10 +396,17 @@ function getBarHeight(day: DayData): string {
 
 function ReminderRow({ reminder }: { reminder: ReminderDisplay }) {
     return (
-        <View style={styles.reminderRow}>
+        <View style={[styles.reminderRow, !reminder.isActive && styles.reminderRowInactive]}>
             <View style={[styles.reminderStatusBar, getStatusPillStyle(reminder.status)]} />
             <View style={styles.reminderTextBlock}>
-                <Text style={styles.reminderName}>{reminder.name}</Text>
+                <View style={styles.reminderNameRow}>
+                    <Text style={styles.reminderName}>{reminder.name}</Text>
+                    {!reminder.isActive && (
+                        <View style={styles.inactiveTag}>
+                            <Text style={styles.inactiveTagText}>Deleted</Text>
+                        </View>
+                    )}
+                </View>
                 <Text style={styles.reminderTime}>{reminder.time}</Text>
             </View>
             <View style={[styles.statusPill, getStatusPillStyle(reminder.status)]}>
@@ -534,6 +542,7 @@ export default function CaregiverDashboard() {
     const [weeklyData, setWeeklyData]               = useState<DayData[]>([]);
     const [monthData, setMonthData]                 = useState<DayData[]>([]);
     const [reminderBreakdown, setReminderBreakdown] = useState<ReminderBreakdownItem[]>([]);
+    const [hasAnyReminders, setHasAnyReminders]     = useState(false);
     const [settingsVisible, setSettingsVisible]     = useState(false);
 
     async function loadDashboardData() {
@@ -589,6 +598,7 @@ export default function CaregiverDashboard() {
             setWeeklyData([]);
             setMonthData([]);
             setReminderBreakdown([]);
+            setHasAnyReminders(false);
             setConnectionLoading(false);
             setDashboardLoading(false);
             return;
@@ -634,6 +644,7 @@ export default function CaregiverDashboard() {
         }
 
         const reminders  = (remindersData || []) as Reminder[];
+        setHasAnyReminders(reminders.length > 0);
         const today      = new Date();
         const weekStart  = getStartOfWeek(today);
         const weekDates  = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
@@ -866,7 +877,7 @@ export default function CaregiverDashboard() {
                         <>
                             <Text style={[styles.bigMetric, { color: T.textMuted }]}>—</Text>
                             <Text style={styles.helperText}>
-                                {reminderBreakdown.length === 0
+                                {!hasAnyReminders
                                     ? 'No reminders created yet. Tap + to add one.'
                                     : 'No countable data yet — adherence appears once reminders pass their response window.'}
                             </Text>
@@ -879,7 +890,7 @@ export default function CaregiverDashboard() {
                     <View style={[styles.card, SHADOW.xs]}>
                         <Text style={styles.cardTitle}>Today's Reminders</Text>
 
-                        {reminderBreakdown.length === 0 ? (
+                        {!hasAnyReminders ? (
                             <>
                                 <Text style={[styles.helperText, { marginBottom: 12 }]}>
                                     No reminders have been created yet.
@@ -895,8 +906,10 @@ export default function CaregiverDashboard() {
                             <View style={styles.inlineEmpty}>
                                 <Ionicons name="calendar-outline" size={20} color={T.textMuted} />
                                 <Text style={styles.inlineEmptyText}>
-                                    {todayData && todayData.scheduledCount > 0
+                                    {todayData && todayData.scheduledCount > 0 && reminderBreakdown.length > 0
                                         ? 'Reminders exist but are not active yet — analytics start from the day they were created.'
+                                        : reminderBreakdown.length === 0
+                                        ? 'No active reminders scheduled for today.'
                                         : 'No reminders scheduled for today.'}
                                 </Text>
                             </View>
@@ -1091,7 +1104,9 @@ export default function CaregiverDashboard() {
                         <View style={styles.inlineEmpty}>
                             <Ionicons name="list-outline" size={20} color={T.textMuted} />
                             <Text style={styles.inlineEmptyText}>
-                                No reminders created yet. Tap + to add one.
+                                {hasAnyReminders
+                                    ? 'No active reminders — all reminders are currently inactive.'
+                                    : 'No reminders created yet. Tap + to add one.'}
                             </Text>
                         </View>
                     </View>
@@ -1527,8 +1542,10 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: 12,
     },
+    reminderRowInactive: { opacity: 0.6 },
     reminderStatusBar: { width: 3, height: 36, borderRadius: RADIUS.full, flexShrink: 0 },
     reminderTextBlock: { flex: 1 },
+    reminderNameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     reminderName: {
         fontSize: 15,
         fontWeight: '700',
@@ -1536,6 +1553,19 @@ const styles = StyleSheet.create({
         letterSpacing: -0.2,
     },
     reminderTime: { fontSize: 13, color: T.textMuted, marginTop: 2 },
+    inactiveTag: {
+        paddingHorizontal: 7,
+        paddingVertical: 2,
+        borderRadius: RADIUS.full,
+        backgroundColor: T.bgAlt,
+    },
+    inactiveTagText: {
+        fontSize: 10,
+        fontWeight: '700',
+        color: T.textMuted,
+        textTransform: 'uppercase',
+        letterSpacing: 0.4,
+    },
     statusPill: {
         paddingHorizontal: 11,
         paddingVertical: 6,
