@@ -101,6 +101,7 @@ export default function ReminderAlertScreen() {
     const [loading, setLoading]         = useState(true);
     const [saving, setSaving]           = useState(false);
     const [error, setError]             = useState<string | null>(null);
+    const [inactive, setInactive]       = useState(false);
     const [reminder, setReminder]       = useState<Reminder | null>(null);
     const [todayStatus, setTodayStatus] = useState<ReminderStatus | null>(null);
     const [isOverdue, setIsOverdue]     = useState(false);
@@ -132,6 +133,7 @@ export default function ReminderAlertScreen() {
     async function loadReminder() {
         setLoading(true);
         setError(null);
+        setInactive(false);
 
         if (!reminderId) {
             setError('No reminder specified.');
@@ -172,7 +174,7 @@ export default function ReminderAlertScreen() {
         }
 
         if (!reminderData.is_active) {
-            setError('This reminder is no longer active.');
+            setInactive(true);
             setLoading(false);
             return;
         }
@@ -292,6 +294,36 @@ export default function ReminderAlertScreen() {
                 <View style={styles.centeredState}>
                     <ActivityIndicator size="large" color="#93C5FD" />
                     <Text style={styles.loadingText}>Loading reminder…</Text>
+                </View>
+            </View>
+        );
+    }
+
+    // ── Inactive state ─────────────────────────────────────────────────────────
+    // Calm, non-alarming notice — this is expected (the reminder was removed
+    // by the caregiver), not an error, so it gets its own tone and icon.
+
+    if (inactive) {
+        return (
+            <View style={[styles.container, { paddingTop: insets.top }]}>
+                <Animated.View
+                    style={[styles.glowRing, { transform: [{ scale: pulseScale }], opacity: pulseOpacity }]}
+                />
+                <View style={styles.centeredState}>
+                    <View style={styles.inactiveIconWrap}>
+                        <Ionicons name="moon-outline" size={36} color="rgba(255,255,255,0.55)" />
+                    </View>
+                    <Text style={styles.inactiveTitle}>This reminder is no longer active</Text>
+                    <Text style={styles.inactiveText}>
+                        Your caregiver removed this reminder. There's nothing to respond to here.
+                    </Text>
+                    <TouchableOpacity
+                        style={styles.errorButton}
+                        onPress={() => router.replace('/recipient-dashboard')}
+                        activeOpacity={0.8}
+                    >
+                        <Text style={styles.errorButtonText}>Back to Today</Text>
+                    </TouchableOpacity>
                 </View>
             </View>
         );
@@ -527,6 +559,26 @@ const styles = StyleSheet.create({
         borderRadius: RADIUS.lg,
         borderWidth: 1,
         borderColor: 'rgba(255,255,255,0.15)',
+    },
+    inactiveIconWrap: {
+        width: 72,
+        height: 72,
+        borderRadius: RADIUS.full,
+        backgroundColor: 'rgba(255,255,255,0.08)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    inactiveTitle: {
+        fontSize: 20,
+        fontWeight: '700',
+        color: '#FFFFFF',
+        textAlign: 'center',
+    },
+    inactiveText: {
+        fontSize: 15,
+        color: 'rgba(255,255,255,0.55)',
+        textAlign: 'center',
+        lineHeight: 22,
     },
     errorButtonText: {
         color: '#FFFFFF',

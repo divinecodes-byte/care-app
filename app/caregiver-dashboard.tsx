@@ -798,7 +798,9 @@ export default function CaregiverDashboard() {
                         </View>
                         <Text style={styles.emptyTitle}>No analytics yet</Text>
                         <Text style={styles.emptyText}>
-                            Link a loved one first. Analytics appear once they start responding to reminders.
+                            {connectionSummary.status === 'pending'
+                                ? "Waiting for your loved one to accept your invite. Analytics will appear once they're connected."
+                                : 'Invite a loved one to get started. Analytics will appear once they start responding to reminders.'}
                         </Text>
                     </View>
                 </View>
@@ -907,17 +909,17 @@ export default function CaregiverDashboard() {
                                 <Ionicons name="calendar-outline" size={20} color={T.textMuted} />
                                 <Text style={styles.inlineEmptyText}>
                                     {todayData && todayData.scheduledCount > 0 && reminderBreakdown.length > 0
-                                        ? 'Reminders exist but are not active yet — analytics start from the day they were created.'
+                                        ? "This reminder hasn't started yet — it'll appear here from tomorrow."
                                         : reminderBreakdown.length === 0
-                                        ? 'No active reminders scheduled for today.'
-                                        : 'No reminders scheduled for today.'}
+                                        ? 'No active reminders today.'
+                                        : 'Nothing scheduled for today.'}
                                 </Text>
                             </View>
                         ) : (
                             <>
                                 <Text style={[styles.helperText, { marginBottom: 12 }]}>
                                     {todayData.eligibleCount} reminder
-                                    {todayData.eligibleCount !== 1 ? 's' : ''} scheduled today
+                                    {todayData.eligibleCount !== 1 ? 's' : ''} today
                                 </Text>
 
                                 {/* Stats row */}
@@ -1095,7 +1097,7 @@ export default function CaregiverDashboard() {
                 <View style={styles.bdSection}>
                     <Text style={styles.bdSectionTitle}>Reminder Breakdown</Text>
                     <Text style={styles.bdSectionSub}>
-                        Month-to-date · days before each reminder was created are excluded
+                        Month-to-date · counts start the day each reminder was created
                     </Text>
                 </View>
 

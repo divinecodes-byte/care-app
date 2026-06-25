@@ -398,7 +398,7 @@ export default function ReminderDetailsScreen() {
                     <Text style={styles.backText}>Dashboard</Text>
                 </TouchableOpacity>
                 <Text style={styles.navTitle}>Reminder Details</Text>
-                {reminderId ? (
+                {reminderId && (!reminder || reminder.is_active) ? (
                     <TouchableOpacity
                         style={styles.editNavBtn}
                         onPress={() =>
@@ -471,18 +471,27 @@ export default function ReminderDetailsScreen() {
                         </View>
                     </View>
 
-                    {/* ── Edit button ── */}
-                    <TouchableOpacity
-                        style={[styles.editButton, SHADOW.xs]}
-                        onPress={() =>
-                            router.push({ pathname: '/edit-reminder', params: { reminderId } })
-                        }
-                        activeOpacity={0.8}
-                    >
-                        <Ionicons name="pencil-outline" size={18} color={T.primary} />
-                        <Text style={styles.editButtonText}>Edit Reminder</Text>
-                        <Ionicons name="chevron-forward" size={16} color={T.primary} style={styles.editButtonChevron} />
-                    </TouchableOpacity>
+                    {/* ── Edit button / historical notice ── */}
+                    {reminder.is_active ? (
+                        <TouchableOpacity
+                            style={[styles.editButton, SHADOW.xs]}
+                            onPress={() =>
+                                router.push({ pathname: '/edit-reminder', params: { reminderId } })
+                            }
+                            activeOpacity={0.8}
+                        >
+                            <Ionicons name="pencil-outline" size={18} color={T.primary} />
+                            <Text style={styles.editButtonText}>Edit Reminder</Text>
+                            <Ionicons name="chevron-forward" size={16} color={T.primary} style={styles.editButtonChevron} />
+                        </TouchableOpacity>
+                    ) : (
+                        <View style={styles.historicalNotice}>
+                            <Ionicons name="time-outline" size={16} color={T.textMuted} />
+                            <Text style={styles.historicalNoticeText}>
+                                Viewing historical data for a deleted reminder.
+                            </Text>
+                        </View>
+                    )}
 
                     {/* ── Adherence grid ── */}
                     <View style={styles.adherenceGrid}>
@@ -859,4 +868,23 @@ const styles = StyleSheet.create({
         letterSpacing: -0.2,
     },
     editButtonChevron: { marginLeft: 4 },
+
+    // ── Historical notice (inactive reminder) ───────────────────────────────────
+    historicalNotice: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        backgroundColor: T.bgAlt,
+        borderRadius: RADIUS.xl,
+        paddingVertical: 14,
+        paddingHorizontal: 18,
+        marginBottom: 14,
+    },
+    historicalNoticeText: {
+        flex: 1,
+        fontSize: 14,
+        fontWeight: '500',
+        color: T.textMuted,
+        letterSpacing: -0.1,
+    },
 });
