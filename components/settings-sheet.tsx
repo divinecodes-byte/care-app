@@ -334,7 +334,7 @@ export function SettingsSheet({ visible, onClose }: Props) {
                                 />
                             </Card>
 
-                            {/* ── Notifications (caregiver) / Preferences (recipient) ── */}
+                            {/* ── Notifications (caregiver) ── */}
                             {profile.role === 'caregiver' ? (
                                 <>
                                     <SectionLabel text="Notifications" />
@@ -382,16 +382,7 @@ export function SettingsSheet({ visible, onClose }: Props) {
                                         ) : null}
                                     </Card>
                                 </>
-                            ) : (
-                                <>
-                                    <SectionLabel text="Preferences" />
-                                    <Card>
-                                        <PlaceholderRow icon="notifications-outline" label="Notifications" />
-                                        <Sep />
-                                        <PlaceholderRow icon="alarm-outline"         label="Snooze duration" />
-                                    </Card>
-                                </>
-                            )}
+                            ) : null}
 
                             {/* ── Support ────────────────────────────────────── */}
                             <SectionLabel text="Support" />
