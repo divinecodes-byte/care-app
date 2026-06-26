@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
     Dimensions,
+    Linking,
     Modal,
     Pressable,
     ScrollView,
@@ -23,6 +24,9 @@ import { supabase } from '@/lib/supabase';
 
 const SCREEN_HEIGHT = Dimensions.get('window').height;
 const SHEET_HEIGHT  = Math.round(SCREEN_HEIGHT * 0.85);
+
+const HELP_URL    = 'https://sites.google.com/view/tavora-help';
+const PRIVACY_URL = 'https://sites.google.com/view/tavora-privacy';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -387,9 +391,19 @@ export function SettingsSheet({ visible, onClose }: Props) {
                             {/* ── Support ────────────────────────────────────── */}
                             <SectionLabel text="Support" />
                             <Card>
-                                <PlaceholderRow icon="help-circle-outline" label="Help & FAQ" />
+                                <LinkRow
+                                    icon="help-circle-outline"
+                                    label="Help & FAQ"
+                                    caption="Open help page"
+                                    onPress={() => Linking.openURL(HELP_URL)}
+                                />
                                 <Sep />
-                                <PlaceholderRow icon="lock-closed-outline"  label="Privacy policy" />
+                                <LinkRow
+                                    icon="lock-closed-outline"
+                                    label="Privacy policy"
+                                    caption="View privacy policy"
+                                    onPress={() => Linking.openURL(PRIVACY_URL)}
+                                />
                             </Card>
 
                             {/* ── Sign out ───────────────────────────────────── */}
@@ -464,15 +478,21 @@ function ToggleRow({
     );
 }
 
-function PlaceholderRow({ icon, label }: { icon: string; label: string }) {
+function LinkRow({
+    icon,
+    label,
+    caption,
+    onPress,
+}: { icon: string; label: string; caption: string; onPress: () => void }) {
     return (
-        <View style={styles.row}>
+        <TouchableOpacity style={styles.row} onPress={onPress} activeOpacity={0.6}>
             <Ionicons name={icon as any} size={17} color={T.textMuted} style={styles.rowIcon} />
             <View style={styles.rowBody}>
                 <Text style={styles.rowLabel}>{label}</Text>
-                <Text style={styles.rowComingSoon}>Coming soon</Text>
+                <Text style={styles.rowCaption}>{caption}</Text>
             </View>
-        </View>
+            <Ionicons name="chevron-forward" size={16} color={T.textMuted} />
+        </TouchableOpacity>
     );
 }
 
@@ -645,10 +665,9 @@ const styles = StyleSheet.create({
         color:      T.textPrimary,
         lineHeight: 20,
     },
-    rowComingSoon: {
-        fontSize:  13,
-        color:     T.textMuted,
-        fontStyle: 'italic',
+    rowCaption: {
+        fontSize: 13,
+        color:    T.textMuted,
     },
 
     // ── Toggle row ────────────────────────────────────────────────────────────

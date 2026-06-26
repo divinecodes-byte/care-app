@@ -16,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { SettingsSheet } from '@/components/settings-sheet';
 import { RADIUS, SHADOW, T } from '@/constants/theme';
+import { formatFrequency as formatFrequencyDays, isDueOnDate } from '@/lib/frequency';
 import { registerCaregiverPushToken } from '@/lib/notifications';
 import { supabase } from '@/lib/supabase';
 
@@ -32,7 +33,8 @@ type Reminder = {
     reminder_type: string;
     notes: string | null;
     time_of_day: string;
-    frequency: 'daily' | 'weekdays' | 'weekends';
+    frequency: 'daily' | 'weekdays' | 'weekends' | 'custom';
+    days_of_week: number[];
     no_response_minutes: number;
     created_at: string;
     is_active: boolean;
@@ -78,7 +80,8 @@ type ReminderBreakdownItem = {
     id: string;
     name: string;
     time_of_day: string;
-    frequency: 'daily' | 'weekdays' | 'weekends';
+    frequency: 'daily' | 'weekdays' | 'weekends' | 'custom';
+    days_of_week: number[];
     completed: number;
     scheduled: number;
     missed: number;
@@ -152,20 +155,12 @@ function formatStatus(status: ReminderStatus): string {
     return map[status] ?? 'Pending';
 }
 
-function formatFrequency(freq: Reminder['frequency']): string {
-    if (freq === 'daily') return 'Every day';
-    if (freq === 'weekdays') return 'Weekdays';
-    if (freq === 'weekends') return 'Weekends';
-    return freq;
+function formatFrequency(freq: Reminder['frequency'], daysOfWeek: number[]): string {
+    return formatFrequencyDays(freq, daysOfWeek);
 }
 
-function shouldShowOnDate(frequency: Reminder['frequency'], date: Date): boolean {
-    const day = date.getDay();
-    const isWeekend = day === 0 || day === 6;
-    if (frequency === 'daily') return true;
-    if (frequency === 'weekdays') return !isWeekend;
-    if (frequency === 'weekends') return isWeekend;
-    return true;
+function shouldShowOnDate(daysOfWeek: number[], date: Date): boolean {
+    return isDueOnDate(daysOfWeek, date);
 }
 
 function buildScheduledDateTime(dateString: string, timeOfDay: string): Date {
@@ -202,7 +197,7 @@ function isReminderEligibleOnDate(
     connectionAcceptedAt: string,
     hasLogOnDate: boolean
 ): boolean {
-    if (!shouldShowOnDate(reminder.frequency, date)) return false;
+    if (!shouldShowOnDate(reminder.days_of_week, date)) return false;
     const start     = getAnalyticsStartDate(connectionAcceptedAt, reminder.created_at, reminder.time_of_day);
     const dateStart = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
     if (dateStart < start) return false;
@@ -240,7 +235,7 @@ function buildDayData(
     const todayString = getLocalDateString(new Date());
     const isFuture    = dateString > todayString;
 
-    const scheduledReminders = reminders.filter((r) => shouldShowOnDate(r.frequency, date));
+    const scheduledReminders = reminders.filter((r) => shouldShowOnDate(r.days_of_week, date));
     const eligibleReminders  = scheduledReminders.filter((r) => {
         const hasLogOnDate = logs.some(
             (l) => l.reminder_id === r.id && l.occurrence_date === dateString
@@ -331,6 +326,7 @@ function buildReminderBreakdown(
             name: reminder.title,
             time_of_day: reminder.time_of_day,
             frequency: reminder.frequency,
+            days_of_week: reminder.days_of_week,
             completed,
             scheduled,
             missed,
@@ -476,7 +472,7 @@ function BreakdownCard({ item }: { item: ReminderBreakdownItem }) {
                     </View>
                     <Text style={styles.bcMeta}>
                         {item.isActive
-                            ? `${formatTime(item.time_of_day)} · ${formatFrequency(item.frequency)}`
+                            ? `${formatTime(item.time_of_day)} · ${formatFrequency(item.frequency, item.days_of_week)}`
                             : 'No longer scheduled'}
                     </Text>
                 </View>
@@ -631,7 +627,7 @@ export default function CaregiverDashboard() {
         const { data: remindersData, error: remindersError } = await supabase
             .from('reminders')
             .select(
-                'id, connection_id, caregiver_id, recipient_id, title, reminder_type, notes, time_of_day, frequency, no_response_minutes, created_at, is_active, updated_at'
+                'id, connection_id, caregiver_id, recipient_id, title, reminder_type, notes, time_of_day, frequency, days_of_week, no_response_minutes, created_at, is_active, updated_at'
             )
             .eq('caregiver_id', user.id)
             .eq('connection_id', acceptedConnection.id)

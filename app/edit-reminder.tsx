@@ -18,15 +18,15 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { RADIUS, SHADOW, T } from '@/constants/theme';
 import { buildTimeString, parseTimeString, TimePickerField } from '@/components/TimePickerField';
+import { DAY_OPTIONS, daysForFrequency, Frequency, frequencyForDays } from '@/lib/frequency';
 import { supabase } from '@/lib/supabase';
 
 // ─── Types & constants ────────────────────────────────────────────────────────
 
 type ReminderType = 'medication' | 'hydration' | 'appointment' | 'meal' | 'exercise' | 'other';
-type Frequency    = 'daily' | 'weekdays' | 'weekends';
 
 const REMINDER_TYPES: ReminderType[] = ['medication', 'hydration', 'appointment', 'meal', 'exercise', 'other'];
-const FREQUENCIES:    Frequency[]    = ['daily', 'weekdays', 'weekends'];
+const FREQUENCIES:    Frequency[]    = ['daily', 'weekdays', 'weekends', 'custom'];
 
 const TYPE_ICON_NAMES: Record<ReminderType, string> = {
     medication:  'medical-outline',
@@ -43,7 +43,7 @@ const TYPE_LABELS: Record<ReminderType, string> = {
 };
 
 const FREQUENCY_LABELS: Record<Frequency, string> = {
-    daily: 'Every day', weekdays: 'Mon–Fri', weekends: 'Sat–Sun',
+    daily: 'Every day', weekdays: 'Mon–Fri', weekends: 'Sat–Sun', custom: 'Custom days',
 };
 
 const NO_RESPONSE_OPTIONS = [1, 5, 10, 15, 30, 60];
@@ -73,7 +73,14 @@ export default function EditReminderScreen() {
         return d;
     });
     const [frequency,         setFrequency]         = useState<Frequency>('daily');
+    const [selectedDays,      setSelectedDays]      = useState<number[]>([]);
     const [noResponseMinutes, setNoResponseMinutes] = useState(15);
+
+    function toggleDay(iso: number) {
+        setSelectedDays((prev) =>
+            prev.includes(iso) ? prev.filter((d) => d !== iso) : [...prev, iso]
+        );
+    }
 
     useEffect(() => {
         if (!reminderId) {
@@ -93,7 +100,7 @@ export default function EditReminderScreen() {
 
         const { data: rem, error: remErr } = await supabase
             .from('reminders')
-            .select('id, connection_id, caregiver_id, title, reminder_type, notes, time_of_day, frequency, no_response_minutes')
+            .select('id, connection_id, caregiver_id, title, reminder_type, notes, time_of_day, frequency, days_of_week, no_response_minutes')
             .eq('id', reminderId)
             .eq('caregiver_id', user.id)
             .eq('is_active', true)
@@ -109,7 +116,10 @@ export default function EditReminderScreen() {
         setReminderType(rem.reminder_type as ReminderType);
         setNotes(rem.notes || '');
         setTimeValue(parseTimeString(rem.time_of_day));
-        setFrequency(rem.frequency as Frequency);
+        // days_of_week is the source of truth — derive which preset (if any)
+        // it matches rather than trusting the stored frequency text.
+        setFrequency(frequencyForDays(rem.days_of_week));
+        setSelectedDays(rem.days_of_week);
         setNoResponseMinutes(
             NO_RESPONSE_OPTIONS.includes(rem.no_response_minutes) ? rem.no_response_minutes : 15
         );
@@ -119,6 +129,11 @@ export default function EditReminderScreen() {
     async function saveChanges() {
         if (!title.trim()) {
             Alert.alert('Missing title', 'Please enter a reminder name.');
+            return;
+        }
+
+        if (frequency === 'custom' && selectedDays.length === 0) {
+            Alert.alert('Select at least one day', 'Choose at least one day for a custom schedule.');
             return;
         }
 
@@ -133,6 +148,7 @@ export default function EditReminderScreen() {
                 notes:               notes.trim() || null,
                 time_of_day:         buildTimeString(timeValue),
                 frequency,
+                days_of_week:        daysForFrequency(frequency, selectedDays),
                 no_response_minutes: noResponseMinutes,
                 updated_at:          new Date().toISOString(),
             })
@@ -314,6 +330,31 @@ export default function EditReminderScreen() {
                                     </TouchableOpacity>
                                 ))}
                             </View>
+
+                            {frequency === 'custom' && (
+                                <View style={styles.dayRow}>
+                                    {DAY_OPTIONS.map((day) => (
+                                        <TouchableOpacity
+                                            key={day.iso}
+                                            style={[
+                                                styles.dayChip,
+                                                selectedDays.includes(day.iso) && styles.chipActive,
+                                            ]}
+                                            onPress={() => toggleDay(day.iso)}
+                                            activeOpacity={0.75}
+                                        >
+                                            <Text
+                                                style={[
+                                                    styles.chipText,
+                                                    selectedDays.includes(day.iso) && styles.chipTextActive,
+                                                ]}
+                                            >
+                                                {day.short}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    ))}
+                                </View>
+                            )}
                         </View>
 
                         {/* ── Section 3: Alerts ───────────────────────────── */}
@@ -569,6 +610,24 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: T.bgAlt,
         paddingVertical: 12,
+        borderRadius: RADIUS.lg,
+        alignItems: 'center',
+        borderWidth: 1.5,
+        borderColor: 'transparent',
+    },
+
+    // ── Custom day chips ────────────────────────────────────────────────────────
+    dayRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+        marginTop: 10,
+    },
+    dayChip: {
+        minWidth: 52,
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+        backgroundColor: T.bgAlt,
         borderRadius: RADIUS.lg,
         alignItems: 'center',
         borderWidth: 1.5,

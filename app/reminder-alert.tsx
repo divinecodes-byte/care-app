@@ -16,7 +16,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { RADIUS, SHADOW, T } from '@/constants/theme';
-import { cancelReminderLocalNotifications } from '@/lib/notifications';
+import { cancelReminderOccurrenceNotification, scheduleSnoozeNotification } from '@/lib/notifications';
 import { getFirstEligibleDateString, isPastNoResponseWindow } from '@/lib/reminderStatus';
 import { supabase } from '@/lib/supabase';
 
@@ -247,7 +247,8 @@ export default function ReminderAlertScreen() {
         if (Platform.OS === 'ios') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
         setSaving(true);
 
-        const todayDate = getTodayDateString();
+        const todayDate    = getTodayDateString();
+        const snoozedUntil = status === 'snoozed' ? buildSnoozedUntilIso(10) : null;
 
         const logPayload = {
             reminder_id:     reminder.id,
@@ -258,7 +259,7 @@ export default function ReminderAlertScreen() {
             scheduled_for:   buildScheduledForIso(reminder.time_of_day),
             status,
             completed_at:    status === 'taken'   ? new Date().toISOString() : null,
-            snoozed_until:   status === 'snoozed' ? buildSnoozedUntilIso(10) : null,
+            snoozed_until:   snoozedUntil,
             updated_at:      new Date().toISOString(),
         };
 
@@ -273,9 +274,17 @@ export default function ReminderAlertScreen() {
             return;
         }
 
-        // A real response now exists for today — stop the recurring local
-        // notification from firing later today regardless of status.
-        cancelReminderLocalNotifications(reminder.id).catch(console.warn);
+        // A real response now exists for today — cancel only today's
+        // occurrence notification. Future occurrences are untouched.
+        cancelReminderOccurrenceNotification(reminder.id, todayDate).catch(console.warn);
+
+        if (status === 'snoozed' && snoozedUntil) {
+            scheduleSnoozeNotification(
+                { id: reminder.id, title: reminder.title, reminder_type: reminder.reminder_type },
+                todayDate,
+                snoozedUntil
+            ).catch(console.warn);
+        }
 
         router.replace('/recipient-dashboard');
     }

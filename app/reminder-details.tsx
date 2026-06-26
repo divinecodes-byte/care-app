@@ -12,6 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { RADIUS, SHADOW, T } from '@/constants/theme';
+import { formatFrequency as formatFrequencyDays, isDueOnDate } from '@/lib/frequency';
 import { supabase } from '@/lib/supabase';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -27,7 +28,8 @@ type Reminder = {
     reminder_type: string;
     notes: string | null;
     time_of_day: string;
-    frequency: 'daily' | 'weekdays' | 'weekends';
+    frequency: 'daily' | 'weekdays' | 'weekends' | 'custom';
+    days_of_week: number[];
     no_response_minutes: number;
     created_at: string;
     is_active: boolean;
@@ -98,11 +100,8 @@ function formatTime(time: string): string {
     return `${h}:${mStr} ${suffix}`;
 }
 
-function formatFrequency(freq: Reminder['frequency']): string {
-    if (freq === 'daily') return 'Every day';
-    if (freq === 'weekdays') return 'Weekdays';
-    if (freq === 'weekends') return 'Weekends';
-    return freq;
+function formatFrequency(freq: Reminder['frequency'], daysOfWeek: number[]): string {
+    return formatFrequencyDays(freq, daysOfWeek);
 }
 
 function formatDateLabel(date: Date): string {
@@ -129,13 +128,8 @@ function getAnalyticsStartDate(
     return later > scheduledOnLaterDate ? addDays(laterDateStart, 1) : laterDateStart;
 }
 
-function shouldShowOnDate(frequency: Reminder['frequency'], date: Date): boolean {
-    const day = date.getDay();
-    const isWeekend = day === 0 || day === 6;
-    if (frequency === 'daily') return true;
-    if (frequency === 'weekdays') return !isWeekend;
-    if (frequency === 'weekends') return isWeekend;
-    return true;
+function shouldShowOnDate(daysOfWeek: number[], date: Date): boolean {
+    return isDueOnDate(daysOfWeek, date);
 }
 
 function isReminderEligibleOnDate(
@@ -143,7 +137,7 @@ function isReminderEligibleOnDate(
     date: Date,
     connectionAcceptedAt: string
 ): boolean {
-    if (!shouldShowOnDate(reminder.frequency, date)) return false;
+    if (!shouldShowOnDate(reminder.days_of_week, date)) return false;
     const start     = getAnalyticsStartDate(connectionAcceptedAt, reminder.created_at, reminder.time_of_day);
     const dateStart = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
     if (dateStart < start) return false;
@@ -324,7 +318,7 @@ export default function ReminderDetailsScreen() {
         const { data: rem, error: remErr } = await supabase
             .from('reminders')
             .select(
-                'id, connection_id, caregiver_id, recipient_id, title, reminder_type, notes, time_of_day, frequency, no_response_minutes, created_at, is_active, updated_at'
+                'id, connection_id, caregiver_id, recipient_id, title, reminder_type, notes, time_of_day, frequency, days_of_week, no_response_minutes, created_at, is_active, updated_at'
             )
             .eq('id', reminderId)
             .maybeSingle();
@@ -445,7 +439,7 @@ export default function ReminderDetailsScreen() {
                         <Text style={styles.reminderTitle}>{reminder.title}</Text>
                         <Text style={styles.reminderMeta}>
                             {reminder.is_active
-                                ? `${formatTime(reminder.time_of_day)} · ${formatFrequency(reminder.frequency)}`
+                                ? `${formatTime(reminder.time_of_day)} · ${formatFrequency(reminder.frequency, reminder.days_of_week)}`
                                 : 'No longer scheduled — showing historical data'}
                         </Text>
 

@@ -2,6 +2,7 @@ import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
+import { isDueOnDate } from '@/lib/frequency';
 import { supabase } from '@/lib/supabase';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -9,17 +10,39 @@ import { supabase } from '@/lib/supabase';
 export type ReminderForScheduling = {
     id: string;
     title: string;
+    reminder_type: string;
     time_of_day: string;        // "HH:MM" 24-hour
-    frequency: 'daily' | 'weekdays' | 'weekends';
+    days_of_week: number[];     // ISO weekday numbers, 1 = Monday ... 7 = Sunday
+};
+
+type OccurrenceNotificationData = {
+    reminderId: string;
+    occurrenceDate: string;     // "YYYY-MM-DD"
+    scheduledFor: string;       // ISO timestamp
+    reminderType: string;
+    title: string;
+    isSnooze?: boolean;
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-// expo-notifications weekday numbering: 1 = Sunday, 2 = Monday … 7 = Saturday
-const WEEKDAY_NUMS = [2, 3, 4, 5, 6]; // Mon–Fri
-const WEEKEND_NUMS = [1, 7];           // Sun, Sat
-
 const CHANNEL_ID = 'care-reminders';
+
+// How far ahead one-shot occurrence notifications are pre-scheduled. Kept
+// modest because iOS caps an app at ~64 pending local notifications — a
+// larger window with several reminders could silently exceed that cap.
+const ROLLING_WINDOW_DAYS = 14;
+
+function occurrenceIdentifier(reminderId: string, occurrenceDate: string): string {
+    return `care-${reminderId}-${occurrenceDate}`;
+}
+
+function getLocalDateString(date: Date): string {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+}
 
 // ─── Android channel ──────────────────────────────────────────────────────────
 
@@ -53,80 +76,178 @@ export async function requestNotificationPermissions(): Promise<boolean> {
 // ─── Schedule / cancel ────────────────────────────────────────────────────────
 
 /**
- * Cancel all scheduled notifications, then schedule fresh ones for the
- * supplied reminders. Safe to call on every dashboard focus — idempotent.
+ * Cancel every scheduled notification, then schedule fresh one-shot
+ * occurrence notifications for the supplied reminders across a rolling
+ * window (see ROLLING_WINDOW_DAYS).
  *
- * Frequency mapping:
- *   daily    → DAILY trigger (every day at time_of_day)
- *   weekdays → WEEKLY trigger × 5 (Mon-Fri at time_of_day)
- *   weekends → WEEKLY trigger × 2 (Sat-Sun at time_of_day)
+ * Each notification represents exactly one reminder occurrence on exactly
+ * one date — never a recurring DAILY/WEEKLY trigger — so cancelling one
+ * occurrence (cancelReminderOccurrenceNotification) can never silence a
+ * future one. days_of_week (ISO 1=Mon...7=Sun) is the source of truth for
+ * which dates get scheduled; reminder_logs decides which already-answered
+ * dates are skipped.
+ *
+ * Safe to call on every dashboard focus / pull-to-refresh — idempotent
+ * because the entire valid window is rebuilt from current reminder state
+ * every time, so it never produces duplicates.
  */
 export async function scheduleReminderNotifications(
     reminders: ReminderForScheduling[]
 ): Promise<void> {
-    // Cancel previous schedule so re-loading the dashboard never duplicates
     await Notifications.cancelAllScheduledNotificationsAsync();
+
+    if (reminders.length === 0) return;
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const windowDates: Date[] = Array.from({ length: ROLLING_WINDOW_DAYS }, (_, i) => {
+        const d = new Date(todayStart);
+        d.setDate(d.getDate() + i);
+        return d;
+    });
+    const windowStartString = getLocalDateString(windowDates[0]);
+    const windowEndString   = getLocalDateString(windowDates[windowDates.length - 1]);
+
+    const reminderIds = reminders.map((r) => r.id);
+
+    const { data: logsData } = await supabase
+        .from('reminder_logs')
+        .select('reminder_id, occurrence_date, status, snoozed_until')
+        .in('reminder_id', reminderIds)
+        .gte('occurrence_date', windowStartString)
+        .lte('occurrence_date', windowEndString);
+
+    const logsByKey = new Map(
+        (logsData || []).map((l) => [`${l.reminder_id}|${l.occurrence_date}`, l])
+    );
+
+    const now = new Date();
 
     for (const reminder of reminders) {
         const [h, m] = reminder.time_of_day.split(':').map(Number);
 
-        const content: Notifications.NotificationContentInput = {
-            title: reminder.title,
-            body:  'Time to respond to this care reminder.',
-            data:  { reminderId: reminder.id },
-            sound: 'default',
-        };
+        for (const date of windowDates) {
+            if (!isDueOnDate(reminder.days_of_week, date)) continue;
 
-        if (reminder.frequency === 'daily') {
+            const occurrenceDate = getLocalDateString(date);
+            const log = logsByKey.get(`${reminder.id}|${occurrenceDate}`);
+
+            if (log?.status && log.status !== 'pending') {
+                // Already answered. A still-pending snooze gets its own
+                // re-alert at snoozed_until; every other terminal status
+                // (taken/skipped/missed, or an expired snooze) gets nothing.
+                if (log.status === 'snoozed' && log.snoozed_until) {
+                    await scheduleSnoozeNotification(reminder, occurrenceDate, log.snoozed_until);
+                }
+                continue;
+            }
+
+            const scheduledFor = new Date(date);
+            scheduledFor.setHours(h, m, 0, 0);
+            if (scheduledFor.getTime() <= now.getTime()) continue; // already passed today
+
+            const data: OccurrenceNotificationData = {
+                reminderId:   reminder.id,
+                occurrenceDate,
+                scheduledFor: scheduledFor.toISOString(),
+                reminderType: reminder.reminder_type,
+                title:        reminder.title,
+            };
+
             await Notifications.scheduleNotificationAsync({
-                identifier: `care-${reminder.id}`,
-                content,
+                identifier: occurrenceIdentifier(reminder.id, occurrenceDate),
+                content: {
+                    title: reminder.title,
+                    body:  'Time to respond to this care reminder.',
+                    data,
+                    sound: 'default',
+                    // Urgent, time-bound care event — eligible to break through
+                    // Focus modes without requiring Critical Alert entitlement.
+                    interruptionLevel: 'timeSensitive',
+                },
                 trigger: {
-                    type:   Notifications.SchedulableTriggerInputTypes.DAILY,
-                    hour:   h,
-                    minute: m,
+                    type: Notifications.SchedulableTriggerInputTypes.DATE,
+                    date: scheduledFor,
                 },
             });
-        } else {
-            const days = reminder.frequency === 'weekdays' ? WEEKDAY_NUMS : WEEKEND_NUMS;
-            for (const weekday of days) {
-                await Notifications.scheduleNotificationAsync({
-                    identifier: `care-${reminder.id}-wd-${weekday}`,
-                    content,
-                    trigger: {
-                        type:    Notifications.SchedulableTriggerInputTypes.WEEKLY,
-                        weekday,
-                        hour:    h,
-                        minute:  m,
-                    },
-                });
-            }
         }
     }
 }
 
-export async function cancelAllReminderNotifications(): Promise<void> {
-    await Notifications.cancelAllScheduledNotificationsAsync();
+/**
+ * Schedule a one-shot re-alert for a snoozed occurrence, firing at
+ * snoozedUntilIso. Does nothing if that time has already passed.
+ */
+export async function scheduleSnoozeNotification(
+    reminder: { id: string; title: string; reminder_type: string },
+    occurrenceDate: string,
+    snoozedUntilIso: string
+): Promise<void> {
+    const fireDate = new Date(snoozedUntilIso);
+    if (fireDate.getTime() <= Date.now()) return;
+
+    const data: OccurrenceNotificationData = {
+        reminderId:   reminder.id,
+        occurrenceDate,
+        scheduledFor: fireDate.toISOString(),
+        reminderType: reminder.reminder_type,
+        title:        reminder.title,
+        isSnooze:     true,
+    };
+
+    await Notifications.scheduleNotificationAsync({
+        identifier: `${occurrenceIdentifier(reminder.id, occurrenceDate)}-snooze`,
+        content: {
+            title: reminder.title,
+            body:  'Snoozed reminder — time to respond.',
+            data,
+            sound: 'default',
+            // Same urgency as the original occurrence it's re-alerting for.
+            interruptionLevel: 'timeSensitive',
+        },
+        trigger: {
+            type: Notifications.SchedulableTriggerInputTypes.DATE,
+            date: fireDate,
+        },
+    });
 }
 
 /**
- * Cancel any locally-scheduled notification(s) for a reminder once the
- * recipient has actually responded to it (taken / skipped / snoozed).
- *
- * There is no per-occurrence identifier to cancel: `scheduleReminderNotifications`
- * schedules one recurring DAILY/WEEKLY trigger per reminder (identifier
- * `care-${reminderId}[-wd-N]`), not a fresh one-shot notification per calendar
- * day. Cancelling it here removes today's still-pending fire, and the next
- * `scheduleReminderNotifications` call (recipient-dashboard reschedules on
- * every focus) recreates the recurring trigger for the reminder's future
- * occurrences — so this never permanently silences a daily/weekly reminder.
+ * Cancel only the one-shot notification(s) for a specific reminder
+ * occurrence (original + its snooze re-alert, if any) — e.g. right after
+ * the recipient marks Taken/Skipped/Snoozed for today. Matches by
+ * content.data, never by identifier prefix, so it can never reach into a
+ * different date's occurrence for the same reminder.
  */
-export async function cancelReminderLocalNotifications(reminderId: string): Promise<void> {
+export async function cancelReminderOccurrenceNotification(
+    reminderId: string,
+    occurrenceDate: string
+): Promise<void> {
     const scheduled = await Notifications.getAllScheduledNotificationsAsync();
 
     const toCancel = scheduled.filter((n) => {
-        const data = n.content.data as { reminderId?: string } | undefined;
-        return data?.reminderId === reminderId || n.identifier.startsWith(`care-${reminderId}`);
+        const data = n.content.data as Partial<OccurrenceNotificationData> | undefined;
+        return data?.reminderId === reminderId && data?.occurrenceDate === occurrenceDate;
+    });
+
+    await Promise.all(
+        toCancel.map((n) => Notifications.cancelScheduledNotificationAsync(n.identifier))
+    );
+}
+
+/**
+ * Cancel every scheduled occurrence (current + future) for one reminder.
+ * Only for a full reminder delete/deactivate or a full resync — never call
+ * this for a single Taken/Skipped/Snoozed response, which must only ever
+ * touch today's occurrence via cancelReminderOccurrenceNotification.
+ */
+export async function cancelAllReminderNotifications(reminderId: string): Promise<void> {
+    const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+
+    const toCancel = scheduled.filter((n) => {
+        const data = n.content.data as Partial<OccurrenceNotificationData> | undefined;
+        return data?.reminderId === reminderId;
     });
 
     await Promise.all(

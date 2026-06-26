@@ -19,11 +19,13 @@ import { SettingsSheet } from '@/components/settings-sheet';
 import { RADIUS, SHADOW, T } from '@/constants/theme';
 import { supabase } from '@/lib/supabase';
 import {
-    cancelReminderLocalNotifications,
+    cancelReminderOccurrenceNotification,
     requestNotificationPermissions,
     scheduleReminderNotifications,
+    scheduleSnoozeNotification,
     scheduleTestNotification,
 } from '@/lib/notifications';
+import { isDueOnDate } from '@/lib/frequency';
 import { getFirstEligibleDateString, isPastNoResponseWindow } from '@/lib/reminderStatus';
 
 type ReminderStatus = 'pending' | 'taken' | 'snoozed' | 'skipped' | 'missed';
@@ -37,7 +39,8 @@ type Reminder = {
     reminder_type: string;
     notes: string | null;
     time_of_day: string;
-    frequency: 'daily' | 'weekdays' | 'weekends';
+    frequency: 'daily' | 'weekdays' | 'weekends' | 'custom';
+    days_of_week: number[];
     no_response_minutes: number;
     created_at: string;
     today_status?: ReminderStatus;
@@ -91,13 +94,8 @@ function formatStatus(status?: ReminderStatus) {
     return 'Pending';
 }
 
-function shouldShowToday(frequency: Reminder['frequency']) {
-    const today = new Date().getDay();
-    const isWeekend = today === 0 || today === 6;
-    if (frequency === 'daily')    return true;
-    if (frequency === 'weekdays') return !isWeekend;
-    if (frequency === 'weekends') return isWeekend;
-    return true;
+function shouldShowToday(daysOfWeek: number[]) {
+    return isDueOnDate(daysOfWeek, new Date());
 }
 
 // ─── UI helpers ───────────────────────────────────────────────────────────────
@@ -176,7 +174,7 @@ export default function RecipientDashboard() {
 
         const { data, error } = await supabase
             .from('reminders')
-            .select('id, connection_id, caregiver_id, recipient_id, title, reminder_type, notes, time_of_day, frequency, no_response_minutes, created_at')
+            .select('id, connection_id, caregiver_id, recipient_id, title, reminder_type, notes, time_of_day, frequency, days_of_week, no_response_minutes, created_at')
             .eq('recipient_id', user.id)
             .eq('is_active', true)
             .order('time_of_day', { ascending: true });
@@ -196,7 +194,7 @@ export default function RecipientDashboard() {
         // after its scheduled time-of-day already passed shouldn't be treated
         // as missed; its first occurrence is tomorrow.
         const todaysReminders = (data || []).filter((r) =>
-            shouldShowToday(r.frequency) &&
+            shouldShowToday(r.days_of_week) &&
             getFirstEligibleDateString(r.created_at, r.time_of_day) <= todayDate
         );
 
@@ -307,7 +305,8 @@ export default function RecipientDashboard() {
         if (Platform.OS === 'ios') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         setSavingReminderId(reminder.id);
 
-        const todayDate = getTodayDateString();
+        const todayDate     = getTodayDateString();
+        const snoozedUntil  = status === 'snoozed' ? buildSnoozedUntilIso(10) : null;
 
         const logPayload = {
             reminder_id:     reminder.id,
@@ -318,7 +317,7 @@ export default function RecipientDashboard() {
             scheduled_for:   buildScheduledForIso(reminder.time_of_day),
             status,
             completed_at:    status === 'taken' ? new Date().toISOString() : null,
-            snoozed_until:   status === 'snoozed' ? buildSnoozedUntilIso(10) : null,
+            snoozed_until:   snoozedUntil,
             updated_at:      new Date().toISOString(),
         };
 
@@ -333,9 +332,19 @@ export default function RecipientDashboard() {
             return;
         }
 
-        // A real response now exists for today — stop the recurring local
-        // notification from firing later today regardless of status.
-        cancelReminderLocalNotifications(reminder.id).catch(console.warn);
+        // A real response now exists for today — cancel only today's
+        // occurrence notification. Future occurrences are untouched.
+        cancelReminderOccurrenceNotification(reminder.id, todayDate).catch(console.warn);
+
+        // Snoozing gets its own one-shot re-alert at the snooze deadline —
+        // it must not silently disappear until then.
+        if (status === 'snoozed' && snoozedUntil) {
+            scheduleSnoozeNotification(
+                { id: reminder.id, title: reminder.title, reminder_type: reminder.reminder_type },
+                todayDate,
+                snoozedUntil
+            ).catch(console.warn);
+        }
 
         setReminders((current) =>
             current.map((r) =>
