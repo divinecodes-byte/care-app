@@ -16,6 +16,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { RADIUS, SHADOW, T } from '@/constants/theme';
+import { cancelReminderLocalNotifications } from '@/lib/notifications';
 import { getFirstEligibleDateString, isPastNoResponseWindow } from '@/lib/reminderStatus';
 import { supabase } from '@/lib/supabase';
 
@@ -271,6 +272,10 @@ export default function ReminderAlertScreen() {
             Alert.alert('Save error', saveError.message);
             return;
         }
+
+        // A real response now exists for today — stop the recurring local
+        // notification from firing later today regardless of status.
+        cancelReminderLocalNotifications(reminder.id).catch(console.warn);
 
         router.replace('/recipient-dashboard');
     }

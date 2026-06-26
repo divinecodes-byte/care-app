@@ -1,9 +1,8 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
-import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { RADIUS, SHADOW, T } from '@/constants/theme';
@@ -44,10 +43,12 @@ export default function HomeScreen() {
             <View style={styles.hero}>
                 {/* Logo mark */}
                 <View style={styles.logoRow}>
-                    <View style={styles.logoIconWrap}>
-                        <Ionicons name="heart" size={20} color={T.textInverse} />
-                    </View>
-                    <Text style={styles.logoText}>Care App</Text>
+                    <Image
+                        source={require('@/assets/brand/tavora-mark.png')}
+                        style={styles.logoMark}
+                        resizeMode="contain"
+                    />
+                    <Text style={styles.logoText}>Tavora</Text>
                 </View>
 
                 <Text style={styles.headline}>
@@ -131,13 +132,9 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         marginBottom: 52,
     },
-    logoIconWrap: {
-        width: 42,
-        height: 42,
-        borderRadius: RADIUS.md,
-        backgroundColor: T.primary,
-        justifyContent: 'center',
-        alignItems: 'center',
+    logoMark: {
+        width: 36,
+        height: 36,
         marginRight: 10,
     },
     logoText: {

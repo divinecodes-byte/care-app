@@ -107,7 +107,7 @@ export default function CreateReminderScreen() {
         if (!connection?.recipient_id) {
             setLoading(false);
             Alert.alert(
-                'No connected recipient',
+                'No Loved One connected',
                 'Invite a loved one and have them accept the code before creating reminders.'
             );
             return;

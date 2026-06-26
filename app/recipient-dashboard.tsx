@@ -19,6 +19,7 @@ import { SettingsSheet } from '@/components/settings-sheet';
 import { RADIUS, SHADOW, T } from '@/constants/theme';
 import { supabase } from '@/lib/supabase';
 import {
+    cancelReminderLocalNotifications,
     requestNotificationPermissions,
     scheduleReminderNotifications,
     scheduleTestNotification,
@@ -186,14 +187,8 @@ export default function RecipientDashboard() {
             return;
         }
 
-        // Schedule local notifications for ALL active reminders (not just today's).
-        // cancelAll + reschedule on every focus keeps the schedule in sync with any
-        // reminder edits the caregiver may have made.
         const granted = await requestNotificationPermissions();
         setNotifDenied(!granted);
-        if (granted) {
-            scheduleReminderNotifications(data || []).catch(console.warn);
-        }
 
         const todayDate = getTodayDateString();
 
@@ -206,6 +201,11 @@ export default function RecipientDashboard() {
         );
 
         if (todaysReminders.length === 0) {
+            // Nothing is eligible today, so there's nothing to exclude — still
+            // schedule every active reminder's recurring trigger as before.
+            if (granted) {
+                scheduleReminderNotifications(data || []).catch(console.warn);
+            }
             setReminders([]);
             setLoading(false);
             return;
@@ -224,6 +224,21 @@ export default function RecipientDashboard() {
             setLoading(false);
             Alert.alert('Logs error', logsError.message);
             return;
+        }
+
+        // Schedule local notifications for ALL active reminders (not just today's
+        // eligible ones), except any that already have a real response logged for
+        // today — that occurrence has already been answered, so it must not pop a
+        // notification later. cancelAll + reschedule on every focus keeps the
+        // schedule in sync with any reminder edits the caregiver may have made.
+        if (granted) {
+            const answeredTodayIds = new Set(
+                (logs || [])
+                    .filter((l) => l.status && l.status !== 'pending')
+                    .map((l) => l.reminder_id)
+            );
+            const toSchedule = (data || []).filter((r) => !answeredTodayIds.has(r.id));
+            scheduleReminderNotifications(toSchedule).catch(console.warn);
         }
 
         const now = new Date();
@@ -317,6 +332,10 @@ export default function RecipientDashboard() {
             Alert.alert('Save error', error.message);
             return;
         }
+
+        // A real response now exists for today — stop the recurring local
+        // notification from firing later today regardless of status.
+        cancelReminderLocalNotifications(reminder.id).catch(console.warn);
 
         setReminders((current) =>
             current.map((r) =>

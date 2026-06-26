@@ -109,6 +109,31 @@ export async function cancelAllReminderNotifications(): Promise<void> {
     await Notifications.cancelAllScheduledNotificationsAsync();
 }
 
+/**
+ * Cancel any locally-scheduled notification(s) for a reminder once the
+ * recipient has actually responded to it (taken / skipped / snoozed).
+ *
+ * There is no per-occurrence identifier to cancel: `scheduleReminderNotifications`
+ * schedules one recurring DAILY/WEEKLY trigger per reminder (identifier
+ * `care-${reminderId}[-wd-N]`), not a fresh one-shot notification per calendar
+ * day. Cancelling it here removes today's still-pending fire, and the next
+ * `scheduleReminderNotifications` call (recipient-dashboard reschedules on
+ * every focus) recreates the recurring trigger for the reminder's future
+ * occurrences — so this never permanently silences a daily/weekly reminder.
+ */
+export async function cancelReminderLocalNotifications(reminderId: string): Promise<void> {
+    const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+
+    const toCancel = scheduled.filter((n) => {
+        const data = n.content.data as { reminderId?: string } | undefined;
+        return data?.reminderId === reminderId || n.identifier.startsWith(`care-${reminderId}`);
+    });
+
+    await Promise.all(
+        toCancel.map((n) => Notifications.cancelScheduledNotificationAsync(n.identifier))
+    );
+}
+
 // ─── Push token registration ──────────────────────────────────────────────────
 
 export type PushTokenResult =

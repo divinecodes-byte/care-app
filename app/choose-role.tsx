@@ -63,7 +63,7 @@ export default function ChooseRoleScreen() {
                     <View style={styles.headerIcon}>
                         <Ionicons name="people" size={26} color={T.primary} />
                     </View>
-                    <Text style={styles.title}>How will you use{'\n'}Care App?</Text>
+                    <Text style={styles.title}>How will you use{'\n'}Tavora?</Text>
                     <Text style={styles.subtitle}>
                         Choose your role so we can personalize your experience.
                     </Text>

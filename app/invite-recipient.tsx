@@ -28,7 +28,7 @@ function generateInviteCode() {
 }
 
 const HOW_IT_WORKS = [
-    'Your loved one opens the Care App on their phone.',
+    'Your loved one opens Tavora on their phone.',
     'They choose "I am receiving care" as their role.',
     'They enter this 6-character invite code.',
     'Their reminders and responses become linked to your dashboard.',
@@ -112,7 +112,7 @@ export default function InviteRecipientScreen() {
         }
 
         await Share.share({
-            message: `Use this invite code to connect with me on Care App: ${inviteCode}`,
+            message: `Use this invite code to connect with me on Tavora: ${inviteCode}`,
         });
     }
 

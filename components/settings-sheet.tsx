@@ -215,7 +215,7 @@ export function SettingsSheet({ visible, onClose }: Props) {
 
     const roleLabel =
         profile.role === 'caregiver' ? 'Caregiver'
-        : profile.role === 'recipient' ? 'Recipient'
+        : profile.role === 'recipient' ? 'Loved One'
         : profile.role;
 
     function getInitials(name: string): string {

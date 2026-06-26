@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "care-app",
+    "name": "Tavora",
     "slug": "care-app",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
-    "scheme": "careapp",
+    "icon": "./assets/brand/tavora-icon.png",
+    "scheme": "tavora",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
@@ -41,10 +41,10 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
+          "image": "./assets/brand/tavora-mark.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff",
+          "backgroundColor": "#F7F9FE",
           "dark": {
             "backgroundColor": "#000000"
           }
