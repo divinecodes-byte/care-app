@@ -90,6 +90,47 @@ export const T = {
   recipientLight: '#D1FAE5',
 } as const;
 
+export type ThemeColors = Record<keyof typeof T, string>;
+
+/**
+ * Dark-mode counterpart of T — same keys, same Tavora blue/periwinkle brand,
+ * surfaces/text/borders inverted for a premium (not pure-black) dark look.
+ */
+export const T_DARK: ThemeColors = {
+  // Brand — kept consistent with light mode, periwinkle/blue identity
+  primary:      '#5B72F2',
+  primaryDark:  '#4361EE',
+  primaryLight: '#1E2247',
+  primaryMid:   '#39408C',
+
+  // Surfaces
+  bgPage:    '#0B0F1A',
+  bgSurface: '#141A2A',
+  bgAlt:     '#1C2336',
+
+  // Text
+  textPrimary:   '#F1F5F9',
+  textSecondary: '#B6C0D6',
+  textMuted:     '#7C879E',
+  textInverse:   '#0F172A',
+
+  // Borders
+  border:      '#27314A',
+  borderFocus: '#5B72F2',
+
+  // Feedback
+  success:      '#34D399',
+  successLight: '#103527',
+  error:        '#F87171',
+  errorLight:   '#3B1717',
+
+  // Role accents
+  caregiverColor: '#5B72F2',
+  caregiverLight: '#1E2247',
+  recipientColor: '#34D399',
+  recipientLight: '#103527',
+} as const;
+
 export const RADIUS = {
   sm:   8,
   md:   12,

@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -15,7 +15,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { RADIUS, SHADOW, T } from '@/constants/theme';
+import { RADIUS, SHADOW, T, ThemeColors } from '@/constants/theme';
+import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 
 function generateInviteCode() {
@@ -28,13 +29,15 @@ function generateInviteCode() {
 }
 
 const HOW_IT_WORKS = [
-    'Your loved one opens Tavora on their phone.',
-    'They choose "I am receiving care" as their role.',
+    'Your participant opens Tavora on their phone.',
+    'They choose "I\'m a Participant" as their role.',
     'They enter this 6-character invite code.',
     'Their reminders and responses become linked to your dashboard.',
 ];
 
 export default function InviteRecipientScreen() {
+    const C = useThemeColors();
+    const styles = useMemo(() => createStyles(C), [C]);
     const [inviteCode, setInviteCode] = useState('');
     const [loading, setLoading]       = useState(false);
 
@@ -131,15 +134,15 @@ export default function InviteRecipientScreen() {
                     onPress={() => router.back()}
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
-                    <Ionicons name="chevron-back" size={22} color={T.primary} />
+                    <Ionicons name="chevron-back" size={22} color={C.primary} />
                     <Text style={styles.backText}>Back</Text>
                 </TouchableOpacity>
 
                 {/* Header */}
                 <View style={styles.headerIcon}>
-                    <Ionicons name="person-add" size={26} color={T.primary} />
+                    <Ionicons name="person-add" size={26} color={C.primary} />
                 </View>
-                <Text style={styles.heading}>Invite Loved One</Text>
+                <Text style={styles.heading}>Invite Participant</Text>
                 <Text style={styles.subheading}>
                     Generate a code and share it so their account links to your dashboard.
                 </Text>
@@ -152,7 +155,7 @@ export default function InviteRecipientScreen() {
                         <>
                             <Text style={styles.code}>{inviteCode}</Text>
                             <View style={styles.codeReadyBadge}>
-                                <Ionicons name="checkmark-circle" size={14} color={T.success} />
+                                <Ionicons name="checkmark-circle" size={14} color={C.success} />
                                 <Text style={styles.codeReadyText}>Ready to share</Text>
                             </View>
                         </>
@@ -180,13 +183,13 @@ export default function InviteRecipientScreen() {
                     activeOpacity={0.88}
                 >
                     {loading ? (
-                        <ActivityIndicator color={hasCode ? T.primary : T.textInverse} />
+                        <ActivityIndicator color={hasCode ? C.primary : C.textInverse} />
                     ) : (
                         <>
                             <Ionicons
                                 name="refresh"
                                 size={18}
-                                color={hasCode ? T.primary : T.textInverse}
+                                color={hasCode ? C.primary : C.textInverse}
                             />
                             <Text style={hasCode ? styles.generateButtonTextSecondary : styles.generateButtonTextPrimary}>
                                 {hasCode ? 'Generate New Code' : 'Generate Invite Code'}
@@ -202,7 +205,7 @@ export default function InviteRecipientScreen() {
                         onPress={shareInviteCode}
                         activeOpacity={0.88}
                     >
-                        <Ionicons name="share-social" size={20} color={T.textInverse} />
+                        <Ionicons name="share-social" size={20} color={C.textInverse} />
                         <Text style={styles.shareButtonText}>Share Code</Text>
                     </TouchableOpacity>
                 )}
@@ -234,10 +237,10 @@ export default function InviteRecipientScreen() {
     );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (C: ThemeColors) => StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: T.bgPage,
+        backgroundColor: C.bgPage,
     },
     content: {
         paddingHorizontal: 24,
@@ -255,7 +258,7 @@ const styles = StyleSheet.create({
     backText: {
         fontSize: 16,
         fontWeight: '600',
-        color: T.primary,
+        color: C.primary,
         marginLeft: 2,
     },
 
@@ -264,7 +267,7 @@ const styles = StyleSheet.create({
         width: 52,
         height: 52,
         borderRadius: RADIUS.lg,
-        backgroundColor: T.primaryLight,
+        backgroundColor: C.primaryLight,
         justifyContent: 'center',
         alignItems: 'center',
         marginBottom: 18,
@@ -272,13 +275,13 @@ const styles = StyleSheet.create({
     heading: {
         fontSize: 30,
         fontWeight: '800',
-        color: T.textPrimary,
+        color: C.textPrimary,
         letterSpacing: -0.6,
         marginBottom: 10,
     },
     subheading: {
         fontSize: 15,
-        color: T.textSecondary,
+        color: C.textSecondary,
         lineHeight: 22,
         letterSpacing: -0.1,
         marginBottom: 28,
@@ -286,24 +289,24 @@ const styles = StyleSheet.create({
 
     // ── Code card ─────────────────────────────────────────────────────
     codeCard: {
-        backgroundColor: T.bgSurface,
+        backgroundColor: C.bgSurface,
         borderRadius: RADIUS.xl,
         padding: 28,
         alignItems: 'center',
         marginBottom: 14,
         borderWidth: 2,
-        borderColor: T.border,
+        borderColor: C.border,
         borderStyle: 'dashed',
     },
     codeCardActive: {
         borderStyle: 'solid',
-        borderColor: T.primary,
-        backgroundColor: T.primaryLight,
+        borderColor: C.primary,
+        backgroundColor: C.primaryLight,
     },
     codeLabel: {
         fontSize: 11,
         fontWeight: '700',
-        color: T.textMuted,
+        color: C.textMuted,
         textTransform: 'uppercase',
         letterSpacing: 1,
         marginBottom: 16,
@@ -311,7 +314,7 @@ const styles = StyleSheet.create({
     code: {
         fontSize: 42,
         fontWeight: '800',
-        color: T.primary,
+        color: C.primary,
         letterSpacing: 8,
         marginBottom: 12,
         fontVariant: ['tabular-nums'],
@@ -323,7 +326,7 @@ const styles = StyleSheet.create({
     },
     codeReadyText: {
         fontSize: 13,
-        color: T.success,
+        color: C.success,
         fontWeight: '600',
     },
     codePlaceholderRow: {
@@ -335,11 +338,11 @@ const styles = StyleSheet.create({
         width: 28,
         height: 4,
         borderRadius: RADIUS.full,
-        backgroundColor: T.border,
+        backgroundColor: C.border,
     },
     codeHint: {
         fontSize: 13,
-        color: T.textMuted,
+        color: C.textMuted,
         textAlign: 'center',
     },
 
@@ -354,26 +357,26 @@ const styles = StyleSheet.create({
         marginBottom: 12,
     },
     generateButtonPrimary: {
-        backgroundColor: T.primary,
+        backgroundColor: C.primary,
     },
     generateButtonSecondary: {
-        backgroundColor: T.bgSurface,
+        backgroundColor: C.bgSurface,
         borderWidth: 1.5,
-        borderColor: T.border,
+        borderColor: C.border,
     },
     generateButtonTextPrimary: {
-        color: T.textInverse,
+        color: C.textInverse,
         fontSize: 16,
         fontWeight: '700',
         letterSpacing: -0.1,
     },
     generateButtonTextSecondary: {
-        color: T.primary,
+        color: C.primary,
         fontSize: 15,
         fontWeight: '600',
     },
     shareButton: {
-        backgroundColor: T.primary,
+        backgroundColor: C.primary,
         paddingVertical: 18,
         borderRadius: RADIUS.xl,
         alignItems: 'center',
@@ -383,7 +386,7 @@ const styles = StyleSheet.create({
         marginBottom: 24,
     },
     shareButtonText: {
-        color: T.textInverse,
+        color: C.textInverse,
         fontSize: 17,
         fontWeight: '700',
         letterSpacing: -0.2,
@@ -397,13 +400,13 @@ const styles = StyleSheet.create({
     },
     doneButtonText: {
         fontSize: 15,
-        color: T.textMuted,
+        color: C.textMuted,
         fontWeight: '600',
     },
 
     // ── Steps card ────────────────────────────────────────────────────
     stepsCard: {
-        backgroundColor: T.bgSurface,
+        backgroundColor: C.bgSurface,
         borderRadius: RADIUS.xl,
         padding: 20,
         marginBottom: 20,
@@ -411,7 +414,7 @@ const styles = StyleSheet.create({
     stepsTitle: {
         fontSize: 16,
         fontWeight: '700',
-        color: T.textPrimary,
+        color: C.textPrimary,
         letterSpacing: -0.2,
         marginBottom: 18,
     },
@@ -425,21 +428,21 @@ const styles = StyleSheet.create({
         width: 26,
         height: 26,
         borderRadius: RADIUS.full,
-        backgroundColor: T.primary,
+        backgroundColor: C.primary,
         justifyContent: 'center',
         alignItems: 'center',
         flexShrink: 0,
         marginTop: 1,
     },
     stepBadgeText: {
-        color: T.textInverse,
+        color: C.textInverse,
         fontSize: 12,
         fontWeight: '800',
     },
     stepText: {
         flex: 1,
         fontSize: 14,
-        color: T.textSecondary,
+        color: C.textSecondary,
         lineHeight: 21,
         letterSpacing: -0.1,
     },

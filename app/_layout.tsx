@@ -1,8 +1,10 @@
 import * as Notifications from 'expo-notifications';
 import { router, Stack } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef } from 'react';
 
 import { setupAndroidChannel } from '@/lib/notifications';
+import { ThemeProvider, useThemeMode } from '@/lib/theme';
 
 // Show the notification banner even when the app is in the foreground.
 // The recipient still has to tap it (or tap the card) to open the alert screen.
@@ -16,6 +18,16 @@ Notifications.setNotificationHandler({
 });
 
 export default function RootLayout() {
+    return (
+        <ThemeProvider>
+            <RootLayoutNav />
+        </ThemeProvider>
+    );
+}
+
+function RootLayoutNav() {
+    const { resolvedScheme } = useThemeMode();
+
     // Dedup guard — the cold-launch path and the live listener can both fire for
     // the same tap on iOS; only route once per notification identifier.
     const handledNotifRef = useRef<string | undefined>(undefined);
@@ -53,11 +65,14 @@ export default function RootLayout() {
     }, []);
 
     return (
-        <Stack
-            screenOptions={{
-                headerShown:    false,
-                gestureEnabled: false,
-            }}
-        />
+        <>
+            <StatusBar style={resolvedScheme === 'dark' ? 'light' : 'dark'} />
+            <Stack
+                screenOptions={{
+                    headerShown:    false,
+                    gestureEnabled: false,
+                }}
+            />
+        </>
     );
 }

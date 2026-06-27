@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Platform,
@@ -12,12 +12,15 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { RADIUS, SHADOW, T } from '@/constants/theme';
+import { RADIUS, SHADOW, T, ThemeColors } from '@/constants/theme';
+import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 
 type Role = 'caregiver' | 'recipient';
 
 export default function ChooseRoleScreen() {
+    const C = useThemeColors();
+    const styles = useMemo(() => createStyles(C), [C]);
     const [loadingRole, setLoadingRole] = useState<Role | null>(null);
 
     async function handleChooseRole(role: Role) {
@@ -61,7 +64,7 @@ export default function ChooseRoleScreen() {
                 {/* Header */}
                 <View style={styles.header}>
                     <View style={styles.headerIcon}>
-                        <Ionicons name="people" size={26} color={T.primary} />
+                        <Ionicons name="people" size={26} color={C.primary} />
                     </View>
                     <Text style={styles.title}>How will you use{'\n'}Tavora?</Text>
                     <Text style={styles.subtitle}>
@@ -83,22 +86,22 @@ export default function ChooseRoleScreen() {
                         disabled={isLoading}
                         activeOpacity={0.82}
                     >
-                        <View style={[styles.cardIconWrap, { backgroundColor: T.caregiverLight }]}>
-                            <Ionicons name="heart" size={26} color={T.caregiverColor} />
+                        <View style={[styles.cardIconWrap, { backgroundColor: C.caregiverLight }]}>
+                            <Ionicons name="heart" size={26} color={C.caregiverColor} />
                         </View>
 
                         <View style={styles.cardBody}>
-                            <Text style={styles.cardTitle}>I am a caregiver</Text>
+                            <Text style={styles.cardTitle}>I'm an Organizer</Text>
                             <Text style={styles.cardText}>
-                                Create reminders and track your loved one's care activities.
+                                Create reminders and track a participant's progress.
                             </Text>
                         </View>
 
                         <View style={styles.cardTrailing}>
                             {loadingRole === 'caregiver' ? (
-                                <ActivityIndicator size="small" color={T.caregiverColor} />
+                                <ActivityIndicator size="small" color={C.caregiverColor} />
                             ) : (
-                                <Ionicons name="chevron-forward" size={20} color={T.textMuted} />
+                                <Ionicons name="chevron-forward" size={20} color={C.textMuted} />
                             )}
                         </View>
                     </TouchableOpacity>
@@ -115,12 +118,12 @@ export default function ChooseRoleScreen() {
                         disabled={isLoading}
                         activeOpacity={0.82}
                     >
-                        <View style={[styles.cardIconWrap, { backgroundColor: T.recipientLight }]}>
-                            <Ionicons name="person" size={26} color={T.recipientColor} />
+                        <View style={[styles.cardIconWrap, { backgroundColor: C.recipientLight }]}>
+                            <Ionicons name="person" size={26} color={C.recipientColor} />
                         </View>
 
                         <View style={styles.cardBody}>
-                            <Text style={styles.cardTitle}>I am receiving care</Text>
+                            <Text style={styles.cardTitle}>I'm a Participant</Text>
                             <Text style={styles.cardText}>
                                 See today's reminders and mark tasks as completed.
                             </Text>
@@ -128,9 +131,9 @@ export default function ChooseRoleScreen() {
 
                         <View style={styles.cardTrailing}>
                             {loadingRole === 'recipient' ? (
-                                <ActivityIndicator size="small" color={T.recipientColor} />
+                                <ActivityIndicator size="small" color={C.recipientColor} />
                             ) : (
-                                <Ionicons name="chevron-forward" size={20} color={T.textMuted} />
+                                <Ionicons name="chevron-forward" size={20} color={C.textMuted} />
                             )}
                         </View>
                     </TouchableOpacity>
@@ -144,10 +147,10 @@ export default function ChooseRoleScreen() {
     );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (C: ThemeColors) => StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: T.bgPage,
+        backgroundColor: C.bgPage,
     },
     content: {
         flex: 1,
@@ -163,7 +166,7 @@ const styles = StyleSheet.create({
         width: 52,
         height: 52,
         borderRadius: RADIUS.lg,
-        backgroundColor: T.primaryLight,
+        backgroundColor: C.primaryLight,
         justifyContent: 'center',
         alignItems: 'center',
         marginBottom: 20,
@@ -171,14 +174,14 @@ const styles = StyleSheet.create({
     title: {
         fontSize: 34,
         fontWeight: '800',
-        color: T.textPrimary,
+        color: C.textPrimary,
         lineHeight: 42,
         letterSpacing: -0.8,
         marginBottom: 12,
     },
     subtitle: {
         fontSize: 16,
-        color: T.textSecondary,
+        color: C.textSecondary,
         lineHeight: 24,
         letterSpacing: -0.1,
     },
@@ -189,17 +192,17 @@ const styles = StyleSheet.create({
         marginBottom: 28,
     },
     card: {
-        backgroundColor: T.bgSurface,
+        backgroundColor: C.bgSurface,
         borderRadius: RADIUS.xl,
         padding: 20,
         flexDirection: 'row',
         alignItems: 'center',
         borderWidth: 1.5,
-        borderColor: T.border,
+        borderColor: C.border,
     },
     cardActive: {
-        borderColor: T.primary,
-        backgroundColor: T.primaryLight,
+        borderColor: C.primary,
+        backgroundColor: C.primaryLight,
     },
     cardDimmed: {
         opacity: 0.45,
@@ -219,13 +222,13 @@ const styles = StyleSheet.create({
     cardTitle: {
         fontSize: 17,
         fontWeight: '700',
-        color: T.textPrimary,
+        color: C.textPrimary,
         letterSpacing: -0.3,
         marginBottom: 5,
     },
     cardText: {
         fontSize: 14,
-        color: T.textSecondary,
+        color: C.textSecondary,
         lineHeight: 20,
         letterSpacing: -0.1,
     },
@@ -238,7 +241,7 @@ const styles = StyleSheet.create({
     // ── Footer hint ───────────────────────────────────────────────────
     hint: {
         fontSize: 13,
-        color: T.textMuted,
+        color: C.textMuted,
         textAlign: 'center',
         lineHeight: 19,
         paddingHorizontal: 8,

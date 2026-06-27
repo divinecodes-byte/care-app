@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Platform,
@@ -15,10 +15,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { SettingsSheet } from '@/components/settings-sheet';
-import { RADIUS, SHADOW, T } from '@/constants/theme';
+import { RADIUS, SHADOW, T, ThemeColors } from '@/constants/theme';
 import { formatFrequency as formatFrequencyDays, isDueOnDate } from '@/lib/frequency';
 import { registerCaregiverPushToken } from '@/lib/notifications';
 import { supabase } from '@/lib/supabase';
+import { useThemeColors } from '@/lib/theme';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -339,191 +340,190 @@ function buildReminderBreakdown(
     });
 }
 
-// ─── UI helpers ───────────────────────────────────────────────────────────────
-
-function getAdherenceColor(pct: number | null): string {
-    if (pct === null) return T.textMuted;
-    if (pct >= 80) return T.success;
-    if (pct >= 50) return '#D97706';
-    return T.error;
-}
-
-function getStatusPillStyle(status: ReminderStatus) {
-    if (status === 'taken')   return styles.takenPill;
-    if (status === 'missed')  return styles.missedPill;
-    if (status === 'skipped') return styles.skippedPill;
-    if (status === 'snoozed') return styles.snoozedPill;
-    return styles.pendingPill;
-}
-
-function getStatusTextStyle(status: ReminderStatus) {
-    if (status === 'taken')   return styles.takenText;
-    if (status === 'missed')  return styles.missedText;
-    if (status === 'skipped') return styles.skippedText;
-    if (status === 'snoozed') return styles.snoozedText;
-    return styles.pendingText;
-}
-
-function getHeatmapStyle(day: DayData) {
-    const todayString = getLocalDateString(new Date());
-    if (day.dateString > todayString) return styles.heatmapFuture;
-    if (!day.hasData) return styles.heatmapNoData;
-    if (day.countableCount === 0 && day.pendingCount > 0) return styles.heatmapPending;
-    if (day.countableCount === 0) return styles.heatmapEmpty;
-    if (day.adherence === 100) return styles.heatmapHigh;
-    if (day.adherence >= 75)   return styles.heatmapMedium;
-    if (day.adherence >= 50)   return styles.heatmapLow;
-    return styles.heatmapMissed;
-}
-
-function getBarColor(day: DayData): string {
-    if (!day.hasData || day.isFuture) return T.border;
-    if (day.countableCount === 0)     return T.primaryMid;
-    return getAdherenceColor(day.adherence);
-}
-
-function getBarHeight(day: DayData): string {
-    if (!day.hasData || day.isFuture) return '8%';
-    if (day.countableCount === 0)     return '10%';
-    return `${Math.max(day.adherence, 6)}%`;
-}
-
-// ─── Sub-components ───────────────────────────────────────────────────────────
-
-function ReminderRow({ reminder }: { reminder: ReminderDisplay }) {
-    return (
-        <View style={[styles.reminderRow, !reminder.isActive && styles.reminderRowInactive]}>
-            <View style={[styles.reminderStatusBar, getStatusPillStyle(reminder.status)]} />
-            <View style={styles.reminderTextBlock}>
-                <View style={styles.reminderNameRow}>
-                    <Text style={styles.reminderName}>{reminder.name}</Text>
-                    {!reminder.isActive && (
-                        <View style={styles.inactiveTag}>
-                            <Text style={styles.inactiveTagText}>Deleted</Text>
-                        </View>
-                    )}
-                </View>
-                <Text style={styles.reminderTime}>{reminder.time}</Text>
-            </View>
-            <View style={[styles.statusPill, getStatusPillStyle(reminder.status)]}>
-                <Text style={[styles.statusText, getStatusTextStyle(reminder.status)]}>
-                    {formatStatus(reminder.status)}
-                </Text>
-            </View>
-        </View>
-    );
-}
-
-function MetricTile({ count, label, color, bg }: { count: number; label: string; color: string; bg: string }) {
-    return (
-        <View style={[styles.metricTile, { backgroundColor: bg }]}>
-            <Text style={[styles.metricTileCount, { color }]}>{count}</Text>
-            <Text style={[styles.metricTileLabel, { color }]}>{label}</Text>
-        </View>
-    );
-}
-
-function BreakdownCard({ item }: { item: ReminderBreakdownItem }) {
-    const hasCountable   = item.scheduled > 0;
-    const adherenceColor = hasCountable ? getAdherenceColor(item.adherence) : T.textMuted;
-
-    const chips = [
-        item.completed > 0 ? { label: `${item.completed} Taken`,   bg: '#DCFCE7', color: '#15803D' } : null,
-        item.missed    > 0 ? { label: `${item.missed} Missed`,     bg: '#FEE2E2', color: '#B91C1C' } : null,
-        item.skipped   > 0 ? { label: `${item.skipped} Skipped`,   bg: '#FEF3C7', color: '#B45309' } : null,
-        item.snoozed   > 0 ? { label: `${item.snoozed} Snoozed`,   bg: '#DBEAFE', color: '#1D4ED8' } : null,
-        item.pending   > 0 ? { label: `${item.pending} Pending`,   bg: T.bgAlt,   color: T.textMuted } : null,
-    ].filter(Boolean) as { label: string; bg: string; color: string }[];
-
-    let summaryText: string;
-    if (!hasCountable && item.pending === 0) {
-        summaryText = 'No countable history yet';
-    } else if (!hasCountable) {
-        summaryText = `${item.pending} pending — no past data yet`;
-    } else if (item.adherence === 100) {
-        summaryText = `${item.completed} of ${item.scheduled} taken`;
-    } else if (item.missed > 0 && item.pending > 0) {
-        summaryText = `${item.missed} missed · ${item.pending} pending`;
-    } else if (item.missed > 0) {
-        summaryText = `${item.missed} missed this month`;
-    } else if (item.pending > 0) {
-        summaryText = `${item.pending} pending today`;
-    } else {
-        summaryText = `${item.completed} of ${item.scheduled} taken`;
-    }
-
-    return (
-        <TouchableOpacity
-            style={[styles.bcCard, SHADOW.xs]}
-            onPress={() =>
-                router.push({ pathname: '/reminder-details', params: { reminderId: item.id } })
-            }
-            activeOpacity={0.75}
-        >
-            <View style={styles.bcHeader}>
-                <View style={{ flex: 1 }}>
-                    <View style={styles.bcNameRow}>
-                        <Text style={styles.bcName} numberOfLines={1}>{item.name}</Text>
-                        {!item.isActive && (
-                            <View style={styles.bcDeletedPill}>
-                                <Text style={styles.bcDeletedText}>Deleted</Text>
-                            </View>
-                        )}
-                    </View>
-                    <Text style={styles.bcMeta}>
-                        {item.isActive
-                            ? `${formatTime(item.time_of_day)} · ${formatFrequency(item.frequency, item.days_of_week)}`
-                            : 'No longer scheduled'}
-                    </Text>
-                </View>
-                <View style={styles.bcAdherenceBlock}>
-                    <Text style={[styles.bcAdherencePct, { color: adherenceColor }]}>
-                        {hasCountable ? `${item.adherence}%` : '—'}
-                    </Text>
-                    <Text style={styles.bcAdherenceLabel}>adherence</Text>
-                </View>
-            </View>
-
-            {hasCountable && (
-                <>
-                    <View style={styles.bcProgressTrack}>
-                        <View
-                            style={[
-                                styles.bcProgressFill,
-                                { width: `${item.adherence}%`, backgroundColor: adherenceColor },
-                            ]}
-                        />
-                    </View>
-                    <Text style={styles.bcCountLine}>
-                        {item.completed} of {item.scheduled} countable scheduled
-                    </Text>
-                </>
-            )}
-
-            {chips.length > 0 && (
-                <View style={styles.bcChips}>
-                    {chips.map((chip) => (
-                        <View key={chip.label} style={[styles.bcChip, { backgroundColor: chip.bg }]}>
-                            <Text style={[styles.bcChipText, { color: chip.color }]}>{chip.label}</Text>
-                        </View>
-                    ))}
-                </View>
-            )}
-
-            <View style={styles.bcFooter}>
-                <Text style={styles.bcSummary}>{summaryText}</Text>
-                <View style={styles.bcCta}>
-                    <Text style={styles.bcCtaText}>Details</Text>
-                    <Ionicons name="chevron-forward" size={13} color={T.primary} />
-                </View>
-            </View>
-        </TouchableOpacity>
-    );
-}
-
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function CaregiverDashboard() {
+    const C = useThemeColors();
+    const styles = useMemo(() => createStyles(C), [C]);
+
+    function getAdherenceColor(pct: number | null): string {
+        if (pct === null) return C.textMuted;
+        if (pct >= 80) return C.success;
+        if (pct >= 50) return '#D97706';
+        return C.error;
+    }
+
+    function getStatusPillStyle(status: ReminderStatus) {
+        if (status === 'taken')   return styles.takenPill;
+        if (status === 'missed')  return styles.missedPill;
+        if (status === 'skipped') return styles.skippedPill;
+        if (status === 'snoozed') return styles.snoozedPill;
+        return styles.pendingPill;
+    }
+
+    function getStatusTextStyle(status: ReminderStatus) {
+        if (status === 'taken')   return styles.takenText;
+        if (status === 'missed')  return styles.missedText;
+        if (status === 'skipped') return styles.skippedText;
+        if (status === 'snoozed') return styles.snoozedText;
+        return styles.pendingText;
+    }
+
+    function getHeatmapStyle(day: DayData) {
+        const todayString = getLocalDateString(new Date());
+        if (day.dateString > todayString) return styles.heatmapFuture;
+        if (!day.hasData) return styles.heatmapNoData;
+        if (day.countableCount === 0 && day.pendingCount > 0) return styles.heatmapPending;
+        if (day.countableCount === 0) return styles.heatmapEmpty;
+        if (day.adherence === 100) return styles.heatmapHigh;
+        if (day.adherence >= 75)   return styles.heatmapMedium;
+        if (day.adherence >= 50)   return styles.heatmapLow;
+        return styles.heatmapMissed;
+    }
+
+    function getBarColor(day: DayData): string {
+        if (!day.hasData || day.isFuture) return C.border;
+        if (day.countableCount === 0)     return C.primaryMid;
+        return getAdherenceColor(day.adherence);
+    }
+
+    function getBarHeight(day: DayData): string {
+        if (!day.hasData || day.isFuture) return '8%';
+        if (day.countableCount === 0)     return '10%';
+        return `${Math.max(day.adherence, 6)}%`;
+    }
+
+    function ReminderRow({ reminder }: { reminder: ReminderDisplay }) {
+        return (
+            <View style={[styles.reminderRow, !reminder.isActive && styles.reminderRowInactive]}>
+                <View style={[styles.reminderStatusBar, getStatusPillStyle(reminder.status)]} />
+                <View style={styles.reminderTextBlock}>
+                    <View style={styles.reminderNameRow}>
+                        <Text style={styles.reminderName}>{reminder.name}</Text>
+                        {!reminder.isActive && (
+                            <View style={styles.inactiveTag}>
+                                <Text style={styles.inactiveTagText}>Deleted</Text>
+                            </View>
+                        )}
+                    </View>
+                    <Text style={styles.reminderTime}>{reminder.time}</Text>
+                </View>
+                <View style={[styles.statusPill, getStatusPillStyle(reminder.status)]}>
+                    <Text style={[styles.statusText, getStatusTextStyle(reminder.status)]}>
+                        {formatStatus(reminder.status)}
+                    </Text>
+                </View>
+            </View>
+        );
+    }
+
+    function MetricTile({ count, label, color, bg }: { count: number; label: string; color: string; bg: string }) {
+        return (
+            <View style={[styles.metricTile, { backgroundColor: bg }]}>
+                <Text style={[styles.metricTileCount, { color }]}>{count}</Text>
+                <Text style={[styles.metricTileLabel, { color }]}>{label}</Text>
+            </View>
+        );
+    }
+
+    function BreakdownCard({ item }: { item: ReminderBreakdownItem }) {
+        const hasCountable   = item.scheduled > 0;
+        const adherenceColor = hasCountable ? getAdherenceColor(item.adherence) : C.textMuted;
+
+        const chips = [
+            item.completed > 0 ? { label: `${item.completed} Taken`,   bg: '#DCFCE7', color: '#15803D' } : null,
+            item.missed    > 0 ? { label: `${item.missed} Missed`,     bg: '#FEE2E2', color: '#B91C1C' } : null,
+            item.skipped   > 0 ? { label: `${item.skipped} Skipped`,   bg: '#FEF3C7', color: '#B45309' } : null,
+            item.snoozed   > 0 ? { label: `${item.snoozed} Snoozed`,   bg: '#DBEAFE', color: '#1D4ED8' } : null,
+            item.pending   > 0 ? { label: `${item.pending} Pending`,   bg: C.bgAlt,   color: C.textMuted } : null,
+        ].filter(Boolean) as { label: string; bg: string; color: string }[];
+
+        let summaryText: string;
+        if (!hasCountable && item.pending === 0) {
+            summaryText = 'No countable history yet';
+        } else if (!hasCountable) {
+            summaryText = `${item.pending} pending — no past data yet`;
+        } else if (item.adherence === 100) {
+            summaryText = `${item.completed} of ${item.scheduled} taken`;
+        } else if (item.missed > 0 && item.pending > 0) {
+            summaryText = `${item.missed} missed · ${item.pending} pending`;
+        } else if (item.missed > 0) {
+            summaryText = `${item.missed} missed this month`;
+        } else if (item.pending > 0) {
+            summaryText = `${item.pending} pending today`;
+        } else {
+            summaryText = `${item.completed} of ${item.scheduled} taken`;
+        }
+
+        return (
+            <TouchableOpacity
+                style={[styles.bcCard, SHADOW.xs]}
+                onPress={() =>
+                    router.push({ pathname: '/reminder-details', params: { reminderId: item.id } })
+                }
+                activeOpacity={0.75}
+            >
+                <View style={styles.bcHeader}>
+                    <View style={{ flex: 1 }}>
+                        <View style={styles.bcNameRow}>
+                            <Text style={styles.bcName} numberOfLines={1}>{item.name}</Text>
+                            {!item.isActive && (
+                                <View style={styles.bcDeletedPill}>
+                                    <Text style={styles.bcDeletedText}>Deleted</Text>
+                                </View>
+                            )}
+                        </View>
+                        <Text style={styles.bcMeta}>
+                            {item.isActive
+                                ? `${formatTime(item.time_of_day)} · ${formatFrequency(item.frequency, item.days_of_week)}`
+                                : 'No longer scheduled'}
+                        </Text>
+                    </View>
+                    <View style={styles.bcAdherenceBlock}>
+                        <Text style={[styles.bcAdherencePct, { color: adherenceColor }]}>
+                            {hasCountable ? `${item.adherence}%` : '—'}
+                        </Text>
+                        <Text style={styles.bcAdherenceLabel}>adherence</Text>
+                    </View>
+                </View>
+
+                {hasCountable && (
+                    <>
+                        <View style={styles.bcProgressTrack}>
+                            <View
+                                style={[
+                                    styles.bcProgressFill,
+                                    { width: `${item.adherence}%`, backgroundColor: adherenceColor },
+                                ]}
+                            />
+                        </View>
+                        <Text style={styles.bcCountLine}>
+                            {item.completed} of {item.scheduled} countable scheduled
+                        </Text>
+                    </>
+                )}
+
+                {chips.length > 0 && (
+                    <View style={styles.bcChips}>
+                        {chips.map((chip) => (
+                            <View key={chip.label} style={[styles.bcChip, { backgroundColor: chip.bg }]}>
+                                <Text style={[styles.bcChipText, { color: chip.color }]}>{chip.label}</Text>
+                            </View>
+                        ))}
+                    </View>
+                )}
+
+                <View style={styles.bcFooter}>
+                    <Text style={styles.bcSummary}>{summaryText}</Text>
+                    <View style={styles.bcCta}>
+                        <Text style={styles.bcCtaText}>Details</Text>
+                        <Ionicons name="chevron-forward" size={13} color={C.primary} />
+                    </View>
+                </View>
+            </TouchableOpacity>
+        );
+    }
+
     const [selectedRange, setSelectedRange]         = useState<'Today' | 'Week' | 'Month'>('Today');
     const [selectedWeekIndex, setSelectedWeekIndex] = useState(new Date().getDay());
     const [selectedMonthIndex, setSelectedMonthIndex] = useState(new Date().getDate() - 1);
@@ -618,7 +618,7 @@ export default function CaregiverDashboard() {
             id: acceptedConnection.id,
             status: 'accepted',
             inviteCode: acceptedConnection.invite_code,
-            recipientName: recipientProfile?.full_name || 'Loved one',
+            recipientName: recipientProfile?.full_name || 'Participant',
             acceptedAt,
         });
 
@@ -699,11 +699,11 @@ export default function CaregiverDashboard() {
             return (
                 <View style={[styles.connectionCard, SHADOW.xs]}>
                     <View style={styles.connectionCardInner}>
-                        <View style={[styles.connectionIconWrap, { backgroundColor: T.bgAlt }]}>
-                            <ActivityIndicator size="small" color={T.textMuted} />
+                        <View style={[styles.connectionIconWrap, { backgroundColor: C.bgAlt }]}>
+                            <ActivityIndicator size="small" color={C.textMuted} />
                         </View>
                         <View style={{ flex: 1 }}>
-                            <Text style={styles.connectionLabel}>Care Connection</Text>
+                            <Text style={styles.connectionLabel}>Connection</Text>
                             <Text style={styles.connectionTitle}>Checking connection…</Text>
                         </View>
                     </View>
@@ -715,12 +715,12 @@ export default function CaregiverDashboard() {
             return (
                 <View style={[styles.connectionCard, SHADOW.xs]}>
                     <View style={styles.connectionCardInner}>
-                        <View style={[styles.connectionIconWrap, { backgroundColor: T.bgAlt }]}>
-                            <Ionicons name="link-outline" size={22} color={T.textMuted} />
+                        <View style={[styles.connectionIconWrap, { backgroundColor: C.bgAlt }]}>
+                            <Ionicons name="link-outline" size={22} color={C.textMuted} />
                         </View>
                         <View style={{ flex: 1 }}>
-                            <Text style={styles.connectionLabel}>Care Connection</Text>
-                            <Text style={styles.connectionTitle}>No loved one linked</Text>
+                            <Text style={styles.connectionLabel}>Connection</Text>
+                            <Text style={styles.connectionTitle}>No participant linked</Text>
                             <Text style={styles.connectionText}>
                                 Send an invite so they can receive reminders.
                             </Text>
@@ -731,7 +731,7 @@ export default function CaregiverDashboard() {
                         onPress={() => router.push('/invite-recipient')}
                         activeOpacity={0.88}
                     >
-                        <Text style={styles.connectionButtonText}>Invite Loved One</Text>
+                        <Text style={styles.connectionButtonText}>Invite Participant</Text>
                     </TouchableOpacity>
                 </View>
             );
@@ -745,10 +745,10 @@ export default function CaregiverDashboard() {
                             <Ionicons name="time-outline" size={22} color="#D97706" />
                         </View>
                         <View style={{ flex: 1 }}>
-                            <Text style={styles.connectionLabel}>Care Connection</Text>
+                            <Text style={styles.connectionLabel}>Connection</Text>
                             <Text style={styles.connectionTitle}>Waiting for acceptance</Text>
                             <Text style={styles.connectionText}>
-                                Share this code with your loved one:
+                                Share this code with your participant:
                             </Text>
                         </View>
                     </View>
@@ -769,11 +769,11 @@ export default function CaregiverDashboard() {
         return (
             <View style={[styles.connectionCard, styles.connectionCardAccepted, SHADOW.xs]}>
                 <View style={styles.connectionCardInner}>
-                    <View style={[styles.connectionIconWrap, { backgroundColor: T.successLight }]}>
-                        <Ionicons name="checkmark-circle" size={22} color={T.success} />
+                    <View style={[styles.connectionIconWrap, { backgroundColor: C.successLight }]}>
+                        <Ionicons name="checkmark-circle" size={22} color={C.success} />
                     </View>
                     <View style={{ flex: 1 }}>
-                        <Text style={styles.connectionLabel}>Care Connection</Text>
+                        <Text style={styles.connectionLabel}>Connection</Text>
                         <Text style={styles.connectionTitle}>{connectionSummary.recipientName}</Text>
                         <Text style={styles.connectionText}>Connected · reminders are active.</Text>
                     </View>
@@ -790,13 +790,13 @@ export default function CaregiverDashboard() {
                 <View style={[styles.card, SHADOW.xs]}>
                     <View style={styles.emptyState}>
                         <View style={styles.emptyIconWrap}>
-                            <Ionicons name="bar-chart-outline" size={28} color={T.textMuted} />
+                            <Ionicons name="bar-chart-outline" size={28} color={C.textMuted} />
                         </View>
                         <Text style={styles.emptyTitle}>No analytics yet</Text>
                         <Text style={styles.emptyText}>
                             {connectionSummary.status === 'pending'
-                                ? "Waiting for your loved one to accept your invite. Analytics will appear once they're connected."
-                                : 'Invite a loved one to get started. Analytics will appear once they start responding to reminders.'}
+                                ? "Waiting for your participant to accept your invite. Analytics will appear once they're connected."
+                                : 'Invite a participant to get started. Analytics will appear once they start responding to reminders.'}
                         </Text>
                     </View>
                 </View>
@@ -807,7 +807,7 @@ export default function CaregiverDashboard() {
             return (
                 <View style={[styles.card, SHADOW.xs]}>
                     <View style={styles.loadingState}>
-                        <ActivityIndicator color={T.primary} />
+                        <ActivityIndicator color={C.primary} />
                         <Text style={styles.loadingText}>Loading care activity…</Text>
                     </View>
                 </View>
@@ -873,7 +873,7 @@ export default function CaregiverDashboard() {
                         </>
                     ) : (
                         <>
-                            <Text style={[styles.bigMetric, { color: T.textMuted }]}>—</Text>
+                            <Text style={[styles.bigMetric, { color: C.textMuted }]}>—</Text>
                             <Text style={styles.helperText}>
                                 {!hasAnyReminders
                                     ? 'No reminders created yet. Tap + to add one.'
@@ -894,7 +894,7 @@ export default function CaregiverDashboard() {
                                     No reminders have been created yet.
                                 </Text>
                                 <View style={styles.inlineEmpty}>
-                                    <Ionicons name="add-circle-outline" size={20} color={T.textMuted} />
+                                    <Ionicons name="add-circle-outline" size={20} color={C.textMuted} />
                                     <Text style={styles.inlineEmptyText}>
                                         Tap + above to create the first reminder.
                                     </Text>
@@ -902,7 +902,7 @@ export default function CaregiverDashboard() {
                             </>
                         ) : !todayData || todayData.eligibleCount === 0 ? (
                             <View style={styles.inlineEmpty}>
-                                <Ionicons name="calendar-outline" size={20} color={T.textMuted} />
+                                <Ionicons name="calendar-outline" size={20} color={C.textMuted} />
                                 <Text style={styles.inlineEmptyText}>
                                     {todayData && todayData.scheduledCount > 0 && reminderBreakdown.length > 0
                                         ? "This reminder hasn't started yet — it'll appear here from tomorrow."
@@ -929,8 +929,8 @@ export default function CaregiverDashboard() {
                                     <MetricTile
                                         count={todayData.pendingCount}
                                         label="Pending"
-                                        color={T.textSecondary}
-                                        bg={T.bgAlt}
+                                        color={C.textSecondary}
+                                        bg={C.bgAlt}
                                     />
                                     <MetricTile
                                         count={todayData.missedCount}
@@ -978,7 +978,7 @@ export default function CaregiverDashboard() {
                                                     height: getBarHeight(day) as any,
                                                     backgroundColor:
                                                         selectedWeekIndex === index && day.hasData
-                                                            ? T.primaryDark
+                                                            ? C.primaryDark
                                                             : getBarColor(day),
                                                 },
                                             ]}
@@ -1055,19 +1055,19 @@ export default function CaregiverDashboard() {
 
                         {selectedDay.isFuture ? (
                             <View style={styles.inlineEmpty}>
-                                <Ionicons name="time-outline" size={20} color={T.textMuted} />
+                                <Ionicons name="time-outline" size={20} color={C.textMuted} />
                                 <Text style={styles.inlineEmptyText}>Future date — no data yet.</Text>
                             </View>
                         ) : !selectedDay.hasData ? (
                             <View style={styles.inlineEmpty}>
-                                <Ionicons name="information-circle-outline" size={20} color={T.textMuted} />
+                                <Ionicons name="information-circle-outline" size={20} color={C.textMuted} />
                                 <Text style={styles.inlineEmptyText}>
                                     No data — reminders had not started yet on this day. Analytics begin from the date each reminder was created.
                                 </Text>
                             </View>
                         ) : selectedDay.eligibleCount === 0 ? (
                             <View style={styles.inlineEmpty}>
-                                <Ionicons name="calendar-outline" size={20} color={T.textMuted} />
+                                <Ionicons name="calendar-outline" size={20} color={C.textMuted} />
                                 <Text style={styles.inlineEmptyText}>No reminders scheduled.</Text>
                             </View>
                         ) : (
@@ -1100,7 +1100,7 @@ export default function CaregiverDashboard() {
                 {reminderBreakdown.length === 0 ? (
                     <View style={[styles.card, SHADOW.xs]}>
                         <View style={styles.inlineEmpty}>
-                            <Ionicons name="list-outline" size={20} color={T.textMuted} />
+                            <Ionicons name="list-outline" size={20} color={C.textMuted} />
                             <Text style={styles.inlineEmptyText}>
                                 {hasAnyReminders
                                     ? 'No active reminders — all reminders are currently inactive.'
@@ -1130,18 +1130,18 @@ export default function CaregiverDashboard() {
                     <RefreshControl
                         refreshing={isRefreshing}
                         onRefresh={loadDashboardData}
-                        tintColor={T.primary}
-                        colors={[T.primary]}
+                        tintColor={C.primary}
+                        colors={[C.primary]}
                     />
                 }
             >
                 <View style={styles.header}>
                     <View style={styles.headerTextBlock}>
-                        <Text style={styles.heading}>Care Overview</Text>
+                        <Text style={styles.heading}>Organizer Overview</Text>
                         <Text style={styles.subheading}>
                             {!connectionLoading && connectionSummary.status === 'accepted' && connectionSummary.recipientName
-                                ? `Tracking ${connectionSummary.recipientName}'s care`
-                                : 'Loved one care activity'}
+                                ? `Tracking ${connectionSummary.recipientName}'s progress`
+                                : 'Participant activity'}
                         </Text>
                     </View>
 
@@ -1151,7 +1151,7 @@ export default function CaregiverDashboard() {
                             onPress={() => setSettingsVisible(true)}
                             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                         >
-                            <Ionicons name="settings-outline" size={20} color={T.textSecondary} />
+                            <Ionicons name="settings-outline" size={20} color={C.textSecondary} />
                         </TouchableOpacity>
 
                         <TouchableOpacity
@@ -1159,7 +1159,7 @@ export default function CaregiverDashboard() {
                             onPress={() => router.push('/invite-recipient')}
                             activeOpacity={0.75}
                         >
-                            <Ionicons name="person-add-outline" size={16} color={T.textSecondary} />
+                            <Ionicons name="person-add-outline" size={16} color={C.textSecondary} />
                             <Text style={styles.inviteButtonText}>Invite</Text>
                         </TouchableOpacity>
 
@@ -1168,7 +1168,7 @@ export default function CaregiverDashboard() {
                             onPress={handleCreateReminder}
                             activeOpacity={0.88}
                         >
-                            <Ionicons name="add" size={26} color={T.textInverse} />
+                            <Ionicons name="add" size={26} color={C.textInverse} />
                         </TouchableOpacity>
                     </View>
                 </View>
@@ -1188,8 +1188,8 @@ export default function CaregiverDashboard() {
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: T.bgPage },
+const createStyles = (C: ThemeColors) => StyleSheet.create({
+    container: { flex: 1, backgroundColor: C.bgPage },
     content:   { padding: 20, paddingBottom: 48 },
 
     // ── Header ──────────────────────────────────────────────────────────────
@@ -1204,12 +1204,12 @@ const styles = StyleSheet.create({
     heading: {
         fontSize: 30,
         fontWeight: '800',
-        color: T.textPrimary,
+        color: C.textPrimary,
         letterSpacing: -0.6,
     },
     subheading: {
         fontSize: 15,
-        color: T.textSecondary,
+        color: C.textSecondary,
         marginTop: 3,
         letterSpacing: -0.1,
     },
@@ -1222,9 +1222,9 @@ const styles = StyleSheet.create({
         width: 40,
         height: 40,
         borderRadius: RADIUS.lg,
-        backgroundColor: T.bgSurface,
+        backgroundColor: C.bgSurface,
         borderWidth: 1.5,
-        borderColor: T.border,
+        borderColor: C.border,
         alignItems: 'center',
         justifyContent: 'center',
     },
@@ -1232,35 +1232,35 @@ const styles = StyleSheet.create({
         height: 44,
         paddingHorizontal: 14,
         borderRadius: RADIUS.lg,
-        backgroundColor: T.bgSurface,
+        backgroundColor: C.bgSurface,
         borderWidth: 1.5,
-        borderColor: T.border,
+        borderColor: C.border,
         alignItems: 'center',
         justifyContent: 'center',
         flexDirection: 'row',
         gap: 6,
     },
-    inviteButtonText: { color: T.textSecondary, fontSize: 14, fontWeight: '600' },
+    inviteButtonText: { color: C.textSecondary, fontSize: 14, fontWeight: '600' },
     createButton: {
         width: 44,
         height: 44,
         borderRadius: RADIUS.lg,
-        backgroundColor: T.primary,
+        backgroundColor: C.primary,
         alignItems: 'center',
         justifyContent: 'center',
     },
 
     // ── Connection card ──────────────────────────────────────────────────────
     connectionCard: {
-        backgroundColor: T.bgSurface,
+        backgroundColor: C.bgSurface,
         borderRadius: RADIUS.xl,
         padding: 16,
         marginBottom: 16,
         borderWidth: 1.5,
-        borderColor: T.border,
+        borderColor: C.border,
     },
     connectionCardPending:  { backgroundColor: '#FFFBEB', borderColor: '#FDE68A' },
-    connectionCardAccepted: { backgroundColor: T.successLight, borderColor: '#A7F3D0' },
+    connectionCardAccepted: { backgroundColor: C.successLight, borderColor: '#A7F3D0' },
     connectionCardInner: {
         flexDirection: 'row',
         alignItems: 'flex-start',
@@ -1278,7 +1278,7 @@ const styles = StyleSheet.create({
     connectionLabel: {
         fontSize: 11,
         fontWeight: '700',
-        color: T.textMuted,
+        color: C.textMuted,
         textTransform: 'uppercase',
         letterSpacing: 0.8,
         marginBottom: 4,
@@ -1286,20 +1286,20 @@ const styles = StyleSheet.create({
     connectionTitle: {
         fontSize: 17,
         fontWeight: '700',
-        color: T.textPrimary,
+        color: C.textPrimary,
         letterSpacing: -0.3,
         marginBottom: 4,
     },
-    connectionText: { fontSize: 14, color: T.textSecondary, lineHeight: 20 },
+    connectionText: { fontSize: 14, color: C.textSecondary, lineHeight: 20 },
     connectionButton: {
-        backgroundColor: T.primary,
+        backgroundColor: C.primary,
         paddingVertical: 14,
         borderRadius: RADIUS.lg,
         alignItems: 'center',
         marginTop: 14,
     },
     connectionButtonText: {
-        color: T.textInverse,
+        color: C.textInverse,
         fontSize: 15,
         fontWeight: '700',
         letterSpacing: -0.1,
@@ -1333,7 +1333,7 @@ const styles = StyleSheet.create({
     // ── Tabs ─────────────────────────────────────────────────────────────────
     tabContainer: {
         flexDirection: 'row',
-        backgroundColor: T.bgSurface,
+        backgroundColor: C.bgSurface,
         borderRadius: RADIUS.lg,
         padding: 4,
         marginBottom: 14,
@@ -1344,25 +1344,25 @@ const styles = StyleSheet.create({
         borderRadius: RADIUS.md,
         alignItems: 'center',
     },
-    activeTab: { backgroundColor: T.primary },
+    activeTab: { backgroundColor: C.primary },
     tabText: {
         fontSize: 14,
         fontWeight: '600',
-        color: T.textMuted,
+        color: C.textMuted,
         letterSpacing: -0.1,
     },
-    activeTabText: { color: T.textInverse, fontWeight: '700' },
+    activeTabText: { color: C.textInverse, fontWeight: '700' },
 
     // ── Generic card ──────────────────────────────────────────────────────────
     card: {
-        backgroundColor: T.bgSurface,
+        backgroundColor: C.bgSurface,
         borderRadius: RADIUS.xl,
         padding: 20,
         marginBottom: 14,
     },
     cardLabel: {
         fontSize: 13,
-        color: T.textMuted,
+        color: C.textMuted,
         fontWeight: '600',
         textTransform: 'uppercase',
         letterSpacing: 0.6,
@@ -1371,7 +1371,7 @@ const styles = StyleSheet.create({
     cardTitle: {
         fontSize: 18,
         fontWeight: '700',
-        color: T.textPrimary,
+        color: C.textPrimary,
         letterSpacing: -0.3,
         marginBottom: 6,
     },
@@ -1385,7 +1385,7 @@ const styles = StyleSheet.create({
     },
     adherenceBarTrack: {
         height: 6,
-        backgroundColor: T.bgAlt,
+        backgroundColor: C.bgAlt,
         borderRadius: RADIUS.full,
         marginTop: 10,
         marginBottom: 12,
@@ -1394,7 +1394,7 @@ const styles = StyleSheet.create({
     adherenceBarFill: { height: '100%', borderRadius: RADIUS.full },
     helperText: {
         fontSize: 14,
-        color: T.textMuted,
+        color: C.textMuted,
         lineHeight: 20,
         letterSpacing: -0.1,
     },
@@ -1426,13 +1426,13 @@ const styles = StyleSheet.create({
 
     // ── Loading / empty states ────────────────────────────────────────────────
     loadingState: { alignItems: 'center', paddingVertical: 24, gap: 12 },
-    loadingText:  { fontSize: 14, color: T.textMuted, fontWeight: '600' },
+    loadingText:  { fontSize: 14, color: C.textMuted, fontWeight: '600' },
     emptyState:   { alignItems: 'center', paddingVertical: 20, gap: 8 },
     emptyIconWrap: {
         width: 52,
         height: 52,
         borderRadius: RADIUS.lg,
-        backgroundColor: T.bgAlt,
+        backgroundColor: C.bgAlt,
         justifyContent: 'center',
         alignItems: 'center',
         marginBottom: 4,
@@ -1440,12 +1440,12 @@ const styles = StyleSheet.create({
     emptyTitle: {
         fontSize: 16,
         fontWeight: '700',
-        color: T.textPrimary,
+        color: C.textPrimary,
         letterSpacing: -0.2,
     },
     emptyText: {
         fontSize: 14,
-        color: T.textMuted,
+        color: C.textMuted,
         lineHeight: 20,
         textAlign: 'center',
         paddingHorizontal: 12,
@@ -1456,12 +1456,12 @@ const styles = StyleSheet.create({
         gap: 8,
         marginTop: 12,
         padding: 14,
-        backgroundColor: T.bgAlt,
+        backgroundColor: C.bgAlt,
         borderRadius: RADIUS.md,
     },
     inlineEmptyText: {
         fontSize: 14,
-        color: T.textMuted,
+        color: C.textMuted,
         fontWeight: '500',
         flex: 1,
     },
@@ -1478,14 +1478,14 @@ const styles = StyleSheet.create({
     barTrack: {
         height: 110,
         width: 20,
-        backgroundColor: T.bgAlt,
+        backgroundColor: C.bgAlt,
         borderRadius: RADIUS.full,
         justifyContent: 'flex-end',
         overflow: 'hidden',
     },
     bar: { width: '100%', borderRadius: RADIUS.full },
-    dayLabel: { marginTop: 8, fontSize: 12, color: T.textMuted, fontWeight: '600' },
-    selectedDayLabel: { color: T.primary, fontWeight: '700' },
+    dayLabel: { marginTop: 8, fontSize: 12, color: C.textMuted, fontWeight: '600' },
+    selectedDayLabel: { color: C.primary, fontWeight: '700' },
 
     // ── Heatmap ───────────────────────────────────────────────────────────────
     weekLabels: {
@@ -1499,7 +1499,7 @@ const styles = StyleSheet.create({
         textAlign: 'center',
         fontSize: 12,
         fontWeight: '700',
-        color: T.textMuted,
+        color: C.textMuted,
     },
     heatmapGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
     heatmapDay: {
@@ -1510,16 +1510,16 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     heatmapOffset:  { backgroundColor: 'transparent' },
-    selectedHeatmapDay: { borderWidth: 2, borderColor: T.textPrimary },
+    selectedHeatmapDay: { borderWidth: 2, borderColor: C.textPrimary },
     heatmapHigh:    { backgroundColor: '#BBF7D0' },
     heatmapMedium:  { backgroundColor: '#FEF3C7' },
     heatmapLow:     { backgroundColor: '#FED7AA' },
     heatmapMissed:  { backgroundColor: '#FECACA' },
-    heatmapFuture:  { backgroundColor: T.bgAlt },
-    heatmapEmpty:   { backgroundColor: T.border },
+    heatmapFuture:  { backgroundColor: C.bgAlt },
+    heatmapEmpty:   { backgroundColor: C.border },
     heatmapNoData:  { backgroundColor: '#CBD5E1' },
     heatmapPending: { backgroundColor: '#DBEAFE' },
-    heatmapText: { fontSize: 12, fontWeight: '700', color: T.textPrimary },
+    heatmapText: { fontSize: 12, fontWeight: '700', color: C.textPrimary },
     legendRow: {
         flexDirection: 'row',
         justifyContent: 'center',
@@ -1529,13 +1529,13 @@ const styles = StyleSheet.create({
     },
     legendItem:  { flexDirection: 'row', alignItems: 'center', gap: 5 },
     legendSwatch: { width: 12, height: 12, borderRadius: 3 },
-    legendLabel: { fontSize: 11, color: T.textMuted, fontWeight: '600' },
+    legendLabel: { fontSize: 11, color: C.textMuted, fontWeight: '600' },
 
     // ── Reminder row ──────────────────────────────────────────────────────────
     reminderRow: {
         paddingVertical: 14,
         borderTopWidth: 1,
-        borderTopColor: T.bgAlt,
+        borderTopColor: C.bgAlt,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 12,
@@ -1547,20 +1547,20 @@ const styles = StyleSheet.create({
     reminderName: {
         fontSize: 15,
         fontWeight: '700',
-        color: T.textPrimary,
+        color: C.textPrimary,
         letterSpacing: -0.2,
     },
-    reminderTime: { fontSize: 13, color: T.textMuted, marginTop: 2 },
+    reminderTime: { fontSize: 13, color: C.textMuted, marginTop: 2 },
     inactiveTag: {
         paddingHorizontal: 7,
         paddingVertical: 2,
         borderRadius: RADIUS.full,
-        backgroundColor: T.bgAlt,
+        backgroundColor: C.bgAlt,
     },
     inactiveTagText: {
         fontSize: 10,
         fontWeight: '700',
-        color: T.textMuted,
+        color: C.textMuted,
         textTransform: 'uppercase',
         letterSpacing: 0.4,
     },
@@ -1574,32 +1574,32 @@ const styles = StyleSheet.create({
     missedPill:   { backgroundColor: '#FEE2E2' },
     skippedPill:  { backgroundColor: '#FEF3C7' },
     snoozedPill:  { backgroundColor: '#DBEAFE' },
-    pendingPill:  { backgroundColor: T.bgAlt },
+    pendingPill:  { backgroundColor: C.bgAlt },
     takenText:    { color: '#15803D' },
     missedText:   { color: '#B91C1C' },
     skippedText:  { color: '#B45309' },
     snoozedText:  { color: '#1D4ED8' },
-    pendingText:  { color: T.textMuted },
+    pendingText:  { color: C.textMuted },
 
     // ── Breakdown section header ──────────────────────────────────────────────
     bdSection: { marginBottom: 10, marginTop: 4 },
     bdSectionTitle: {
         fontSize: 20,
         fontWeight: '700',
-        color: T.textPrimary,
+        color: C.textPrimary,
         letterSpacing: -0.3,
         marginBottom: 3,
     },
-    bdSectionSub: { fontSize: 13, color: T.textMuted, fontWeight: '500' },
+    bdSectionSub: { fontSize: 13, color: C.textMuted, fontWeight: '500' },
 
     // ── Breakdown cards (bc*) ─────────────────────────────────────────────────
     bcCard: {
-        backgroundColor: T.bgSurface,
+        backgroundColor: C.bgSurface,
         borderRadius: RADIUS.xl,
         padding: 18,
         marginBottom: 10,
         borderWidth: 1,
-        borderColor: T.border,
+        borderColor: C.border,
     },
     bcHeader: {
         flexDirection: 'row',
@@ -1616,7 +1616,7 @@ const styles = StyleSheet.create({
     bcName: {
         fontSize: 16,
         fontWeight: '700',
-        color: T.textPrimary,
+        color: C.textPrimary,
         letterSpacing: -0.3,
         flexShrink: 1,
     },
@@ -1624,33 +1624,33 @@ const styles = StyleSheet.create({
         paddingHorizontal: 8,
         paddingVertical: 2,
         borderRadius: RADIUS.full,
-        backgroundColor: T.bgAlt,
+        backgroundColor: C.bgAlt,
     },
     bcDeletedText: {
         fontSize: 11,
         fontWeight: '700',
-        color: T.textMuted,
+        color: C.textMuted,
     },
-    bcMeta: { fontSize: 13, color: T.textMuted, fontWeight: '500' },
+    bcMeta: { fontSize: 13, color: C.textMuted, fontWeight: '500' },
     bcAdherenceBlock: { alignItems: 'flex-end', flexShrink: 0 },
     bcAdherencePct: { fontSize: 24, fontWeight: '800', letterSpacing: -0.8, lineHeight: 28 },
     bcAdherenceLabel: {
         fontSize: 10,
         fontWeight: '600',
-        color: T.textMuted,
+        color: C.textMuted,
         textTransform: 'uppercase',
         letterSpacing: 0.5,
         marginTop: 2,
     },
     bcProgressTrack: {
         height: 5,
-        backgroundColor: T.bgAlt,
+        backgroundColor: C.bgAlt,
         borderRadius: RADIUS.full,
         marginBottom: 6,
         overflow: 'hidden',
     },
     bcProgressFill: { height: '100%', borderRadius: RADIUS.full },
-    bcCountLine: { fontSize: 12, color: T.textMuted, fontWeight: '500', marginBottom: 12 },
+    bcCountLine: { fontSize: 12, color: C.textMuted, fontWeight: '500', marginBottom: 12 },
     bcChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 12 },
     bcChip: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: RADIUS.full },
     bcChipText: { fontSize: 12, fontWeight: '700' },
@@ -1659,10 +1659,10 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         alignItems: 'center',
         borderTopWidth: 1,
-        borderTopColor: T.bgAlt,
+        borderTopColor: C.bgAlt,
         paddingTop: 10,
     },
-    bcSummary: { fontSize: 13, color: T.textSecondary, fontWeight: '500', flex: 1 },
+    bcSummary: { fontSize: 13, color: C.textSecondary, fontWeight: '500', flex: 1 },
     bcCta: { flexDirection: 'row', alignItems: 'center', gap: 2 },
-    bcCtaText: { fontSize: 13, color: T.primary, fontWeight: '700' },
+    bcCtaText: { fontSize: 13, color: C.primary, fontWeight: '700' },
 });

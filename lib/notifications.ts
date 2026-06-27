@@ -49,7 +49,7 @@ function getLocalDateString(date: Date): string {
 export async function setupAndroidChannel(): Promise<void> {
     if (Platform.OS !== 'android') return;
     await Notifications.setNotificationChannelAsync(CHANNEL_ID, {
-        name: 'Care Reminders',
+        name: 'Reminders',
         importance: Notifications.AndroidImportance.HIGH,
         sound: 'default',
         vibrationPattern: [0, 250, 250, 250],
@@ -159,7 +159,7 @@ export async function scheduleReminderNotifications(
                 identifier: occurrenceIdentifier(reminder.id, occurrenceDate),
                 content: {
                     title: reminder.title,
-                    body:  'Time to respond to this care reminder.',
+                    body:  'Time to respond to this reminder.',
                     data,
                     sound: 'default',
                     // Urgent, time-bound care event — eligible to break through

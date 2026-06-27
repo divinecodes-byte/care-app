@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     ScrollView,
@@ -11,7 +11,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { RADIUS, SHADOW, T } from '@/constants/theme';
+import { RADIUS, SHADOW, T, ThemeColors } from '@/constants/theme';
+import { useThemeColors } from '@/lib/theme';
 import { formatFrequency as formatFrequencyDays, isDueOnDate } from '@/lib/frequency';
 import { supabase } from '@/lib/supabase';
 
@@ -175,11 +176,11 @@ function getComputedStatus(
     return 'missed';
 }
 
-function getAdherenceColor(pct: number | null): string {
-    if (pct === null) return T.textMuted;
-    if (pct >= 80) return T.success;
+function getAdherenceColor(pct: number | null, C: ThemeColors): string {
+    if (pct === null) return C.textMuted;
+    if (pct >= 80) return C.success;
     if (pct >= 50) return '#D97706';
-    return T.error;
+    return C.error;
 }
 
 // ─── Data builder ─────────────────────────────────────────────────────────────
@@ -264,20 +265,20 @@ function buildDetailData(
 
 // ─── Status helpers ───────────────────────────────────────────────────────────
 
-function statusColor(s: ReminderStatus): string {
+function statusColor(s: ReminderStatus, C: ThemeColors): string {
     if (s === 'taken')   return '#15803D';
     if (s === 'missed')  return '#B91C1C';
     if (s === 'skipped') return '#B45309';
     if (s === 'snoozed') return '#1D4ED8';
-    return T.textMuted;
+    return C.textMuted;
 }
 
-function statusBg(s: ReminderStatus): string {
+function statusBg(s: ReminderStatus, C: ThemeColors): string {
     if (s === 'taken')   return '#DCFCE7';
     if (s === 'missed')  return '#FEE2E2';
     if (s === 'skipped') return '#FEF3C7';
     if (s === 'snoozed') return '#DBEAFE';
-    return T.bgAlt;
+    return C.bgAlt;
 }
 
 function statusLabel(s: ReminderStatus): string {
@@ -290,6 +291,8 @@ function statusLabel(s: ReminderStatus): string {
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function ReminderDetailsScreen() {
+    const C = useThemeColors();
+    const styles = useMemo(() => createStyles(C), [C]);
     const { reminderId } = useLocalSearchParams<{ reminderId: string }>();
 
     const [loading,             setLoading]             = useState(true);
@@ -388,7 +391,7 @@ export default function ReminderDetailsScreen() {
                     onPress={() => router.back()}
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
-                    <Ionicons name="chevron-back" size={20} color={T.primary} />
+                    <Ionicons name="chevron-back" size={20} color={C.primary} />
                     <Text style={styles.backText}>Dashboard</Text>
                 </TouchableOpacity>
                 <Text style={styles.navTitle}>Reminder Details</Text>
@@ -400,7 +403,7 @@ export default function ReminderDetailsScreen() {
                         }
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
-                        <Ionicons name="pencil-outline" size={16} color={T.primary} />
+                        <Ionicons name="pencil-outline" size={16} color={C.primary} />
                         <Text style={styles.editNavText}>Edit</Text>
                     </TouchableOpacity>
                 ) : (
@@ -410,13 +413,13 @@ export default function ReminderDetailsScreen() {
 
             {loading ? (
                 <View style={styles.centered}>
-                    <ActivityIndicator color={T.primary} size="large" />
+                    <ActivityIndicator color={C.primary} size="large" />
                     <Text style={styles.loadingText}>Loading reminder…</Text>
                 </View>
             ) : error ? (
                 <View style={styles.centered}>
                     <View style={styles.errorIconWrap}>
-                        <Ionicons name="alert-circle-outline" size={32} color={T.textMuted} />
+                        <Ionicons name="alert-circle-outline" size={32} color={C.textMuted} />
                     </View>
                     <Text style={styles.errorTitle}>Something went wrong</Text>
                     <Text style={styles.errorText}>{error}</Text>
@@ -445,20 +448,20 @@ export default function ReminderDetailsScreen() {
 
                         {reminder.notes ? (
                             <View style={styles.infoRow}>
-                                <Ionicons name="document-text-outline" size={15} color={T.textMuted} style={styles.infoIcon} />
+                                <Ionicons name="document-text-outline" size={15} color={C.textMuted} style={styles.infoIcon} />
                                 <Text style={styles.infoText}>{reminder.notes}</Text>
                             </View>
                         ) : null}
 
                         <View style={styles.infoRow}>
-                            <Ionicons name="notifications-outline" size={15} color={T.textMuted} style={styles.infoIcon} />
+                            <Ionicons name="notifications-outline" size={15} color={C.textMuted} style={styles.infoIcon} />
                             <Text style={styles.infoText}>
                                 Alert after {reminder.no_response_minutes} min with no response
                             </Text>
                         </View>
 
                         <View style={styles.infoRow}>
-                            <Ionicons name="calendar-outline" size={14} color={T.textMuted} style={styles.infoIcon} />
+                            <Ionicons name="calendar-outline" size={14} color={C.textMuted} style={styles.infoIcon} />
                             <Text style={styles.infoText}>
                                 Analytics start: {analyticsStartLabel}
                             </Text>
@@ -474,13 +477,13 @@ export default function ReminderDetailsScreen() {
                             }
                             activeOpacity={0.8}
                         >
-                            <Ionicons name="pencil-outline" size={18} color={T.primary} />
+                            <Ionicons name="pencil-outline" size={18} color={C.primary} />
                             <Text style={styles.editButtonText}>Edit Reminder</Text>
-                            <Ionicons name="chevron-forward" size={16} color={T.primary} style={styles.editButtonChevron} />
+                            <Ionicons name="chevron-forward" size={16} color={C.primary} style={styles.editButtonChevron} />
                         </TouchableOpacity>
                     ) : (
                         <View style={styles.historicalNotice}>
-                            <Ionicons name="time-outline" size={16} color={T.textMuted} />
+                            <Ionicons name="time-outline" size={16} color={C.textMuted} />
                             <Text style={styles.historicalNoticeText}>
                                 Viewing historical data for a deleted reminder.
                             </Text>
@@ -493,7 +496,7 @@ export default function ReminderDetailsScreen() {
                             { label: 'This week',  pct: stats.weekAdherence },
                             { label: 'This month', pct: stats.monthAdherence },
                         ].map(({ label, pct }) => {
-                            const color = getAdherenceColor(pct);
+                            const color = getAdherenceColor(pct, C);
                             return (
                                 <View key={label} style={[styles.adherenceCell, SHADOW.xs]}>
                                     <Text style={styles.adherenceCellLabel}>{label}</Text>
@@ -528,7 +531,7 @@ export default function ReminderDetailsScreen() {
                                 { label: 'Missed',  value: stats.missed,  color: '#B91C1C', bg: '#FEE2E2' },
                                 { label: 'Skipped', value: stats.skipped, color: '#B45309', bg: '#FEF3C7' },
                                 { label: 'Snoozed', value: stats.snoozed, color: '#1D4ED8', bg: '#DBEAFE' },
-                                { label: 'Pending', value: stats.pending, color: T.textSecondary, bg: T.bgAlt },
+                                { label: 'Pending', value: stats.pending, color: C.textSecondary, bg: C.bgAlt },
                             ].map(({ label, value, color, bg }) => (
                                 <View key={label} style={[styles.countChip, { backgroundColor: bg }]}>
                                     <Text style={[styles.countChipNum, { color }]}>{value}</Text>
@@ -539,7 +542,7 @@ export default function ReminderDetailsScreen() {
 
                         {stats.avgResponseMinutes !== null && (
                             <View style={styles.avgRow}>
-                                <Ionicons name="timer-outline" size={15} color={T.textMuted} />
+                                <Ionicons name="timer-outline" size={15} color={C.textMuted} />
                                 <Text style={styles.avgText}>
                                     Avg response time: {stats.avgResponseMinutes} min
                                 </Text>
@@ -556,7 +559,7 @@ export default function ReminderDetailsScreen() {
 
                         {history.length === 0 ? (
                             <View style={styles.emptyHistory}>
-                                <Ionicons name="hourglass-outline" size={28} color={T.textMuted} />
+                                <Ionicons name="hourglass-outline" size={28} color={C.textMuted} />
                                 <Text style={styles.emptyHistoryTitle}>No history yet</Text>
                                 <Text style={styles.emptyHistoryText}>
                                     This reminder is too new or hasn't had any eligible occurrences this month. History will appear here as days pass.
@@ -569,13 +572,13 @@ export default function ReminderDetailsScreen() {
                                     <View
                                         style={[
                                             styles.historyBadge,
-                                            { backgroundColor: statusBg(entry.status) },
+                                            { backgroundColor: statusBg(entry.status, C) },
                                         ]}
                                     >
                                         <Text
                                             style={[
                                                 styles.historyBadgeText,
-                                                { color: statusColor(entry.status) },
+                                                { color: statusColor(entry.status, C) },
                                             ]}
                                         >
                                             {statusLabel(entry.status)}
@@ -593,8 +596,8 @@ export default function ReminderDetailsScreen() {
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: T.bgPage },
+const createStyles = (C: ThemeColors) => StyleSheet.create({
+    container: { flex: 1, backgroundColor: C.bgPage },
     content:   { padding: 20, paddingBottom: 48 },
 
     // ── Nav bar ───────────────────────────────────────────────────────────────
@@ -605,8 +608,8 @@ const styles = StyleSheet.create({
         paddingHorizontal: 16,
         paddingVertical: 12,
         borderBottomWidth: 1,
-        borderBottomColor: T.border,
-        backgroundColor: T.bgSurface,
+        borderBottomColor: C.border,
+        backgroundColor: C.bgSurface,
     },
     backBtn: {
         flexDirection: 'row',
@@ -614,11 +617,11 @@ const styles = StyleSheet.create({
         gap: 4,
         width: 100,
     },
-    backText: { fontSize: 15, color: T.primary, fontWeight: '600' },
+    backText: { fontSize: 15, color: C.primary, fontWeight: '600' },
     navTitle: {
         fontSize: 16,
         fontWeight: '700',
-        color: T.textPrimary,
+        color: C.textPrimary,
         letterSpacing: -0.2,
     },
     navSpacer: { width: 100 },
@@ -631,29 +634,29 @@ const styles = StyleSheet.create({
         padding: 32,
         gap: 12,
     },
-    loadingText: { fontSize: 14, color: T.textMuted, fontWeight: '600', marginTop: 8 },
+    loadingText: { fontSize: 14, color: C.textMuted, fontWeight: '600', marginTop: 8 },
     errorIconWrap: {
         width: 60,
         height: 60,
         borderRadius: RADIUS.lg,
-        backgroundColor: T.bgAlt,
+        backgroundColor: C.bgAlt,
         alignItems: 'center',
         justifyContent: 'center',
     },
-    errorTitle: { fontSize: 17, fontWeight: '700', color: T.textPrimary, textAlign: 'center' },
-    errorText:  { fontSize: 14, color: T.textMuted, textAlign: 'center', lineHeight: 20 },
+    errorTitle: { fontSize: 17, fontWeight: '700', color: C.textPrimary, textAlign: 'center' },
+    errorText:  { fontSize: 14, color: C.textMuted, textAlign: 'center', lineHeight: 20 },
     errorBack: {
         marginTop: 8,
         paddingHorizontal: 24,
         paddingVertical: 12,
-        backgroundColor: T.primary,
+        backgroundColor: C.primary,
         borderRadius: RADIUS.lg,
     },
-    errorBackText: { color: T.textInverse, fontSize: 15, fontWeight: '700' },
+    errorBackText: { color: C.textInverse, fontSize: 15, fontWeight: '700' },
 
     // ── Generic card ──────────────────────────────────────────────────────────
     card: {
-        backgroundColor: T.bgSurface,
+        backgroundColor: C.bgSurface,
         borderRadius: RADIUS.xl,
         padding: 20,
         marginBottom: 14,
@@ -662,7 +665,7 @@ const styles = StyleSheet.create({
     // ── Reminder info ─────────────────────────────────────────────────────────
     typePill: {
         alignSelf: 'flex-start',
-        backgroundColor: T.primaryLight,
+        backgroundColor: C.primaryLight,
         borderRadius: RADIUS.full,
         paddingHorizontal: 12,
         paddingVertical: 4,
@@ -671,20 +674,20 @@ const styles = StyleSheet.create({
     typePillText: {
         fontSize: 12,
         fontWeight: '700',
-        color: T.primary,
+        color: C.primary,
         textTransform: 'capitalize',
         letterSpacing: 0.3,
     },
     reminderTitle: {
         fontSize: 26,
         fontWeight: '800',
-        color: T.textPrimary,
+        color: C.textPrimary,
         letterSpacing: -0.6,
         marginBottom: 6,
     },
     reminderMeta: {
         fontSize: 15,
-        color: T.textSecondary,
+        color: C.textSecondary,
         fontWeight: '500',
         marginBottom: 16,
     },
@@ -697,7 +700,7 @@ const styles = StyleSheet.create({
     infoIcon: { marginTop: 1 },
     infoText: {
         fontSize: 14,
-        color: T.textSecondary,
+        color: C.textSecondary,
         lineHeight: 20,
         flex: 1,
     },
@@ -710,14 +713,14 @@ const styles = StyleSheet.create({
     },
     adherenceCell: {
         flex: 1,
-        backgroundColor: T.bgSurface,
+        backgroundColor: C.bgSurface,
         borderRadius: RADIUS.xl,
         padding: 16,
     },
     adherenceCellLabel: {
         fontSize: 12,
         fontWeight: '600',
-        color: T.textMuted,
+        color: C.textMuted,
         textTransform: 'uppercase',
         letterSpacing: 0.5,
         marginBottom: 6,
@@ -730,7 +733,7 @@ const styles = StyleSheet.create({
     },
     adherenceBarTrack: {
         height: 4,
-        backgroundColor: T.bgAlt,
+        backgroundColor: C.bgAlt,
         borderRadius: RADIUS.full,
         marginTop: 10,
         overflow: 'hidden',
@@ -738,7 +741,7 @@ const styles = StyleSheet.create({
     adherenceBarFill: { height: '100%', borderRadius: RADIUS.full },
     adherenceNoData: {
         fontSize: 12,
-        color: T.textMuted,
+        color: C.textMuted,
         marginTop: 6,
         fontWeight: '500',
     },
@@ -747,13 +750,13 @@ const styles = StyleSheet.create({
     sectionTitle: {
         fontSize: 17,
         fontWeight: '700',
-        color: T.textPrimary,
+        color: C.textPrimary,
         letterSpacing: -0.2,
         marginBottom: 4,
     },
     sectionSub: {
         fontSize: 13,
-        color: T.textMuted,
+        color: C.textMuted,
         fontWeight: '500',
         marginBottom: 14,
     },
@@ -789,9 +792,9 @@ const styles = StyleSheet.create({
         marginTop: 14,
         paddingTop: 14,
         borderTopWidth: 1,
-        borderTopColor: T.bgAlt,
+        borderTopColor: C.bgAlt,
     },
-    avgText: { fontSize: 14, color: T.textSecondary, fontWeight: '500' },
+    avgText: { fontSize: 14, color: C.textSecondary, fontWeight: '500' },
 
     // ── History ───────────────────────────────────────────────────────────────
     emptyHistory: {
@@ -802,11 +805,11 @@ const styles = StyleSheet.create({
     emptyHistoryTitle: {
         fontSize: 16,
         fontWeight: '700',
-        color: T.textPrimary,
+        color: C.textPrimary,
     },
     emptyHistoryText: {
         fontSize: 14,
-        color: T.textMuted,
+        color: C.textMuted,
         lineHeight: 20,
         textAlign: 'center',
     },
@@ -815,14 +818,14 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         paddingVertical: 12,
         borderTopWidth: 1,
-        borderTopColor: T.bgAlt,
+        borderTopColor: C.bgAlt,
         gap: 10,
     },
     historyDate: {
         flex: 1,
         fontSize: 14,
         fontWeight: '600',
-        color: T.textPrimary,
+        color: C.textPrimary,
     },
     historyBadge: {
         paddingHorizontal: 11,
@@ -839,25 +842,25 @@ const styles = StyleSheet.create({
         width: 100,
         justifyContent: 'flex-end',
     },
-    editNavText: { fontSize: 15, color: T.primary, fontWeight: '600' },
+    editNavText: { fontSize: 15, color: C.primary, fontWeight: '600' },
 
     // ── Inline edit button ────────────────────────────────────────────────────
     editButton: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: T.primaryLight,
+        backgroundColor: C.primaryLight,
         borderRadius: RADIUS.xl,
         paddingVertical: 14,
         paddingHorizontal: 18,
         marginBottom: 14,
         borderWidth: 1,
-        borderColor: T.primaryMid,
+        borderColor: C.primaryMid,
     },
     editButtonText: {
         flex: 1,
         fontSize: 15,
         fontWeight: '700',
-        color: T.primary,
+        color: C.primary,
         marginLeft: 10,
         letterSpacing: -0.2,
     },
@@ -868,7 +871,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 8,
-        backgroundColor: T.bgAlt,
+        backgroundColor: C.bgAlt,
         borderRadius: RADIUS.xl,
         paddingVertical: 14,
         paddingHorizontal: 18,
@@ -878,7 +881,7 @@ const styles = StyleSheet.create({
         flex: 1,
         fontSize: 14,
         fontWeight: '500',
-        color: T.textMuted,
+        color: C.textMuted,
         letterSpacing: -0.1,
     },
 });

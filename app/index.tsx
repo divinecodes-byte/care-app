@@ -1,14 +1,17 @@
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { RADIUS, SHADOW, T } from '@/constants/theme';
+import { RADIUS, SHADOW, T, ThemeColors } from '@/constants/theme';
+import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 
 export default function HomeScreen() {
+    const C = useThemeColors();
+    const styles = useMemo(() => createStyles(C), [C]);
     const insets = useSafeAreaInsets();
 
     useEffect(() => {
@@ -52,11 +55,11 @@ export default function HomeScreen() {
                 </View>
 
                 <Text style={styles.headline}>
-                    Care together,{'\n'}from anywhere.
+                    Stay on track,{'\n'}together.
                 </Text>
 
                 <Text style={styles.subtitle}>
-                    Simple reminders and daily check-ins to keep your loved ones safe and cared for.
+                    Shared reminders, responses, and progress visibility — for anyone helping someone stay on track.
                 </Text>
             </View>
 
@@ -92,10 +95,10 @@ export default function HomeScreen() {
     );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (C: ThemeColors) => StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: T.bgPage,
+        backgroundColor: C.bgPage,
     },
 
     // ── Decorative blobs ──────────────────────────────────────────────
@@ -106,7 +109,7 @@ const styles = StyleSheet.create({
         width: 260,
         height: 260,
         borderRadius: 130,
-        backgroundColor: T.primaryMid,
+        backgroundColor: C.primaryMid,
         opacity: 0.35,
     },
     blobBottomLeft: {
@@ -116,7 +119,7 @@ const styles = StyleSheet.create({
         width: 160,
         height: 160,
         borderRadius: 80,
-        backgroundColor: T.primaryLight,
+        backgroundColor: C.primaryLight,
         opacity: 0.9,
     },
 
@@ -140,41 +143,41 @@ const styles = StyleSheet.create({
     logoText: {
         fontSize: 20,
         fontWeight: '800',
-        color: T.textPrimary,
+        color: C.textPrimary,
         letterSpacing: -0.4,
     },
     headline: {
         fontSize: 40,
         fontWeight: '800',
-        color: T.textPrimary,
+        color: C.textPrimary,
         lineHeight: 50,
         letterSpacing: -1,
         marginBottom: 18,
     },
     subtitle: {
         fontSize: 17,
-        color: T.textSecondary,
+        color: C.textSecondary,
         lineHeight: 27,
         letterSpacing: -0.2,
     },
 
     // ── CTA card ──────────────────────────────────────────────────────
     ctaCard: {
-        backgroundColor: T.bgSurface,
+        backgroundColor: C.bgSurface,
         borderTopLeftRadius: RADIUS.xxl,
         borderTopRightRadius: RADIUS.xxl,
         paddingHorizontal: 24,
         paddingTop: 32,
     },
     primaryButton: {
-        backgroundColor: T.primary,
+        backgroundColor: C.primary,
         paddingVertical: 18,
         borderRadius: RADIUS.xl,
         alignItems: 'center',
         marginBottom: 14,
     },
     primaryButtonText: {
-        color: T.textInverse,
+        color: C.textInverse,
         fontSize: 17,
         fontWeight: '700',
         letterSpacing: -0.2,
@@ -187,13 +190,13 @@ const styles = StyleSheet.create({
     secondaryButtonText: {
         fontSize: 16,
         fontWeight: '600',
-        color: T.primary,
+        color: C.primary,
         letterSpacing: -0.1,
     },
     termsText: {
         textAlign: 'center',
         fontSize: 12,
-        color: T.textMuted,
+        color: C.textMuted,
         lineHeight: 18,
         paddingBottom: 4,
     },

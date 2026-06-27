@@ -329,7 +329,7 @@ export default function ReminderAlertScreen() {
                     </View>
                     <Text style={styles.inactiveTitle}>This reminder is no longer active</Text>
                     <Text style={styles.inactiveText}>
-                        Your caregiver removed this reminder. There's nothing to respond to here.
+                        Your organizer removed this reminder. There's nothing to respond to here.
                     </Text>
                     <TouchableOpacity
                         style={styles.errorButton}
@@ -421,7 +421,7 @@ export default function ReminderAlertScreen() {
                 {/* Notes */}
                 {reminder.notes ? (
                     <View style={styles.notesCard}>
-                        <Text style={styles.notesLabel}>Notes from caregiver</Text>
+                        <Text style={styles.notesLabel}>Notes from organizer</Text>
                         <Text style={styles.notesText}>{reminder.notes}</Text>
                     </View>
                 ) : null}
@@ -501,10 +501,10 @@ export default function ReminderAlertScreen() {
 
                 <Text style={styles.footerText}>
                     {todayStatus === 'taken' || todayStatus === 'skipped'
-                        ? 'Your caregiver can see your response.'
+                        ? 'Your organizer can see your response.'
                         : isOverdue
-                        ? 'You can still respond — your caregiver will see your update.'
-                        : 'Your caregiver will see your response.'}
+                        ? 'You can still respond — your organizer will see your update.'
+                        : 'Your organizer will see your response.'}
                 </Text>
             </View>
         </View>

@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -16,10 +16,13 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { RADIUS, SHADOW, T } from '@/constants/theme';
+import { RADIUS, SHADOW, T, ThemeColors } from '@/constants/theme';
+import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 
 export default function JoinInviteScreen() {
+    const C = useThemeColors();
+    const styles = useMemo(() => createStyles(C), [C]);
     const [inviteCode, setInviteCode] = useState('');
     const [loading, setLoading]       = useState(false);
     const [focused, setFocused]       = useState(false);
@@ -94,17 +97,17 @@ export default function JoinInviteScreen() {
                         onPress={() => router.back()}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
-                        <Ionicons name="chevron-back" size={22} color={T.primary} />
+                        <Ionicons name="chevron-back" size={22} color={C.primary} />
                         <Text style={styles.backText}>Back</Text>
                     </TouchableOpacity>
 
                     {/* Header */}
                     <View style={styles.headerIcon}>
-                        <Ionicons name="link" size={26} color={T.success} />
+                        <Ionicons name="link" size={26} color={C.success} />
                     </View>
                     <Text style={styles.heading}>Join Care Circle</Text>
                     <Text style={styles.subheading}>
-                        Enter the invite code your caregiver shared with you to link accounts.
+                        Enter the invite code your organizer shared with you to link accounts.
                     </Text>
 
                     {/* Code input card */}
@@ -114,7 +117,7 @@ export default function JoinInviteScreen() {
                         <TextInput
                             style={[styles.input, focused && styles.inputFocused]}
                             placeholder="ABC123"
-                            placeholderTextColor={T.textMuted}
+                            placeholderTextColor={C.textMuted}
                             autoCapitalize="characters"
                             autoCorrect={false}
                             maxLength={6}
@@ -133,9 +136,9 @@ export default function JoinInviteScreen() {
 
                     {/* Trust note */}
                     <View style={styles.trustNote}>
-                        <Ionicons name="shield-checkmark-outline" size={16} color={T.success} />
+                        <Ionicons name="shield-checkmark-outline" size={16} color={C.success} />
                         <Text style={styles.trustText}>
-                            This code was given to you by your caregiver. It's safe to enter.
+                            This code was given to you by your organizer. It's safe to enter.
                         </Text>
                     </View>
 
@@ -150,11 +153,11 @@ export default function JoinInviteScreen() {
                         activeOpacity={0.88}
                     >
                         {loading ? (
-                            <ActivityIndicator color={T.textInverse} />
+                            <ActivityIndicator color={C.textInverse} />
                         ) : (
                             <>
                                 <Text style={styles.buttonText}>Connect Account</Text>
-                                <Ionicons name="arrow-forward" size={20} color={T.textInverse} />
+                                <Ionicons name="arrow-forward" size={20} color={C.textInverse} />
                             </>
                         )}
                     </TouchableOpacity>
@@ -164,10 +167,10 @@ export default function JoinInviteScreen() {
     );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (C: ThemeColors) => StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: T.bgPage,
+        backgroundColor: C.bgPage,
     },
     kav: {
         flex: 1,
@@ -189,7 +192,7 @@ const styles = StyleSheet.create({
     backText: {
         fontSize: 16,
         fontWeight: '600',
-        color: T.primary,
+        color: C.primary,
         marginLeft: 2,
     },
 
@@ -198,7 +201,7 @@ const styles = StyleSheet.create({
         width: 52,
         height: 52,
         borderRadius: RADIUS.lg,
-        backgroundColor: T.successLight,
+        backgroundColor: C.successLight,
         justifyContent: 'center',
         alignItems: 'center',
         marginBottom: 18,
@@ -206,13 +209,13 @@ const styles = StyleSheet.create({
     heading: {
         fontSize: 30,
         fontWeight: '800',
-        color: T.textPrimary,
+        color: C.textPrimary,
         letterSpacing: -0.6,
         marginBottom: 10,
     },
     subheading: {
         fontSize: 15,
-        color: T.textSecondary,
+        color: C.textSecondary,
         lineHeight: 22,
         letterSpacing: -0.1,
         marginBottom: 28,
@@ -220,7 +223,7 @@ const styles = StyleSheet.create({
 
     // ── Input card ────────────────────────────────────────────────────
     inputCard: {
-        backgroundColor: T.bgSurface,
+        backgroundColor: C.bgSurface,
         borderRadius: RADIUS.xl,
         padding: 20,
         marginBottom: 14,
@@ -228,12 +231,12 @@ const styles = StyleSheet.create({
     label: {
         fontSize: 13,
         fontWeight: '700',
-        color: T.textPrimary,
+        color: C.textPrimary,
         marginBottom: 12,
         letterSpacing: 0.1,
     },
     input: {
-        backgroundColor: T.bgAlt,
+        backgroundColor: C.bgAlt,
         borderRadius: RADIUS.lg,
         paddingHorizontal: 20,
         paddingVertical: Platform.OS === 'ios' ? 18 : 15,
@@ -242,17 +245,17 @@ const styles = StyleSheet.create({
         letterSpacing: 10,
         borderWidth: 2,
         borderColor: 'transparent',
-        color: T.textPrimary,
+        color: C.textPrimary,
         textAlign: 'center',
         fontVariant: ['tabular-nums'],
     },
     inputFocused: {
-        backgroundColor: T.bgSurface,
-        borderColor: T.borderFocus,
+        backgroundColor: C.bgSurface,
+        borderColor: C.borderFocus,
     },
     helperText: {
         fontSize: 12,
-        color: T.textMuted,
+        color: C.textMuted,
         textAlign: 'center',
         marginTop: 10,
         lineHeight: 18,
@@ -263,7 +266,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'flex-start',
         gap: 10,
-        backgroundColor: T.successLight,
+        backgroundColor: C.successLight,
         borderRadius: RADIUS.lg,
         padding: 14,
         borderWidth: 1,
@@ -283,7 +286,7 @@ const styles = StyleSheet.create({
         minHeight: 32,
     },
     button: {
-        backgroundColor: T.primary,
+        backgroundColor: C.primary,
         paddingVertical: 18,
         borderRadius: RADIUS.xl,
         alignItems: 'center',
@@ -296,7 +299,7 @@ const styles = StyleSheet.create({
         opacity: 0.65,
     },
     buttonText: {
-        color: T.textInverse,
+        color: C.textInverse,
         fontSize: 17,
         fontWeight: '700',
         letterSpacing: -0.2,

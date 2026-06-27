@@ -1,6 +1,6 @@
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -15,10 +15,13 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { RADIUS, SHADOW, T } from '@/constants/theme';
+import { RADIUS, SHADOW, T, ThemeColors } from '@/constants/theme';
+import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 
 export default function SigninScreen() {
+    const C = useThemeColors();
+    const styles = useMemo(() => createStyles(C), [C]);
     const [email, setEmail]       = useState('');
     const [password, setPassword] = useState('');
     const [loading, setLoading]   = useState(false);
@@ -108,7 +111,7 @@ export default function SigninScreen() {
                             <TextInput
                                 style={inputStyle('email')}
                                 placeholder="you@example.com"
-                                placeholderTextColor={T.textMuted}
+                                placeholderTextColor={C.textMuted}
                                 keyboardType="email-address"
                                 autoCapitalize="none"
                                 autoCorrect={false}
@@ -125,7 +128,7 @@ export default function SigninScreen() {
                             <TextInput
                                 style={inputStyle('password')}
                                 placeholder="Enter your password"
-                                placeholderTextColor={T.textMuted}
+                                placeholderTextColor={C.textMuted}
                                 secureTextEntry
                                 value={password}
                                 onChangeText={setPassword}
@@ -148,7 +151,7 @@ export default function SigninScreen() {
                         activeOpacity={0.88}
                     >
                         {loading ? (
-                            <ActivityIndicator color={T.textInverse} />
+                            <ActivityIndicator color={C.textInverse} />
                         ) : (
                             <Text style={styles.buttonText}>Sign In</Text>
                         )}
@@ -169,10 +172,10 @@ export default function SigninScreen() {
     );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (C: ThemeColors) => StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: T.bgPage,
+        backgroundColor: C.bgPage,
     },
     kav: {
         flex: 1,
@@ -188,13 +191,13 @@ const styles = StyleSheet.create({
     heading: {
         fontSize: 34,
         fontWeight: '800',
-        color: T.textPrimary,
+        color: C.textPrimary,
         letterSpacing: -0.8,
         marginBottom: 10,
     },
     subheading: {
         fontSize: 16,
-        color: T.textSecondary,
+        color: C.textSecondary,
         lineHeight: 24,
         letterSpacing: -0.1,
         marginBottom: 36,
@@ -210,23 +213,23 @@ const styles = StyleSheet.create({
     label: {
         fontSize: 14,
         fontWeight: '700',
-        color: T.textPrimary,
+        color: C.textPrimary,
         marginBottom: 8,
         letterSpacing: 0.1,
     },
     input: {
-        backgroundColor: T.bgSurface,
+        backgroundColor: C.bgSurface,
         borderRadius: RADIUS.lg,
         paddingHorizontal: 16,
         paddingVertical: Platform.OS === 'ios' ? 16 : 14,
         fontSize: 16,
         borderWidth: 1.5,
-        borderColor: T.border,
-        color: T.textPrimary,
+        borderColor: C.border,
+        color: C.textPrimary,
         ...SHADOW.xs,
     },
     inputFocused: {
-        borderColor: T.borderFocus,
+        borderColor: C.borderFocus,
         borderWidth: 1.5,
     },
 
@@ -236,7 +239,7 @@ const styles = StyleSheet.create({
         minHeight: 32,
     },
     button: {
-        backgroundColor: T.primary,
+        backgroundColor: C.primary,
         paddingVertical: 18,
         borderRadius: RADIUS.xl,
         alignItems: 'center',
@@ -246,7 +249,7 @@ const styles = StyleSheet.create({
         opacity: 0.65,
     },
     buttonText: {
-        color: T.textInverse,
+        color: C.textInverse,
         fontSize: 17,
         fontWeight: '700',
         letterSpacing: -0.2,
@@ -257,11 +260,11 @@ const styles = StyleSheet.create({
     },
     footerText: {
         fontSize: 15,
-        color: T.textSecondary,
+        color: C.textSecondary,
         textAlign: 'center',
     },
     footerTextBold: {
-        color: T.primary,
+        color: C.primary,
         fontWeight: '700',
     },
 });

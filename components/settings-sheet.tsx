@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Dimensions,
@@ -16,9 +16,10 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { RADIUS, T } from '@/constants/theme';
+import { RADIUS, T, ThemeColors } from '@/constants/theme';
 import { registerCaregiverPushToken } from '@/lib/notifications';
 import { supabase } from '@/lib/supabase';
+import { AppearanceMode, useThemeColors, useThemeMode } from '@/lib/theme';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -27,6 +28,12 @@ const SHEET_HEIGHT  = Math.round(SCREEN_HEIGHT * 0.85);
 
 const HELP_URL    = 'https://sites.google.com/view/tavora-help';
 const PRIVACY_URL = 'https://sites.google.com/view/tavora-privacy';
+
+const APPEARANCE_OPTIONS: { value: AppearanceMode; label: string; icon: string }[] = [
+    { value: 'system', label: 'System', icon: 'phone-portrait-outline' },
+    { value: 'light',  label: 'Light',  icon: 'sunny-outline' },
+    { value: 'dark',   label: 'Dark',   icon: 'moon-outline' },
+];
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -51,6 +58,9 @@ type NotifPrefs = {
 
 export function SettingsSheet({ visible, onClose }: Props) {
     const insets = useSafeAreaInsets();
+    const C = useThemeColors();
+    const styles = useMemo(() => createStyles(C), [C]);
+    const { mode: appearanceMode, setMode: setAppearanceMode } = useThemeMode();
 
     const [loading,    setLoading]    = useState(true);
     const [signingOut, setSigningOut] = useState(false);
@@ -100,7 +110,7 @@ export function SettingsSheet({ visible, onClose }: Props) {
                     .select('full_name')
                     .eq('id', accepted.recipient_id)
                     .maybeSingle();
-                connectionStatus = `Connected to ${recipientProfile?.full_name ?? 'Loved One'}`;
+                connectionStatus = `Connected to ${recipientProfile?.full_name ?? 'Participant'}`;
                 connectionOk     = true;
             } else {
                 const { data: pending } = await supabase
@@ -112,7 +122,7 @@ export function SettingsSheet({ visible, onClose }: Props) {
                     .maybeSingle();
                 connectionStatus = pending
                     ? 'Pending — awaiting acceptance'
-                    : 'No loved one connected';
+                    : 'No participant connected';
             }
 
             setUserId(user.id);
@@ -138,10 +148,10 @@ export function SettingsSheet({ visible, onClose }: Props) {
                     .select('full_name')
                     .eq('id', conn.caregiver_id)
                     .maybeSingle();
-                connectionStatus = `Connected to ${caregiverProfile?.full_name ?? 'Caregiver'}`;
+                connectionStatus = `Connected to ${caregiverProfile?.full_name ?? 'Organizer'}`;
                 connectionOk     = true;
             } else {
-                connectionStatus = 'No caregiver connected';
+                connectionStatus = 'No organizer connected';
             }
         }
 
@@ -218,14 +228,84 @@ export function SettingsSheet({ visible, onClose }: Props) {
     }
 
     const roleLabel =
-        profile.role === 'caregiver' ? 'Caregiver'
-        : profile.role === 'recipient' ? 'Loved One'
+        profile.role === 'caregiver' ? 'Organizer'
+        : profile.role === 'recipient' ? 'Participant'
         : profile.role;
 
     function getInitials(name: string): string {
         const parts = name.split(' ').filter(Boolean);
         if (parts.length === 0) return '?';
         return parts.slice(0, 2).map(w => w[0]?.toUpperCase() ?? '').join('');
+    }
+
+    // ── Sub-components (closures — need the live C/styles above) ─────────────
+
+    function SectionLabel({ text }: { text: string }) {
+        return <Text style={styles.sectionLabel}>{text}</Text>;
+    }
+
+    function Card({ children }: { children: React.ReactNode }) {
+        return <View style={styles.card}>{children}</View>;
+    }
+
+    function Row({
+        icon,
+        label,
+        value,
+        valueStyle,
+    }: { icon: string; label: string; value: string; valueStyle?: object }) {
+        return (
+            <View style={styles.row}>
+                <Ionicons name={icon as any} size={17} color={C.textMuted} style={styles.rowIcon} />
+                <View style={styles.rowBody}>
+                    <Text style={styles.rowLabel}>{label}</Text>
+                    <Text style={[styles.rowValue, valueStyle]} numberOfLines={3}>{value}</Text>
+                </View>
+            </View>
+        );
+    }
+
+    function ToggleRow({
+        icon,
+        label,
+        value,
+        onChange,
+    }: { icon: string; label: string; value: boolean; onChange: (v: boolean) => void }) {
+        return (
+            <View style={styles.toggleRow}>
+                <Ionicons name={icon as any} size={17} color={C.textMuted} style={styles.rowIcon} />
+                <Text style={styles.toggleLabel}>{label}</Text>
+                <Switch
+                    value={value}
+                    onValueChange={onChange}
+                    trackColor={{ false: C.border, true: C.primaryMid }}
+                    thumbColor={value ? C.primary : C.bgSurface}
+                    ios_backgroundColor={C.border}
+                />
+            </View>
+        );
+    }
+
+    function LinkRow({
+        icon,
+        label,
+        caption,
+        onPress,
+    }: { icon: string; label: string; caption: string; onPress: () => void }) {
+        return (
+            <TouchableOpacity style={styles.row} onPress={onPress} activeOpacity={0.6}>
+                <Ionicons name={icon as any} size={17} color={C.textMuted} style={styles.rowIcon} />
+                <View style={styles.rowBody}>
+                    <Text style={styles.rowLabel}>{label}</Text>
+                    <Text style={styles.rowCaption}>{caption}</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={C.textMuted} />
+            </TouchableOpacity>
+        );
+    }
+
+    function Sep() {
+        return <View style={styles.sep} />;
     }
 
     // ── Render ────────────────────────────────────────────────────────────────
@@ -262,14 +342,14 @@ export function SettingsSheet({ visible, onClose }: Props) {
                             onPress={onClose}
                             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                         >
-                            <Ionicons name="close" size={18} color={T.textSecondary} />
+                            <Ionicons name="close" size={18} color={C.textSecondary} />
                         </TouchableOpacity>
                     </View>
 
                     {/* Content */}
                     {loading ? (
                         <View style={styles.loadingBox}>
-                            <ActivityIndicator color={T.primary} />
+                            <ActivityIndicator color={C.primary} />
                             <Text style={styles.loadingText}>Loading profile…</Text>
                         </View>
                     ) : (
@@ -286,18 +366,18 @@ export function SettingsSheet({ visible, onClose }: Props) {
                             <View style={styles.profileHero}>
                                 <View style={[
                                     styles.avatarCircle,
-                                    { backgroundColor: profile.role === 'caregiver' ? T.primary : T.success },
+                                    { backgroundColor: profile.role === 'caregiver' ? C.primary : C.success },
                                 ]}>
                                     <Text style={styles.avatarInitials}>{getInitials(profile.fullName)}</Text>
                                 </View>
                                 <Text style={styles.avatarName}>{profile.fullName}</Text>
                                 <View style={[
                                     styles.avatarRolePill,
-                                    { backgroundColor: profile.role === 'caregiver' ? T.primaryLight : T.successLight },
+                                    { backgroundColor: profile.role === 'caregiver' ? C.primaryLight : C.successLight },
                                 ]}>
                                     <Text style={[
                                         styles.avatarRoleText,
-                                        { color: profile.role === 'caregiver' ? T.primary : T.success },
+                                        { color: profile.role === 'caregiver' ? C.primary : C.success },
                                     ]}>
                                         {roleLabel}
                                     </Text>
@@ -377,7 +457,7 @@ export function SettingsSheet({ visible, onClose }: Props) {
                                                     <Ionicons
                                                         name="information-circle-outline"
                                                         size={14}
-                                                        color={T.textMuted}
+                                                        color={C.textMuted}
                                                         style={styles.pushBannerIcon}
                                                     />
                                                     <Text style={styles.pushBannerText}>{pushTokenMsg}</Text>
@@ -387,6 +467,33 @@ export function SettingsSheet({ visible, onClose }: Props) {
                                     </Card>
                                 </>
                             ) : null}
+
+                            {/* ── Appearance ─────────────────────────────────── */}
+                            <SectionLabel text="Appearance" />
+                            <Card>
+                                <View style={styles.appearanceRow}>
+                                    {APPEARANCE_OPTIONS.map((option) => {
+                                        const active = appearanceMode === option.value;
+                                        return (
+                                            <TouchableOpacity
+                                                key={option.value}
+                                                style={[styles.appearanceChip, active && styles.appearanceChipActive]}
+                                                onPress={() => setAppearanceMode(option.value)}
+                                                activeOpacity={0.75}
+                                            >
+                                                <Ionicons
+                                                    name={option.icon as any}
+                                                    size={16}
+                                                    color={active ? C.primary : C.textMuted}
+                                                />
+                                                <Text style={[styles.appearanceChipText, active && styles.appearanceChipTextActive]}>
+                                                    {option.label}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        );
+                                    })}
+                                </View>
+                            </Card>
 
                             {/* ── Support ────────────────────────────────────── */}
                             <SectionLabel text="Support" />
@@ -414,10 +521,10 @@ export function SettingsSheet({ visible, onClose }: Props) {
                                 activeOpacity={0.8}
                             >
                                 {signingOut ? (
-                                    <ActivityIndicator color={T.error} />
+                                    <ActivityIndicator color={C.error} />
                                 ) : (
                                     <>
-                                        <Ionicons name="log-out-outline" size={18} color={T.error} />
+                                        <Ionicons name="log-out-outline" size={18} color={C.error} />
                                         <Text style={styles.signOutText}>Sign Out</Text>
                                     </>
                                 )}
@@ -430,79 +537,9 @@ export function SettingsSheet({ visible, onClose }: Props) {
     );
 }
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
-
-function SectionLabel({ text }: { text: string }) {
-    return <Text style={styles.sectionLabel}>{text}</Text>;
-}
-
-function Card({ children }: { children: React.ReactNode }) {
-    return <View style={styles.card}>{children}</View>;
-}
-
-function Row({
-    icon,
-    label,
-    value,
-    valueStyle,
-}: { icon: string; label: string; value: string; valueStyle?: object }) {
-    return (
-        <View style={styles.row}>
-            <Ionicons name={icon as any} size={17} color={T.textMuted} style={styles.rowIcon} />
-            <View style={styles.rowBody}>
-                <Text style={styles.rowLabel}>{label}</Text>
-                <Text style={[styles.rowValue, valueStyle]} numberOfLines={3}>{value}</Text>
-            </View>
-        </View>
-    );
-}
-
-function ToggleRow({
-    icon,
-    label,
-    value,
-    onChange,
-}: { icon: string; label: string; value: boolean; onChange: (v: boolean) => void }) {
-    return (
-        <View style={styles.toggleRow}>
-            <Ionicons name={icon as any} size={17} color={T.textMuted} style={styles.rowIcon} />
-            <Text style={styles.toggleLabel}>{label}</Text>
-            <Switch
-                value={value}
-                onValueChange={onChange}
-                trackColor={{ false: T.border, true: T.primaryMid }}
-                thumbColor={value ? T.primary : T.bgSurface}
-                ios_backgroundColor={T.border}
-            />
-        </View>
-    );
-}
-
-function LinkRow({
-    icon,
-    label,
-    caption,
-    onPress,
-}: { icon: string; label: string; caption: string; onPress: () => void }) {
-    return (
-        <TouchableOpacity style={styles.row} onPress={onPress} activeOpacity={0.6}>
-            <Ionicons name={icon as any} size={17} color={T.textMuted} style={styles.rowIcon} />
-            <View style={styles.rowBody}>
-                <Text style={styles.rowLabel}>{label}</Text>
-                <Text style={styles.rowCaption}>{caption}</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={16} color={T.textMuted} />
-        </TouchableOpacity>
-    );
-}
-
-function Sep() {
-    return <View style={styles.sep} />;
-}
-
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const createStyles = (C: ThemeColors) => StyleSheet.create({
 
     // ── Profile hero ─────────────────────────────────────────────────────────
     profileHero: {
@@ -527,7 +564,7 @@ const styles = StyleSheet.create({
     avatarName: {
         fontSize:      18,
         fontWeight:    '700',
-        color:         T.textPrimary,
+        color:         C.textPrimary,
         letterSpacing: -0.3,
         marginBottom:  6,
         textAlign:     'center',
@@ -553,7 +590,7 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     sheet: {
-        backgroundColor:      T.bgSurface,
+        backgroundColor:      C.bgSurface,
         borderTopLeftRadius:  RADIUS.xxl,
         borderTopRightRadius: RADIUS.xxl,
         shadowColor:          '#000',
@@ -572,7 +609,7 @@ const styles = StyleSheet.create({
     handle: {
         width:           40,
         height:          4,
-        backgroundColor: T.border,
+        backgroundColor: C.border,
         borderRadius:    RADIUS.full,
     },
 
@@ -588,14 +625,14 @@ const styles = StyleSheet.create({
     title: {
         fontSize:      19,
         fontWeight:    '800',
-        color:         T.textPrimary,
+        color:         C.textPrimary,
         letterSpacing: -0.4,
     },
     closeBtn: {
         width:           28,
         height:          28,
         borderRadius:    RADIUS.full,
-        backgroundColor: T.bgAlt,
+        backgroundColor: C.bgAlt,
         alignItems:      'center',
         justifyContent:  'center',
     },
@@ -609,7 +646,7 @@ const styles = StyleSheet.create({
     },
     loadingText: {
         fontSize:   14,
-        color:      T.textMuted,
+        color:      C.textMuted,
         fontWeight: '600',
     },
 
@@ -625,7 +662,7 @@ const styles = StyleSheet.create({
     sectionLabel: {
         fontSize:      11,
         fontWeight:    '700',
-        color:         T.textMuted,
+        color:         C.textMuted,
         textTransform: 'uppercase',
         letterSpacing: 0.8,
         marginTop:     20,
@@ -634,9 +671,37 @@ const styles = StyleSheet.create({
 
     // ── Card ──────────────────────────────────────────────────────────────────
     card: {
-        backgroundColor: T.bgAlt,
+        backgroundColor: C.bgAlt,
         borderRadius:    RADIUS.xl,
         overflow:        'hidden',
+    },
+
+    // ── Appearance ────────────────────────────────────────────────────────────
+    appearanceRow: {
+        flexDirection: 'row',
+        padding:       6,
+        gap:           6,
+    },
+    appearanceChip: {
+        flex:              1,
+        flexDirection:     'row',
+        alignItems:        'center',
+        justifyContent:    'center',
+        gap:               6,
+        paddingVertical:   10,
+        borderRadius:      RADIUS.lg,
+    },
+    appearanceChipActive: {
+        backgroundColor: C.bgSurface,
+    },
+    appearanceChipText: {
+        fontSize:   13,
+        fontWeight: '600',
+        color:      C.textMuted,
+    },
+    appearanceChipTextActive: {
+        color:      C.primary,
+        fontWeight: '700',
     },
 
     // ── Row ───────────────────────────────────────────────────────────────────
@@ -656,18 +721,18 @@ const styles = StyleSheet.create({
     rowLabel: {
         fontSize:     11,
         fontWeight:   '600',
-        color:        T.textMuted,
+        color:        C.textMuted,
         marginBottom: 2,
     },
     rowValue: {
         fontSize:   15,
         fontWeight: '500',
-        color:      T.textPrimary,
+        color:      C.textPrimary,
         lineHeight: 20,
     },
     rowCaption: {
         fontSize: 13,
-        color:    T.textMuted,
+        color:    C.textMuted,
     },
 
     // ── Toggle row ────────────────────────────────────────────────────────────
@@ -682,7 +747,7 @@ const styles = StyleSheet.create({
         flex:       1,
         fontSize:   15,
         fontWeight: '500',
-        color:      T.textPrimary,
+        color:      C.textPrimary,
     },
 
     // ── Push token banner ─────────────────────────────────────────────────────
@@ -699,19 +764,19 @@ const styles = StyleSheet.create({
     pushBannerText: {
         flex:       1,
         fontSize:   12,
-        color:      T.textMuted,
+        color:      C.textMuted,
         lineHeight: 17,
     },
 
     // Value variants
-    valCaregiver: { color: T.primary,  fontWeight: '700' },
-    valRecipient: { color: T.success,  fontWeight: '700' },
-    valConnected: { color: T.success,  fontWeight: '600' },
+    valCaregiver: { color: C.primary,  fontWeight: '700' },
+    valRecipient: { color: C.success,  fontWeight: '700' },
+    valConnected: { color: C.success,  fontWeight: '600' },
 
     // ── Separator ─────────────────────────────────────────────────────────────
     sep: {
         height:          1,
-        backgroundColor: T.border,
+        backgroundColor: C.border,
         marginLeft:      45,
     },
 
@@ -724,9 +789,9 @@ const styles = StyleSheet.create({
         marginTop:       20,
         paddingVertical: 14,
         borderRadius:    RADIUS.xl,
-        backgroundColor: '#FEF2F2',
+        backgroundColor: C.errorLight,
         borderWidth:     1.5,
-        borderColor:     '#FECACA',
+        borderColor:     C.error,
     },
     signOutDisabled: {
         opacity: 0.55,
@@ -734,6 +799,6 @@ const styles = StyleSheet.create({
     signOutText: {
         fontSize:   15,
         fontWeight: '700',
-        color:      T.error,
+        color:      C.error,
     },
 });

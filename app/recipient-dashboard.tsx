@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -16,14 +16,14 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { SettingsSheet } from '@/components/settings-sheet';
-import { RADIUS, SHADOW, T } from '@/constants/theme';
+import { RADIUS, SHADOW, T, ThemeColors } from '@/constants/theme';
+import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 import {
     cancelReminderOccurrenceNotification,
     requestNotificationPermissions,
     scheduleReminderNotifications,
     scheduleSnoozeNotification,
-    scheduleTestNotification,
 } from '@/lib/notifications';
 import { isDueOnDate } from '@/lib/frequency';
 import { getFirstEligibleDateString, isPastNoResponseWindow } from '@/lib/reminderStatus';
@@ -100,12 +100,12 @@ function shouldShowToday(daysOfWeek: number[]) {
 
 // ─── UI helpers ───────────────────────────────────────────────────────────────
 
-function getStatusColors(status?: ReminderStatus) {
-    if (status === 'taken')   return { bg: '#DCFCE7', text: '#15803D', accent: T.success };
-    if (status === 'missed')  return { bg: '#FEE2E2', text: '#B91C1C', accent: T.error };
+function getStatusColors(status: ReminderStatus | undefined, C: ThemeColors) {
+    if (status === 'taken')   return { bg: '#DCFCE7', text: '#15803D', accent: C.success };
+    if (status === 'missed')  return { bg: '#FEE2E2', text: '#B91C1C', accent: C.error };
     if (status === 'skipped') return { bg: '#FEF3C7', text: '#B45309', accent: '#D97706' };
-    if (status === 'snoozed') return { bg: '#DBEAFE', text: '#1D4ED8', accent: T.primary };
-    return { bg: T.bgAlt, text: T.textMuted, accent: T.border };
+    if (status === 'snoozed') return { bg: '#DBEAFE', text: '#1D4ED8', accent: C.primary };
+    return { bg: C.bgAlt, text: C.textMuted, accent: C.border };
 }
 
 function formatDayLabel() {
@@ -114,6 +114,14 @@ function formatDayLabel() {
         month: 'short',
         day: 'numeric',
     });
+}
+
+function getGreeting(): string {
+    const hour = new Date().getHours();
+    if (hour < 5)  return 'Good night';
+    if (hour < 12) return 'Good morning';
+    if (hour < 17) return 'Good afternoon';
+    return 'Good evening';
 }
 
 function getTimeHint(reminder: Reminder): string | null {
@@ -155,6 +163,8 @@ function getTimeHint(reminder: Reminder): string | null {
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function RecipientDashboard() {
+    const C = useThemeColors();
+    const styles = useMemo(() => createStyles(C), [C]);
     const [reminders, setReminders]               = useState<Reminder[]>([]);
     const [loading, setLoading]                   = useState(true);
     const [savingReminderId, setSavingReminderId] = useState<string | null>(null);
@@ -362,15 +372,15 @@ export default function RecipientDashboard() {
                     <RefreshControl
                         refreshing={loading}
                         onRefresh={loadReminders}
-                        tintColor={T.primary}
-                        colors={[T.primary]}
+                        tintColor={C.primary}
+                        colors={[C.primary]}
                     />
                 }
             >
                 {/* Header */}
                 <View style={styles.header}>
                     <View style={{ flex: 1 }}>
-                        <Text style={styles.heading}>Today</Text>
+                        <Text style={styles.heading}>{getGreeting()}</Text>
                         <Text style={styles.subheading}>{formatDayLabel()}</Text>
                     </View>
                     <TouchableOpacity
@@ -378,9 +388,36 @@ export default function RecipientDashboard() {
                         onPress={() => setSettingsVisible(true)}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
-                        <Ionicons name="settings-outline" size={22} color={T.primary} />
+                        <Ionicons name="settings-outline" size={22} color={C.primary} />
                     </TouchableOpacity>
                 </View>
+
+                {/* Today's progress summary */}
+                {!loading && reminders.length > 0 && (() => {
+                    const done  = reminders.filter((r) => r.today_status === 'taken' || r.today_status === 'skipped').length;
+                    const total = reminders.length;
+                    const pct   = total === 0 ? 0 : Math.round((done / total) * 100);
+                    return (
+                        <View style={[styles.progressCard, SHADOW.xs]}>
+                            <View style={styles.progressTextRow}>
+                                <Text style={styles.progressLabel}>
+                                    {done === total
+                                        ? 'All done for today'
+                                        : `${done} of ${total} done today`}
+                                </Text>
+                                <Text style={styles.progressPct}>{pct}%</Text>
+                            </View>
+                            <View style={styles.progressTrack}>
+                                <View
+                                    style={[
+                                        styles.progressFill,
+                                        { width: `${pct}%`, backgroundColor: done === total ? C.success : C.primary },
+                                    ]}
+                                />
+                            </View>
+                        </View>
+                    );
+                })()}
 
                 {/* Notification permission denied notice */}
                 {notifDenied && !loading && (
@@ -396,7 +433,7 @@ export default function RecipientDashboard() {
                 {loading && (
                     <View style={[styles.emptyCard, SHADOW.xs]}>
                         <View style={styles.emptyIconWrap}>
-                            <ActivityIndicator color={T.primary} size="large" />
+                            <ActivityIndicator color={C.primary} size="large" />
                         </View>
                         <Text style={styles.emptyTitle}>Loading your reminders…</Text>
                         <Text style={styles.emptyText}>Just a moment.</Text>
@@ -411,7 +448,7 @@ export default function RecipientDashboard() {
                         </View>
                         <Text style={styles.emptyTitle}>All clear for today</Text>
                         <Text style={styles.emptyText}>
-                            No reminders are scheduled right now. Your caregiver will send them when needed.
+                            No reminders are scheduled right now. Your organizer will send them when needed.
                         </Text>
                     </View>
                 )}
@@ -419,7 +456,7 @@ export default function RecipientDashboard() {
                 {/* Reminder cards */}
                 {!loading && reminders.map((reminder) => {
                     const isSaving   = savingReminderId === reminder.id;
-                    const statusInfo = getStatusColors(reminder.today_status);
+                    const statusInfo = getStatusColors(reminder.today_status, C);
                     const typeIcon   = TYPE_ICONS[reminder.reminder_type] ?? '•';
 
                     return (
@@ -454,7 +491,7 @@ export default function RecipientDashboard() {
                             {reminder.notes ? (
                                 <Text style={styles.notes}>{reminder.notes}</Text>
                             ) : (
-                                <Text style={styles.notesMuted}>No notes from caregiver.</Text>
+                                <Text style={styles.notesMuted}>No notes from your organizer.</Text>
                             )}
 
                             {/* Status row */}
@@ -480,18 +517,18 @@ export default function RecipientDashboard() {
                             {/* Action buttons */}
                             {isSaving ? (
                                 <View style={[styles.savingBox, SHADOW.xs]}>
-                                    <ActivityIndicator color={T.primary} />
+                                    <ActivityIndicator color={C.primary} />
                                     <Text style={styles.savingText}>Saving…</Text>
                                 </View>
                             ) : reminder.today_status === 'taken' ? (
                                 <View style={styles.respondedBox}>
-                                    <Ionicons name="checkmark-circle" size={20} color={T.success} />
-                                    <Text style={[styles.respondedText, { color: T.success }]}>Marked as taken</Text>
+                                    <Ionicons name="checkmark-circle" size={20} color={C.success} />
+                                    <Text style={[styles.respondedText, { color: C.success }]}>Marked as taken</Text>
                                 </View>
                             ) : reminder.today_status === 'skipped' ? (
                                 <View style={styles.respondedBox}>
-                                    <Ionicons name="remove-circle-outline" size={20} color={T.textMuted} />
-                                    <Text style={[styles.respondedText, { color: T.textMuted }]}>Skipped for today</Text>
+                                    <Ionicons name="remove-circle-outline" size={20} color={C.textMuted} />
+                                    <Text style={[styles.respondedText, { color: C.textMuted }]}>Skipped for today</Text>
                                 </View>
                             ) : (
                                 <View style={styles.actionArea}>
@@ -529,24 +566,6 @@ export default function RecipientDashboard() {
                         </TouchableOpacity>
                     );
                 })}
-
-                {/* ── Dev helper: test notification ── */}
-                {__DEV__ && !loading && reminders.length > 0 && (
-                    <TouchableOpacity
-                        style={styles.testNotifButton}
-                        activeOpacity={0.7}
-                        onPress={async () => {
-                            await scheduleTestNotification(reminders[0]);
-                            Alert.alert(
-                                'Test notification scheduled',
-                                `Fires in 10 seconds for "${reminders[0].title}". Background the app to see it.`
-                            );
-                        }}
-                    >
-                        <Ionicons name="notifications-outline" size={15} color={T.textMuted} />
-                        <Text style={styles.testNotifText}>Test Notification (Dev)</Text>
-                    </TouchableOpacity>
-                )}
             </ScrollView>
 
             <SettingsSheet
@@ -557,10 +576,10 @@ export default function RecipientDashboard() {
     );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (C: ThemeColors) => StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: T.bgPage,
+        backgroundColor: C.bgPage,
     },
     content: {
         paddingHorizontal: 20,
@@ -579,12 +598,12 @@ const styles = StyleSheet.create({
     heading: {
         fontSize: 34,
         fontWeight: '800',
-        color: T.textPrimary,
+        color: C.textPrimary,
         letterSpacing: -0.8,
     },
     subheading: {
         fontSize: 14,
-        color: T.textMuted,
+        color: C.textMuted,
         marginTop: 2,
         letterSpacing: -0.1,
     },
@@ -592,14 +611,49 @@ const styles = StyleSheet.create({
         width: 44,
         height: 44,
         borderRadius: RADIUS.lg,
-        backgroundColor: T.primaryLight,
+        backgroundColor: C.primaryLight,
         justifyContent: 'center',
         alignItems: 'center',
     },
 
+    // ── Progress summary ───────────────────────────────────────────────
+    progressCard: {
+        backgroundColor: C.bgSurface,
+        borderRadius: RADIUS.lg,
+        padding: 16,
+        marginBottom: 16,
+    },
+    progressTextRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 10,
+    },
+    progressLabel: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: C.textPrimary,
+        letterSpacing: -0.1,
+    },
+    progressPct: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: C.textMuted,
+    },
+    progressTrack: {
+        height: 6,
+        borderRadius: RADIUS.full,
+        backgroundColor: C.bgAlt,
+        overflow: 'hidden',
+    },
+    progressFill: {
+        height: '100%',
+        borderRadius: RADIUS.full,
+    },
+
     // ── Empty / loading state ─────────────────────────────────────────
     emptyCard: {
-        backgroundColor: T.bgSurface,
+        backgroundColor: C.bgSurface,
         borderRadius: RADIUS.xl,
         padding: 32,
         alignItems: 'center',
@@ -609,7 +663,7 @@ const styles = StyleSheet.create({
         width: 72,
         height: 72,
         borderRadius: RADIUS.xl,
-        backgroundColor: T.bgAlt,
+        backgroundColor: C.bgAlt,
         justifyContent: 'center',
         alignItems: 'center',
         marginBottom: 16,
@@ -620,21 +674,21 @@ const styles = StyleSheet.create({
     emptyTitle: {
         fontSize: 20,
         fontWeight: '700',
-        color: T.textPrimary,
+        color: C.textPrimary,
         letterSpacing: -0.3,
         marginBottom: 8,
         textAlign: 'center',
     },
     emptyText: {
         fontSize: 15,
-        color: T.textMuted,
+        color: C.textMuted,
         lineHeight: 22,
         textAlign: 'center',
     },
 
     // ── Reminder card ─────────────────────────────────────────────────
     reminderCard: {
-        backgroundColor: T.bgSurface,
+        backgroundColor: C.bgSurface,
         borderRadius: RADIUS.xl,
         padding: 20,
         marginBottom: 16,
@@ -658,7 +712,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
-        backgroundColor: T.primaryLight,
+        backgroundColor: C.primaryLight,
         paddingHorizontal: 12,
         paddingVertical: 6,
         borderRadius: RADIUS.full,
@@ -667,40 +721,40 @@ const styles = StyleSheet.create({
         fontSize: 13,
     },
     typePillText: {
-        color: T.primary,
+        color: C.primary,
         fontSize: 13,
         fontWeight: '700',
     },
     timeText: {
         fontSize: 17,
-        color: T.textPrimary,
+        color: C.textPrimary,
         fontWeight: '700',
         letterSpacing: -0.2,
     },
     reminderTitle: {
         fontSize: 26,
         fontWeight: '800',
-        color: T.textPrimary,
+        color: C.textPrimary,
         letterSpacing: -0.5,
         lineHeight: 32,
         marginBottom: 10,
     },
     notes: {
         fontSize: 16,
-        color: T.textSecondary,
+        color: C.textSecondary,
         lineHeight: 23,
         marginBottom: 16,
     },
     notesMuted: {
         fontSize: 15,
-        color: T.textMuted,
+        color: C.textMuted,
         lineHeight: 22,
         marginBottom: 16,
     },
 
     // ── Status row ────────────────────────────────────────────────────
     statusRow: {
-        backgroundColor: T.bgAlt,
+        backgroundColor: C.bgAlt,
         borderRadius: RADIUS.md,
         paddingVertical: 10,
         paddingHorizontal: 14,
@@ -711,7 +765,7 @@ const styles = StyleSheet.create({
     },
     statusLabel: {
         fontSize: 13,
-        color: T.textMuted,
+        color: C.textMuted,
         fontWeight: '600',
     },
     statusRight: {
@@ -721,7 +775,7 @@ const styles = StyleSheet.create({
     },
     timeHint: {
         fontSize: 12,
-        color: T.textMuted,
+        color: C.textMuted,
         fontWeight: '500',
     },
     statusPill: {
@@ -736,7 +790,7 @@ const styles = StyleSheet.create({
 
     // ── Saving state ──────────────────────────────────────────────────
     savingBox: {
-        backgroundColor: T.bgAlt,
+        backgroundColor: C.bgAlt,
         borderRadius: RADIUS.lg,
         paddingVertical: 18,
         alignItems: 'center',
@@ -746,7 +800,7 @@ const styles = StyleSheet.create({
     },
     savingText: {
         fontSize: 15,
-        color: T.textMuted,
+        color: C.textMuted,
         fontWeight: '600',
     },
 
@@ -755,7 +809,7 @@ const styles = StyleSheet.create({
         gap: 10,
     },
     takenButton: {
-        backgroundColor: T.success,
+        backgroundColor: C.success,
         paddingVertical: 18,
         borderRadius: RADIUS.xl,
         alignItems: 'center',
@@ -792,14 +846,14 @@ const styles = StyleSheet.create({
     },
     skipButton: {
         flex: 1,
-        backgroundColor: T.bgAlt,
+        backgroundColor: C.bgAlt,
         paddingVertical: 15,
         borderRadius: RADIUS.xl,
         alignItems: 'center',
         justifyContent: 'center',
     },
     skipButtonText: {
-        color: T.textSecondary,
+        color: C.textSecondary,
         fontSize: 16,
         fontWeight: '600',
     },
@@ -832,30 +886,11 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         gap: 8,
         paddingVertical: 16,
-        backgroundColor: T.bgAlt,
+        backgroundColor: C.bgAlt,
         borderRadius: RADIUS.xl,
     },
     respondedText: {
         fontSize: 15,
         fontWeight: '600',
-    },
-
-    // ── Dev test notification button ───────────────────────────────────
-    testNotifButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 8,
-        marginTop: 8,
-        paddingVertical: 14,
-        borderRadius: RADIUS.md,
-        borderWidth: 1,
-        borderColor: T.border,
-        borderStyle: 'dashed',
-    },
-    testNotifText: {
-        fontSize: 13,
-        color: T.textMuted,
-        fontWeight: '500',
     },
 });
