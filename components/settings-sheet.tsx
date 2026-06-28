@@ -100,18 +100,24 @@ export function SettingsSheet({ visible, onClose }: Props) {
                 .select('recipient_id')
                 .eq('caregiver_id', user.id)
                 .eq('status', 'accepted')
-                .not('recipient_id', 'is', null)
-                .limit(1)
-                .maybeSingle();
+                .not('recipient_id', 'is', null);
 
-            if (accepted?.recipient_id) {
-                const { data: recipientProfile } = await supabase
+            const acceptedRecipientIds = (accepted ?? [])
+                .map((c) => c.recipient_id)
+                .filter((id): id is string => !!id);
+
+            if (acceptedRecipientIds.length > 0) {
+                const { data: recipientProfiles } = await supabase
                     .from('profiles')
                     .select('full_name')
-                    .eq('id', accepted.recipient_id)
-                    .maybeSingle();
-                connectionStatus = `Connected to ${recipientProfile?.full_name ?? 'Participant'}`;
-                connectionOk     = true;
+                    .in('id', acceptedRecipientIds);
+
+                const names = (recipientProfiles ?? []).map((p) => p.full_name).filter(Boolean);
+                connectionStatus =
+                    names.length === 1
+                        ? `Connected to ${names[0]}`
+                        : `Connected to ${names.length} participants`;
+                connectionOk = true;
             } else {
                 const { data: pending } = await supabase
                     .from('connections')

@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { router } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { router, useLocalSearchParams } from 'expo-router';
+import { useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -23,6 +23,12 @@ import { DAY_OPTIONS, daysForFrequency, Frequency } from '@/lib/frequency';
 import { supabase } from '@/lib/supabase';
 
 type ReminderType = 'medication' | 'hydration' | 'appointment' | 'meal' | 'exercise' | 'other';
+
+type ParticipantOption = {
+    connectionId: string;
+    recipientId: string;
+    recipientName: string;
+};
 
 const REMINDER_TYPES: ReminderType[] = ['medication', 'hydration', 'appointment', 'meal', 'exercise', 'other'];
 const FREQUENCIES:    Frequency[]    = ['daily', 'weekdays', 'weekends', 'custom'];
@@ -63,6 +69,12 @@ function formatResponseMinutes(m: number): string {
 export default function CreateReminderScreen() {
     const C = useThemeColors();
     const styles = useMemo(() => createStyles(C), [C]);
+    const { connectionId: preselectConnectionId } = useLocalSearchParams<{ connectionId?: string }>();
+
+    const [participants, setParticipants]           = useState<ParticipantOption[]>([]);
+    const [participantsLoading, setParticipantsLoading] = useState(true);
+    const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
+
     const [title, setTitle]                         = useState('');
     const [reminderType, setReminderType]           = useState<ReminderType>('medication');
     const [notes, setNotes]                         = useState('');
@@ -77,6 +89,52 @@ export default function CreateReminderScreen() {
     const [loading, setLoading]                     = useState(false);
     const [focused, setFocused]                     = useState<string | null>(null);
 
+    useEffect(() => {
+        (async () => {
+            setParticipantsLoading(true);
+
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) { setParticipantsLoading(false); return; }
+
+            const { data: connections } = await supabase
+                .from('connections')
+                .select('id, recipient_id')
+                .eq('caregiver_id', user.id)
+                .eq('status', 'accepted')
+                .not('recipient_id', 'is', null);
+
+            const accepted = connections ?? [];
+            if (accepted.length === 0) {
+                setParticipants([]);
+                setParticipantsLoading(false);
+                return;
+            }
+
+            const recipientIds = accepted.map((c) => c.recipient_id as string);
+            const { data: profiles } = await supabase
+                .from('profiles')
+                .select('id, full_name')
+                .in('id', recipientIds);
+
+            const nameById = new Map((profiles ?? []).map((p) => [p.id, p.full_name]));
+
+            const options: ParticipantOption[] = accepted.map((c) => ({
+                connectionId:  c.id,
+                recipientId:   c.recipient_id as string,
+                recipientName: nameById.get(c.recipient_id as string) || 'Participant',
+            }));
+
+            setParticipants(options);
+
+            // Preselect: the connection passed in from the dashboard if it's
+            // still valid, else the only participant, else nothing.
+            const preselect = options.find((o) => o.connectionId === preselectConnectionId);
+            setSelectedConnectionId(preselect?.connectionId ?? (options.length === 1 ? options[0].connectionId : null));
+
+            setParticipantsLoading(false);
+        })();
+    }, [preselectConnectionId]);
+
     function toggleDay(iso: number) {
         setSelectedDays((prev) =>
             prev.includes(iso) ? prev.filter((d) => d !== iso) : [...prev, iso]
@@ -84,6 +142,12 @@ export default function CreateReminderScreen() {
     }
 
     async function saveReminder() {
+        const selected = participants.find((p) => p.connectionId === selectedConnectionId);
+        if (!selected) {
+            Alert.alert('Choose a participant', 'Select who this reminder is for before saving.');
+            return;
+        }
+
         if (!title.trim()) {
             Alert.alert('Missing title', 'Please enter a reminder name.');
             return;
@@ -105,34 +169,10 @@ export default function CreateReminderScreen() {
             return;
         }
 
-        const { data: connection, error: connectionError } = await supabase
-            .from('connections')
-            .select('id, recipient_id')
-            .eq('caregiver_id', user.id)
-            .eq('status', 'accepted')
-            .not('recipient_id', 'is', null)
-            .limit(1)
-            .maybeSingle();
-
-        if (connectionError) {
-            setLoading(false);
-            Alert.alert('Connection error', connectionError.message);
-            return;
-        }
-
-        if (!connection?.recipient_id) {
-            setLoading(false);
-            Alert.alert(
-                'No Participant connected',
-                'Invite a participant and have them accept the code before creating reminders.'
-            );
-            return;
-        }
-
         const { error } = await supabase.from('reminders').insert({
-            connection_id:       connection.id,
+            connection_id:       selected.connectionId,
             caregiver_id:        user.id,
-            recipient_id:        connection.recipient_id,
+            recipient_id:        selected.recipientId,
             title:               title.trim(),
             reminder_type:       reminderType,
             notes:               notes.trim() || null,
@@ -150,8 +190,8 @@ export default function CreateReminderScreen() {
             return;
         }
 
-        Alert.alert('Reminder saved', 'This reminder is now linked to your participant.');
-        router.replace('/caregiver-dashboard');
+        Alert.alert('Reminder saved', `This reminder is now linked to ${selected.recipientName}.`);
+        router.replace({ pathname: '/caregiver-dashboard', params: { connectionId: selected.connectionId } });
     }
 
     const inputStyle = (field: string) => [
@@ -185,6 +225,80 @@ export default function CreateReminderScreen() {
                     <Text style={styles.subheading}>
                         Add a task your participant needs to complete.
                     </Text>
+
+                    {participantsLoading ? (
+                        <View style={[styles.sectionCard, SHADOW.xs, styles.loadingCard]}>
+                            <ActivityIndicator color={C.primary} />
+                            <Text style={styles.loadingText}>Loading participants…</Text>
+                        </View>
+                    ) : participants.length === 0 ? (
+                        <View style={[styles.sectionCard, SHADOW.xs, styles.emptyCard]}>
+                            <View style={[styles.sectionIconWrap, { backgroundColor: C.primaryLight }]}>
+                                <Ionicons name="person-add-outline" size={20} color={C.primary} />
+                            </View>
+                            <Text style={styles.emptyTitle}>No participants yet</Text>
+                            <Text style={styles.emptyText}>
+                                Invite a participant and have them accept the code before you can create reminders.
+                            </Text>
+                            <TouchableOpacity
+                                style={[styles.inviteButton, SHADOW.primary]}
+                                onPress={() => router.push('/invite-recipient')}
+                                activeOpacity={0.88}
+                            >
+                                <Ionicons name="person-add" size={16} color={C.textInverse} />
+                                <Text style={styles.inviteButtonText}>Invite Participant</Text>
+                            </TouchableOpacity>
+                        </View>
+                    ) : (
+                    <>
+                    {/* ── Who is this for ─────────────────────────────────── */}
+                    <View style={[styles.sectionCard, SHADOW.xs]}>
+                        <View style={styles.sectionHeader}>
+                            <View style={[styles.sectionIconWrap, { backgroundColor: C.successLight }]}>
+                                <Ionicons name="person-outline" size={18} color={C.success} />
+                            </View>
+                            <Text style={styles.sectionTitle}>Who is this for?</Text>
+                        </View>
+
+                        {participants.length === 1 ? (
+                            <View style={styles.singleParticipantRow}>
+                                <View style={styles.participantAvatar}>
+                                    <Text style={styles.participantAvatarText}>
+                                        {participants[0].recipientName.charAt(0).toUpperCase()}
+                                    </Text>
+                                </View>
+                                <Text style={styles.singleParticipantName}>{participants[0].recipientName}</Text>
+                            </View>
+                        ) : (
+                            <View style={styles.participantGrid}>
+                                {participants.map((p) => (
+                                    <TouchableOpacity
+                                        key={p.connectionId}
+                                        style={[
+                                            styles.participantOption,
+                                            selectedConnectionId === p.connectionId && styles.chipActive,
+                                        ]}
+                                        onPress={() => setSelectedConnectionId(p.connectionId)}
+                                        activeOpacity={0.75}
+                                    >
+                                        <View style={styles.participantAvatar}>
+                                            <Text style={styles.participantAvatarText}>
+                                                {p.recipientName.charAt(0).toUpperCase()}
+                                            </Text>
+                                        </View>
+                                        <Text
+                                            style={[
+                                                styles.chipText,
+                                                selectedConnectionId === p.connectionId && styles.chipTextActive,
+                                            ]}
+                                        >
+                                            {p.recipientName}
+                                        </Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+                        )}
+                    </View>
 
                     {/* ── Section 1: What ─────────────────────────────────── */}
                     <View style={[styles.sectionCard, SHADOW.xs]}>
@@ -371,6 +485,8 @@ export default function CreateReminderScreen() {
                             </>
                         )}
                     </TouchableOpacity>
+                    </>
+                    )}
                 </ScrollView>
             </KeyboardAvoidingView>
         </SafeAreaView>
@@ -571,6 +687,92 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
         alignItems: 'center',
         borderWidth: 1.5,
         borderColor: 'transparent',
+    },
+
+    // ── Who is this for ─────────────────────────────────────────────────
+    singleParticipantRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+    },
+    singleParticipantName: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: C.textPrimary,
+    },
+    participantGrid: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+    },
+    participantOption: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        backgroundColor: C.bgAlt,
+        paddingVertical: 8,
+        paddingHorizontal: 12,
+        borderRadius: RADIUS.lg,
+        borderWidth: 1.5,
+        borderColor: 'transparent',
+    },
+    participantAvatar: {
+        width: 28,
+        height: 28,
+        borderRadius: RADIUS.full,
+        backgroundColor: C.primaryLight,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    participantAvatarText: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: C.primary,
+    },
+
+    // ── Loading / empty participants state ──────────────────────────────
+    loadingCard: {
+        alignItems: 'center',
+        gap: 10,
+        paddingVertical: 28,
+    },
+    loadingText: {
+        fontSize: 14,
+        color: C.textMuted,
+        fontWeight: '600',
+    },
+    emptyCard: {
+        alignItems: 'center',
+        gap: 6,
+        paddingVertical: 28,
+    },
+    emptyTitle: {
+        fontSize: 17,
+        fontWeight: '700',
+        color: C.textPrimary,
+        marginTop: 8,
+    },
+    emptyText: {
+        fontSize: 14,
+        color: C.textSecondary,
+        textAlign: 'center',
+        lineHeight: 20,
+        marginBottom: 12,
+        paddingHorizontal: 8,
+    },
+    inviteButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        backgroundColor: C.primary,
+        paddingVertical: 12,
+        paddingHorizontal: 20,
+        borderRadius: RADIUS.lg,
+    },
+    inviteButtonText: {
+        color: C.textInverse,
+        fontSize: 15,
+        fontWeight: '700',
     },
 
     // ── Save button ───────────────────────────────────────────────────

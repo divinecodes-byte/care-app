@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { router, useFocusEffect } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
@@ -17,7 +17,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { SettingsSheet } from '@/components/settings-sheet';
 import { RADIUS, SHADOW, T, ThemeColors } from '@/constants/theme';
 import { formatFrequency as formatFrequencyDays, isDueOnDate } from '@/lib/frequency';
+import { MAX_FREE_PARTICIPANTS } from '@/lib/limits';
 import { registerCaregiverPushToken } from '@/lib/notifications';
+import { getStoredSelectedConnectionId, setStoredSelectedConnectionId } from '@/lib/selected-participant';
 import { supabase } from '@/lib/supabase';
 import { useThemeColors } from '@/lib/theme';
 
@@ -99,6 +101,7 @@ type ConnectionSummary = {
     inviteCode?: string;
     recipientName?: string;
     acceptedAt?: string;
+    recipientId?: string;
 };
 
 type RangeStats = { adherence: number | null; countable: number; taken: number };
@@ -533,7 +536,12 @@ export default function CaregiverDashboard() {
 
     const pushRegistrationAttemptedRef = useRef(false);
 
+    // connectionSummary always reflects the *currently selected* participant
+    // (status 'none'/'pending' only apply when there are zero accepted ones).
     const [connectionSummary, setConnectionSummary] = useState<ConnectionSummary>({ id: '', status: 'none' });
+    // All accepted participants for the horizontal selector — MVP shows one
+    // participant's data at a time (the selected one), never mixed.
+    const [participants, setParticipants]           = useState<ConnectionSummary[]>([]);
     const [todayData, setTodayData]                 = useState<DayData | null>(null);
     const [weeklyData, setWeeklyData]               = useState<DayData[]>([]);
     const [monthData, setMonthData]                 = useState<DayData[]>([]);
@@ -541,96 +549,27 @@ export default function CaregiverDashboard() {
     const [hasAnyReminders, setHasAnyReminders]     = useState(false);
     const [settingsVisible, setSettingsVisible]     = useState(false);
 
-    async function loadDashboardData() {
-        setConnectionLoading(true);
+    // Caregiver/Organizer id, cached for re-fetching reminder data on participant switch.
+    const caregiverIdRef = useRef<string | null>(null);
+
+    // Mirrors connectionSummary.id but readable from the stable focus-effect
+    // closure below, which must not go stale across renders.
+    const selectedConnectionIdRef = useRef<string>('');
+
+    const { connectionId: routeConnectionId } = useLocalSearchParams<{ connectionId?: string }>();
+
+    async function loadReminderData(connectionId: string, acceptedAt: string) {
         setDashboardLoading(true);
-
-        const { data: { user }, error: userError } = await supabase.auth.getUser();
-
-        if (userError || !user) {
-            setConnectionLoading(false);
-            setDashboardLoading(false);
-            router.replace('/signin');
-            return;
-        }
-
-        if (!pushRegistrationAttemptedRef.current) {
-            pushRegistrationAttemptedRef.current = true;
-            registerCaregiverPushToken(user.id)
-                .then((result) => {
-                    if (!result.ok) {
-                        console.warn('[caregiver-dashboard] push registration failed', result);
-                    }
-                })
-                .catch((err) => console.warn('[caregiver-dashboard] push registration error:', err));
-        }
-
-        const { data: connections, error: connectionError } = await supabase
-            .from('connections')
-            .select('id, invite_code, status, recipient_id, created_at, accepted_at')
-            .eq('caregiver_id', user.id)
-            .order('created_at', { ascending: false })
-            .limit(10);
-
-        if (connectionError) {
-            console.log(connectionError.message);
-            setConnectionLoading(false);
-            setDashboardLoading(false);
-            return;
-        }
-
-        const acceptedConnection = connections?.find(
-            (c) => c.status === 'accepted' && c.recipient_id
-        );
-
-        if (!acceptedConnection) {
-            const pendingConnection = connections?.find((c) => c.status === 'pending');
-            setConnectionSummary(
-                pendingConnection
-                    ? { id: pendingConnection.id, status: 'pending', inviteCode: pendingConnection.invite_code }
-                    : { id: '', status: 'none' }
-            );
-            setTodayData(null);
-            setWeeklyData([]);
-            setMonthData([]);
-            setReminderBreakdown([]);
-            setHasAnyReminders(false);
-            setConnectionLoading(false);
-            setDashboardLoading(false);
-            return;
-        }
-
-        const { data: recipientProfile, error: profileError } = await supabase
-            .from('profiles')
-            .select('full_name')
-            .eq('id', acceptedConnection.recipient_id)
-            .maybeSingle();
-
-        if (profileError) console.log(profileError.message);
-
-        // Fallback: if accepted_at is null, use created_at
-        const acceptedAt: string =
-            acceptedConnection.accepted_at ||
-            acceptedConnection.created_at  ||
-            new Date().toISOString();
-
-        setConnectionSummary({
-            id: acceptedConnection.id,
-            status: 'accepted',
-            inviteCode: acceptedConnection.invite_code,
-            recipientName: recipientProfile?.full_name || 'Participant',
-            acceptedAt,
-        });
-
-        setConnectionLoading(false);
+        const caregiverId = caregiverIdRef.current;
+        if (!caregiverId) { setDashboardLoading(false); return; }
 
         const { data: remindersData, error: remindersError } = await supabase
             .from('reminders')
             .select(
                 'id, connection_id, caregiver_id, recipient_id, title, reminder_type, notes, time_of_day, frequency, days_of_week, no_response_minutes, created_at, is_active, updated_at'
             )
-            .eq('caregiver_id', user.id)
-            .eq('connection_id', acceptedConnection.id)
+            .eq('caregiver_id', caregiverId)
+            .eq('connection_id', connectionId)
             .order('time_of_day', { ascending: true });
 
         if (remindersError) {
@@ -659,7 +598,7 @@ export default function CaregiverDashboard() {
             const { data: logsData, error: logsError } = await supabase
                 .from('reminder_logs')
                 .select('reminder_id, occurrence_date, status, completed_at, snoozed_until')
-                .eq('caregiver_id', user.id)
+                .eq('caregiver_id', caregiverId)
                 .gte('occurrence_date', getLocalDateString(earliestDate))
                 .lte('occurrence_date', getLocalDateString(latestDate))
                 .in('reminder_id', reminderIds);
@@ -681,7 +620,124 @@ export default function CaregiverDashboard() {
         setDashboardLoading(false);
     }
 
-    useFocusEffect(useCallback(() => { loadDashboardData(); }, []));
+    function selectParticipant(p: ConnectionSummary) {
+        if (p.id === selectedConnectionIdRef.current) return;
+        selectedConnectionIdRef.current = p.id;
+        setConnectionSummary(p);
+        setStoredSelectedConnectionId(p.id);
+        loadReminderData(p.id, p.acceptedAt ?? new Date().toISOString());
+    }
+
+    async function loadDashboardData() {
+        setConnectionLoading(true);
+        setDashboardLoading(true);
+
+        const { data: { user }, error: userError } = await supabase.auth.getUser();
+
+        if (userError || !user) {
+            setConnectionLoading(false);
+            setDashboardLoading(false);
+            router.replace('/signin');
+            return;
+        }
+
+        caregiverIdRef.current = user.id;
+
+        if (!pushRegistrationAttemptedRef.current) {
+            pushRegistrationAttemptedRef.current = true;
+            registerCaregiverPushToken(user.id)
+                .then((result) => {
+                    if (!result.ok) {
+                        console.warn('[caregiver-dashboard] push registration failed', result);
+                    }
+                })
+                .catch((err) => console.warn('[caregiver-dashboard] push registration error:', err));
+        }
+
+        const { data: connections, error: connectionError } = await supabase
+            .from('connections')
+            .select('id, invite_code, status, recipient_id, created_at, accepted_at')
+            .eq('caregiver_id', user.id)
+            .order('created_at', { ascending: false })
+            .limit(50);
+
+        if (connectionError) {
+            console.log(connectionError.message);
+            setConnectionLoading(false);
+            setDashboardLoading(false);
+            return;
+        }
+
+        const acceptedConnections = (connections ?? []).filter(
+            (c) => c.status === 'accepted' && c.recipient_id
+        );
+
+        if (acceptedConnections.length === 0) {
+            const pendingConnection = connections?.find((c) => c.status === 'pending');
+            setParticipants([]);
+            setConnectionSummary(
+                pendingConnection
+                    ? { id: pendingConnection.id, status: 'pending', inviteCode: pendingConnection.invite_code }
+                    : { id: '', status: 'none' }
+            );
+            setTodayData(null);
+            setWeeklyData([]);
+            setMonthData([]);
+            setReminderBreakdown([]);
+            setHasAnyReminders(false);
+            setConnectionLoading(false);
+            setDashboardLoading(false);
+            return;
+        }
+
+        const recipientIds = acceptedConnections.map((c) => c.recipient_id as string);
+        const { data: recipientProfiles, error: profileError } = await supabase
+            .from('profiles')
+            .select('id, full_name')
+            .in('id', recipientIds);
+
+        if (profileError) console.log(profileError.message);
+
+        const nameById = new Map((recipientProfiles ?? []).map((p) => [p.id, p.full_name]));
+
+        const nextParticipants: ConnectionSummary[] = acceptedConnections.map((c) => ({
+            id: c.id,
+            status: 'accepted',
+            recipientId: c.recipient_id as string,
+            recipientName: nameById.get(c.recipient_id as string) || 'Participant',
+            acceptedAt: c.accepted_at || c.created_at || new Date().toISOString(),
+        }));
+
+        setParticipants(nextParticipants);
+
+        // Selection priority: an explicit route param (e.g. returning from
+        // Create/Edit Reminder), then whatever is currently selected in this
+        // session (e.g. pull-to-refresh), then the last selection restored
+        // from device storage (e.g. app restart), then the first participant.
+        const byParam     = routeConnectionId
+            ? nextParticipants.find((p) => p.id === routeConnectionId)
+            : undefined;
+        const byInMemory  = byParam
+            ? undefined
+            : nextParticipants.find((p) => p.id === selectedConnectionIdRef.current);
+        let selected = byParam ?? byInMemory;
+
+        if (!selected) {
+            const storedId = await getStoredSelectedConnectionId();
+            selected = nextParticipants.find((p) => p.id === storedId);
+        }
+
+        if (!selected) selected = nextParticipants[0];
+
+        selectedConnectionIdRef.current = selected.id;
+        setConnectionSummary(selected);
+        setConnectionLoading(false);
+        setStoredSelectedConnectionId(selected.id);
+
+        await loadReminderData(selected.id, selected.acceptedAt ?? new Date().toISOString());
+    }
+
+    useFocusEffect(useCallback(() => { loadDashboardData(); }, [routeConnectionId]));
 
     function handleCreateReminder() {
         if (Platform.OS === 'ios') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -689,7 +745,7 @@ export default function CaregiverDashboard() {
             router.push('/invite-recipient');
             return;
         }
-        router.push('/create-reminder');
+        router.push({ pathname: '/create-reminder', params: { connectionId: connectionSummary.id } });
     }
 
     // ── Connection card ─────────────────────────────────────────────────────
@@ -766,19 +822,64 @@ export default function CaregiverDashboard() {
             );
         }
 
+        // Accepted — the participant selector below replaces this card.
+        return null;
+    }
+
+    // ── Participant selector ────────────────────────────────────────────────
+    // Horizontal chips for every accepted participant, plus an Add chip.
+    // Selecting a chip filters the whole dashboard (today/progress/analytics/
+    // breakdown) to that participant — never mixed across participants.
+
+    function ParticipantSelector() {
+        if (participants.length === 0) return null;
+
+        const atFreeLimit = participants.length >= MAX_FREE_PARTICIPANTS;
+
         return (
-            <View style={[styles.connectionCard, styles.connectionCardAccepted, SHADOW.xs]}>
-                <View style={styles.connectionCardInner}>
-                    <View style={[styles.connectionIconWrap, { backgroundColor: C.successLight }]}>
-                        <Ionicons name="checkmark-circle" size={22} color={C.success} />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                        <Text style={styles.connectionLabel}>Connection</Text>
-                        <Text style={styles.connectionTitle}>{connectionSummary.recipientName}</Text>
-                        <Text style={styles.connectionText}>Connected · reminders are active.</Text>
-                    </View>
-                </View>
-            </View>
+            <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.participantSelector}
+                contentContainerStyle={styles.participantSelectorContent}
+            >
+                {participants.map((p) => {
+                    const selected = p.id === connectionSummary.id;
+                    return (
+                        <TouchableOpacity
+                            key={p.id}
+                            style={[styles.participantChip, selected && styles.participantChipActive]}
+                            onPress={() => selectParticipant(p)}
+                            activeOpacity={0.8}
+                        >
+                            <View style={[styles.participantAvatar, selected && styles.participantAvatarActive]}>
+                                <Text style={[styles.participantAvatarText, selected && styles.participantAvatarTextActive]}>
+                                    {(p.recipientName || '?').charAt(0).toUpperCase()}
+                                </Text>
+                            </View>
+                            <Text
+                                style={[styles.participantChipText, selected && styles.participantChipTextActive]}
+                                numberOfLines={1}
+                            >
+                                {p.recipientName}
+                            </Text>
+                        </TouchableOpacity>
+                    );
+                })}
+
+                <TouchableOpacity
+                    style={styles.addParticipantChip}
+                    onPress={() => router.push('/invite-recipient')}
+                    activeOpacity={0.8}
+                >
+                    <Ionicons
+                        name={atFreeLimit ? 'lock-closed-outline' : 'add'}
+                        size={18}
+                        color={C.primary}
+                    />
+                    <Text style={styles.addParticipantChipText}>Add</Text>
+                </TouchableOpacity>
+            </ScrollView>
         );
     }
 
@@ -1174,6 +1275,7 @@ export default function CaregiverDashboard() {
                 </View>
 
                 <ConnectionCard />
+                <ParticipantSelector />
 
                 {renderAnalytics()}
             </ScrollView>
@@ -1261,6 +1363,77 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
     },
     connectionCardPending:  { backgroundColor: '#FFFBEB', borderColor: '#FDE68A' },
     connectionCardAccepted: { backgroundColor: C.successLight, borderColor: '#A7F3D0' },
+
+    // ── Participant selector ──────────────────────────────────────────────────
+    participantSelector: {
+        marginBottom: 16,
+    },
+    participantSelectorContent: {
+        flexDirection: 'row',
+        gap: 10,
+        paddingRight: 4,
+    },
+    participantChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        backgroundColor: C.bgSurface,
+        borderRadius: RADIUS.full,
+        paddingVertical: 8,
+        paddingHorizontal: 14,
+        borderWidth: 1.5,
+        borderColor: C.border,
+        maxWidth: 180,
+    },
+    participantChipActive: {
+        backgroundColor: C.primaryLight,
+        borderColor: C.primary,
+    },
+    participantAvatar: {
+        width: 24,
+        height: 24,
+        borderRadius: RADIUS.full,
+        backgroundColor: C.bgAlt,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    participantAvatarActive: {
+        backgroundColor: C.primary,
+    },
+    participantAvatarText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: C.textMuted,
+    },
+    participantAvatarTextActive: {
+        color: C.textInverse,
+    },
+    participantChipText: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: C.textSecondary,
+        flexShrink: 1,
+    },
+    participantChipTextActive: {
+        color: C.primary,
+        fontWeight: '700',
+    },
+    addParticipantChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        paddingVertical: 8,
+        paddingHorizontal: 14,
+        borderRadius: RADIUS.full,
+        borderWidth: 1.5,
+        borderColor: C.border,
+        borderStyle: 'dashed',
+    },
+    addParticipantChipText: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: C.primary,
+    },
     connectionCardInner: {
         flexDirection: 'row',
         alignItems: 'flex-start',

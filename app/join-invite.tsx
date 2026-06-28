@@ -51,6 +51,34 @@ export default function JoinInviteScreen() {
             return;
         }
 
+        // RLS hides other people's connection rows, so an already-accepted
+        // invite is invisible to a plain SELECT/UPDATE from this account —
+        // this RPC only returns a status string (no row data) so we can give
+        // a clear, specific message instead of a generic "invalid code".
+        const { data: codeStatus, error: statusError } = await supabase
+            .rpc('check_invite_code', { p_code: normalizedCode });
+
+        if (statusError) {
+            setLoading(false);
+            Alert.alert('Invite error', statusError.message);
+            return;
+        }
+
+        if (codeStatus === 'not_found') {
+            setLoading(false);
+            Alert.alert('Invalid code', 'This invite code does not exist. Check it and try again.');
+            return;
+        }
+
+        if (codeStatus === 'accepted') {
+            setLoading(false);
+            Alert.alert(
+                'Invite already used',
+                'This invite has already been used. Ask your organizer for a new invite.'
+            );
+            return;
+        }
+
         const { data, error } = await supabase
             .from('connections')
             .update({
@@ -72,7 +100,11 @@ export default function JoinInviteScreen() {
         }
 
         if (!data) {
-            Alert.alert('Invalid code', 'This invite code does not exist or was already used.');
+            // Someone else claimed it between the check above and this update.
+            Alert.alert(
+                'Invite already used',
+                'This invite has already been used. Ask your organizer for a new invite.'
+            );
             return;
         }
 
@@ -160,6 +192,17 @@ export default function JoinInviteScreen() {
                                 <Ionicons name="arrow-forward" size={20} color={C.textInverse} />
                             </>
                         )}
+                    </TouchableOpacity>
+
+                    {/* Already have an account on a new phone? */}
+                    <TouchableOpacity
+                        style={styles.signInLink}
+                        onPress={() => router.push('/signin')}
+                        activeOpacity={0.7}
+                    >
+                        <Text style={styles.signInLinkText}>
+                            Already connected on another device? <Text style={styles.signInLinkTextBold}>Sign in</Text> instead.
+                        </Text>
                     </TouchableOpacity>
                 </ScrollView>
             </KeyboardAvoidingView>
@@ -303,5 +346,21 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
         fontSize: 17,
         fontWeight: '700',
         letterSpacing: -0.2,
+    },
+
+    // ── Sign-in link ──────────────────────────────────────────────────
+    signInLink: {
+        marginTop: 18,
+        paddingVertical: 8,
+        alignItems: 'center',
+    },
+    signInLinkText: {
+        fontSize: 13,
+        color: C.textMuted,
+        textAlign: 'center',
+    },
+    signInLinkTextBold: {
+        color: C.primary,
+        fontWeight: '700',
     },
 });

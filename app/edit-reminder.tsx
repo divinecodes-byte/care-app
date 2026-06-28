@@ -78,6 +78,8 @@ export default function EditReminderScreen() {
     const [frequency,         setFrequency]         = useState<Frequency>('daily');
     const [selectedDays,      setSelectedDays]      = useState<number[]>([]);
     const [noResponseMinutes, setNoResponseMinutes] = useState(15);
+    const [participantName,   setParticipantName]   = useState<string | null>(null);
+    const [connectionId,      setConnectionId]      = useState<string | null>(null);
 
     function toggleDay(iso: number) {
         setSelectedDays((prev) =>
@@ -103,7 +105,7 @@ export default function EditReminderScreen() {
 
         const { data: rem, error: remErr } = await supabase
             .from('reminders')
-            .select('id, connection_id, caregiver_id, title, reminder_type, notes, time_of_day, frequency, days_of_week, no_response_minutes')
+            .select('id, connection_id, caregiver_id, recipient_id, title, reminder_type, notes, time_of_day, frequency, days_of_week, no_response_minutes')
             .eq('id', reminderId)
             .eq('caregiver_id', user.id)
             .eq('is_active', true)
@@ -114,6 +116,14 @@ export default function EditReminderScreen() {
             setPageLoading(false);
             return;
         }
+
+        const { data: recipientProfile } = await supabase
+            .from('profiles')
+            .select('full_name')
+            .eq('id', rem.recipient_id)
+            .maybeSingle();
+        setParticipantName(recipientProfile?.full_name || 'Participant');
+        setConnectionId(rem.connection_id);
 
         setTitle(rem.title);
         setReminderType(rem.reminder_type as ReminderType);
@@ -164,7 +174,11 @@ export default function EditReminderScreen() {
             return;
         }
 
-        router.replace('/caregiver-dashboard');
+        router.replace(
+            connectionId
+                ? { pathname: '/caregiver-dashboard', params: { connectionId } }
+                : '/caregiver-dashboard'
+        );
     }
 
     function confirmDeactivate() {
@@ -193,7 +207,11 @@ export default function EditReminderScreen() {
             return;
         }
 
-        router.replace('/caregiver-dashboard');
+        router.replace(
+            connectionId
+                ? { pathname: '/caregiver-dashboard', params: { connectionId } }
+                : '/caregiver-dashboard'
+        );
     }
 
     const inputStyle = (field: string) => [
@@ -246,6 +264,21 @@ export default function EditReminderScreen() {
                         <Text style={styles.subheading}>
                             Changes apply to future reminders. Past logs are preserved.
                         </Text>
+
+                        {/* ── Participant (read-only for MVP) ─────────────── */}
+                        {participantName && (
+                            <View style={styles.participantBanner}>
+                                <View style={styles.participantAvatar}>
+                                    <Text style={styles.participantAvatarText}>
+                                        {participantName.charAt(0).toUpperCase()}
+                                    </Text>
+                                </View>
+                                <View>
+                                    <Text style={styles.participantBannerLabel}>For</Text>
+                                    <Text style={styles.participantBannerName}>{participantName}</Text>
+                                </View>
+                            </View>
+                        )}
 
                         {/* ── Section 1: What ─────────────────────────────── */}
                         <View style={[styles.sectionCard, SHADOW.xs]}>
@@ -533,6 +566,43 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
         lineHeight: 22,
         letterSpacing: -0.1,
         marginBottom: 24,
+    },
+
+    // ── Participant banner ───────────────────────────────────────────────────
+    participantBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        backgroundColor: C.bgAlt,
+        borderRadius: RADIUS.lg,
+        paddingVertical: 10,
+        paddingHorizontal: 14,
+        marginBottom: 14,
+    },
+    participantAvatar: {
+        width: 32,
+        height: 32,
+        borderRadius: RADIUS.full,
+        backgroundColor: C.primaryLight,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    participantAvatarText: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: C.primary,
+    },
+    participantBannerLabel: {
+        fontSize: 11,
+        fontWeight: '600',
+        color: C.textMuted,
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+    },
+    participantBannerName: {
+        fontSize: 15,
+        fontWeight: '700',
+        color: C.textPrimary,
     },
 
     // ── Section cards ─────────────────────────────────────────────────────────

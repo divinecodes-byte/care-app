@@ -16,6 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { RADIUS, SHADOW, T, ThemeColors } from '@/constants/theme';
+import { MAX_FREE_PARTICIPANTS } from '@/lib/limits';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 
@@ -38,26 +39,35 @@ const HOW_IT_WORKS = [
 export default function InviteRecipientScreen() {
     const C = useThemeColors();
     const styles = useMemo(() => createStyles(C), [C]);
-    const [inviteCode, setInviteCode] = useState('');
-    const [loading, setLoading]       = useState(false);
+    const [inviteCode, setInviteCode]       = useState('');
+    const [loading, setLoading]             = useState(false);
+    // null while loading; once resolved, the Free-plan limit gate uses this.
+    const [acceptedCount, setAcceptedCount] = useState<number | null>(null);
+    // The pending connection row created by *this* screen visit. Regenerating
+    // the code while still here updates this same row; it is intentionally
+    // never restored from a previous visit — each "Add Participant" action
+    // is a fresh invite for a distinct participant, never a reused one.
+    const [draftConnectionId, setDraftConnectionId] = useState<string | null>(null);
 
-    // Restore any existing pending invite so the user sees their code immediately
-    // and we never create duplicate pending connection rows.
+    // Check how many accepted participants this organizer already has, to
+    // gate against the Free plan limit — creating another invite that later
+    // gets accepted would push them over it.
     useEffect(() => {
         (async () => {
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) return;
-            const { data } = await supabase
+
+            const { count } = await supabase
                 .from('connections')
-                .select('invite_code')
+                .select('id', { count: 'exact', head: true })
                 .eq('caregiver_id', user.id)
-                .eq('status', 'pending')
-                .order('created_at', { ascending: false })
-                .limit(1)
-                .maybeSingle();
-            if (data?.invite_code) setInviteCode(data.invite_code);
+                .eq('status', 'accepted')
+                .not('recipient_id', 'is', null);
+            setAcceptedCount(count ?? 0);
         })();
     }, []);
+
+    const atFreeLimit = acceptedCount !== null && acceptedCount >= MAX_FREE_PARTICIPANTS;
 
     async function createInviteCode() {
         if (Platform.OS === 'ios') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -73,27 +83,27 @@ export default function InviteRecipientScreen() {
 
         const code = generateInviteCode();
 
-        // Reuse an existing pending row (update its code) rather than inserting a
-        // new one. This prevents orphaned pending connections from accumulating.
-        const { data: existing } = await supabase
-            .from('connections')
-            .select('id')
-            .eq('caregiver_id', user.id)
-            .eq('status', 'pending')
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-
-        const { error } = existing?.id
+        // Only regenerate in place if we already created a pending row earlier
+        // in *this* screen visit (e.g. tapping "Generate New Code" again before
+        // sharing). Otherwise always insert a brand new row — each Add
+        // Participant action is a separate invite for a separate participant,
+        // never a reuse of an older pending invite.
+        const { data: inserted, error } = draftConnectionId
             ? await supabase
                   .from('connections')
                   .update({ invite_code: code })
-                  .eq('id', existing.id)
-            : await supabase.from('connections').insert({
-                  caregiver_id: user.id,
-                  invite_code:  code,
-                  status:       'pending',
-              });
+                  .eq('id', draftConnectionId)
+                  .select('id')
+                  .maybeSingle()
+            : await supabase
+                  .from('connections')
+                  .insert({
+                      caregiver_id: user.id,
+                      invite_code:  code,
+                      status:       'pending',
+                  })
+                  .select('id')
+                  .maybeSingle();
 
         setLoading(false);
 
@@ -105,6 +115,7 @@ export default function InviteRecipientScreen() {
             return;
         }
 
+        if (inserted?.id) setDraftConnectionId(inserted.id);
         setInviteCode(code);
     }
 
@@ -120,6 +131,64 @@ export default function InviteRecipientScreen() {
     }
 
     const hasCode = inviteCode.length > 0;
+
+    if (atFreeLimit) {
+        return (
+            <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+                <ScrollView
+                    contentContainerStyle={styles.content}
+                    showsVerticalScrollIndicator={false}
+                >
+                    {/* Back */}
+                    <TouchableOpacity
+                        style={styles.backButton}
+                        onPress={() => router.back()}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                        <Ionicons name="chevron-back" size={22} color={C.primary} />
+                        <Text style={styles.backText}>Back</Text>
+                    </TouchableOpacity>
+
+                    {/* Upgrade placeholder — no real purchase flow yet */}
+                    <View style={styles.upgradeIconWrap}>
+                        <Ionicons name="sparkles" size={28} color={C.primary} />
+                    </View>
+                    <Text style={styles.heading}>Tavora Plus</Text>
+                    <Text style={styles.subheading}>
+                        The Free plan includes {MAX_FREE_PARTICIPANTS} participant. Upgrade to Tavora Plus
+                        to connect with more people and manage all their reminders from one dashboard.
+                    </Text>
+
+                    <View style={[styles.upgradeCard, SHADOW.sm]}>
+                        <View style={styles.upgradeRow}>
+                            <Ionicons name="people-outline" size={18} color={C.primary} />
+                            <Text style={styles.upgradeRowText}>Unlimited participants</Text>
+                        </View>
+                        <View style={styles.upgradeRow}>
+                            <Ionicons name="stats-chart-outline" size={18} color={C.primary} />
+                            <Text style={styles.upgradeRowText}>Per-participant analytics</Text>
+                        </View>
+                        <View style={styles.upgradeRow}>
+                            <Ionicons name="notifications-outline" size={18} color={C.primary} />
+                            <Text style={styles.upgradeRowText}>Priority reminder delivery</Text>
+                        </View>
+                    </View>
+
+                    <TouchableOpacity style={[styles.generateButton, styles.generateButtonPrimary, SHADOW.primary]} disabled>
+                        <Text style={styles.generateButtonTextPrimary}>Coming soon</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                        style={styles.doneButton}
+                        onPress={() => router.back()}
+                        activeOpacity={0.7}
+                    >
+                        <Text style={styles.doneButtonText}>Not now</Text>
+                    </TouchableOpacity>
+                </ScrollView>
+            </SafeAreaView>
+        );
+    }
 
     return (
         <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
@@ -285,6 +354,34 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
         lineHeight: 22,
         letterSpacing: -0.1,
         marginBottom: 28,
+    },
+
+    // ── Upgrade placeholder ───────────────────────────────────────────
+    upgradeIconWrap: {
+        width: 52,
+        height: 52,
+        borderRadius: RADIUS.lg,
+        backgroundColor: C.primaryLight,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 18,
+    },
+    upgradeCard: {
+        backgroundColor: C.bgSurface,
+        borderRadius: RADIUS.xl,
+        padding: 20,
+        marginBottom: 20,
+        gap: 14,
+    },
+    upgradeRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+    },
+    upgradeRowText: {
+        fontSize: 15,
+        color: C.textPrimary,
+        fontWeight: '600',
     },
 
     // ── Code card ─────────────────────────────────────────────────────
