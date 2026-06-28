@@ -79,7 +79,7 @@ const TYPE_ICONS: Record<string, string> = {
 
 const STATUS_LABELS: Record<ReminderStatus, string> = {
     pending: 'Pending',
-    taken:   'Taken ✓',
+    taken:   'Completed ✓',
     snoozed: 'Snoozed',
     skipped: 'Skipped',
     missed:  'Missed',
@@ -466,7 +466,7 @@ export default function ReminderAlertScreen() {
                             color={todayStatus === 'taken' ? '#4ADE80' : 'rgba(255,255,255,0.4)'}
                         />
                         <Text style={styles.respondedText}>
-                            {todayStatus === 'taken' ? 'Marked as taken' : 'Skipped for today'}
+                            {todayStatus === 'taken' ? 'Marked as completed' : 'Skipped for today'}
                         </Text>
                     </View>
                 ) : (
@@ -477,7 +477,7 @@ export default function ReminderAlertScreen() {
                             activeOpacity={0.88}
                         >
                             <Ionicons name="checkmark-circle" size={24} color="#FFFFFF" />
-                            <Text style={styles.takenText}>Taken</Text>
+                            <Text style={styles.takenText}>Done</Text>
                         </TouchableOpacity>
 
                         <TouchableOpacity

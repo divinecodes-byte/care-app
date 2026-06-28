@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { RADIUS, SHADOW, T, ThemeColors } from '@/constants/theme';
+import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
 import { useThemeColors } from '@/lib/theme';
 import { buildTimeString, TimePickerField } from '@/components/TimePickerField';
 import { DAY_OPTIONS, daysForFrequency, Frequency } from '@/lib/frequency';
@@ -190,7 +190,7 @@ export default function CreateReminderScreen() {
             return;
         }
 
-        Alert.alert('Reminder saved', `This reminder is now linked to ${selected.recipientName}.`);
+        Alert.alert('Reminder saved', `Reminder created for ${selected.recipientName}.`);
         router.replace({ pathname: '/caregiver-dashboard', params: { connectionId: selected.connectionId } });
     }
 
@@ -312,7 +312,6 @@ export default function CreateReminderScreen() {
                         <Text style={styles.label}>Reminder name</Text>
                         <TextInput
                             style={inputStyle('title')}
-                            placeholder="e.g. Morning check-in"
                             placeholderTextColor={C.textMuted}
                             value={title}
                             onChangeText={setTitle}
@@ -458,7 +457,7 @@ export default function CreateReminderScreen() {
                         <Text style={[styles.label, { marginTop: 18 }]}>Notes <Text style={styles.labelOptional}>(optional)</Text></Text>
                         <TextInput
                             style={[inputStyle('notes'), styles.notesInput]}
-                            placeholder="e.g. Take with food and a full glass of water."
+                            placeholder="Add any extra details"
                             placeholderTextColor={C.textMuted}
                             value={notes}
                             onChangeText={setNotes}

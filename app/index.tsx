@@ -5,7 +5,7 @@ import { useEffect, useMemo } from 'react';
 import { Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { RADIUS, SHADOW, T, ThemeColors } from '@/constants/theme';
+import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 

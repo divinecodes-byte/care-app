@@ -26,7 +26,7 @@ import {
     scheduleSnoozeNotification,
 } from '@/lib/notifications';
 import { isDueOnDate } from '@/lib/frequency';
-import { getFirstEligibleDateString, isPastNoResponseWindow } from '@/lib/reminderStatus';
+import { formatReminderStatus, getFirstEligibleDateString, isPastNoResponseWindow } from '@/lib/reminderStatus';
 
 type ReminderStatus = 'pending' | 'taken' | 'snoozed' | 'skipped' | 'missed';
 
@@ -86,12 +86,7 @@ function formatTime(time: string) {
 }
 
 function formatStatus(status?: ReminderStatus) {
-    if (!status || status === 'pending') return 'Pending';
-    if (status === 'taken')   return 'Taken';
-    if (status === 'snoozed') return 'Snoozed';
-    if (status === 'skipped') return 'Skipped';
-    if (status === 'missed')  return 'Missed';
-    return 'Pending';
+    return formatReminderStatus(status ?? 'pending');
 }
 
 function shouldShowToday(daysOfWeek: number[]) {
@@ -523,7 +518,7 @@ export default function RecipientDashboard() {
                             ) : reminder.today_status === 'taken' ? (
                                 <View style={styles.respondedBox}>
                                     <Ionicons name="checkmark-circle" size={20} color={C.success} />
-                                    <Text style={[styles.respondedText, { color: C.success }]}>Marked as taken</Text>
+                                    <Text style={[styles.respondedText, { color: C.success }]}>Marked as completed</Text>
                                 </View>
                             ) : reminder.today_status === 'skipped' ? (
                                 <View style={styles.respondedBox}>
@@ -532,14 +527,14 @@ export default function RecipientDashboard() {
                                 </View>
                             ) : (
                                 <View style={styles.actionArea}>
-                                    {/* Primary action — Taken */}
+                                    {/* Primary action — Done */}
                                     <TouchableOpacity
                                         style={[styles.takenButton, SHADOW.sm]}
                                         onPress={() => saveReminderAction(reminder, 'taken')}
                                         activeOpacity={0.88}
                                     >
                                         <Ionicons name="checkmark-circle" size={22} color="#FFFFFF" />
-                                        <Text style={styles.takenButtonText}>Taken</Text>
+                                        <Text style={styles.takenButtonText}>Done</Text>
                                     </TouchableOpacity>
 
                                     {/* Secondary actions */}

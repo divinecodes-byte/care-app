@@ -19,6 +19,7 @@ import { RADIUS, SHADOW, T, ThemeColors } from '@/constants/theme';
 import { formatFrequency as formatFrequencyDays, isDueOnDate } from '@/lib/frequency';
 import { MAX_FREE_PARTICIPANTS } from '@/lib/limits';
 import { registerCaregiverPushToken } from '@/lib/notifications';
+import { formatReminderStatus } from '@/lib/reminderStatus';
 import { getStoredSelectedConnectionId, setStoredSelectedConnectionId } from '@/lib/selected-participant';
 import { supabase } from '@/lib/supabase';
 import { useThemeColors } from '@/lib/theme';
@@ -152,12 +153,7 @@ function formatTime(time: string): string {
     return `${h}:${mStr} ${suffix}`;
 }
 
-function formatStatus(status: ReminderStatus): string {
-    const map: Record<ReminderStatus, string> = {
-        taken: 'Taken', snoozed: 'Snoozed', skipped: 'Skipped', missed: 'Missed', pending: 'Pending',
-    };
-    return map[status] ?? 'Pending';
-}
+const formatStatus = formatReminderStatus;
 
 function formatFrequency(freq: Reminder['frequency'], daysOfWeek: number[]): string {
     return formatFrequencyDays(freq, daysOfWeek);
@@ -434,7 +430,7 @@ export default function CaregiverDashboard() {
         const adherenceColor = hasCountable ? getAdherenceColor(item.adherence) : C.textMuted;
 
         const chips = [
-            item.completed > 0 ? { label: `${item.completed} Taken`,   bg: '#DCFCE7', color: '#15803D' } : null,
+            item.completed > 0 ? { label: `${item.completed} Completed`, bg: '#DCFCE7', color: '#15803D' } : null,
             item.missed    > 0 ? { label: `${item.missed} Missed`,     bg: '#FEE2E2', color: '#B91C1C' } : null,
             item.skipped   > 0 ? { label: `${item.skipped} Skipped`,   bg: '#FEF3C7', color: '#B45309' } : null,
             item.snoozed   > 0 ? { label: `${item.snoozed} Snoozed`,   bg: '#DBEAFE', color: '#1D4ED8' } : null,
@@ -573,7 +569,7 @@ export default function CaregiverDashboard() {
             .order('time_of_day', { ascending: true });
 
         if (remindersError) {
-            console.log(remindersError.message);
+            console.error('[caregiver-dashboard] reminders fetch failed:', remindersError.message);
             setDashboardLoading(false);
             return;
         }
@@ -603,7 +599,7 @@ export default function CaregiverDashboard() {
                 .lte('occurrence_date', getLocalDateString(latestDate))
                 .in('reminder_id', reminderIds);
 
-            if (logsError) console.log(logsError.message);
+            if (logsError) console.error('[caregiver-dashboard] logs fetch failed:', logsError.message);
             else logs = (logsData || []) as ReminderLog[];
         }
 
@@ -662,7 +658,7 @@ export default function CaregiverDashboard() {
             .limit(50);
 
         if (connectionError) {
-            console.log(connectionError.message);
+            console.error('[caregiver-dashboard] connections fetch failed:', connectionError.message);
             setConnectionLoading(false);
             setDashboardLoading(false);
             return;
@@ -696,7 +692,7 @@ export default function CaregiverDashboard() {
             .select('id, full_name')
             .in('id', recipientIds);
 
-        if (profileError) console.log(profileError.message);
+        if (profileError) console.error('[caregiver-dashboard] profiles fetch failed:', profileError.message);
 
         const nameById = new Map((recipientProfiles ?? []).map((p) => [p.id, p.full_name]));
 
@@ -909,7 +905,7 @@ export default function CaregiverDashboard() {
                 <View style={[styles.card, SHADOW.xs]}>
                     <View style={styles.loadingState}>
                         <ActivityIndicator color={C.primary} />
-                        <Text style={styles.loadingText}>Loading care activity…</Text>
+                        <Text style={styles.loadingText}>Loading reminders…</Text>
                     </View>
                 </View>
             );
@@ -997,7 +993,7 @@ export default function CaregiverDashboard() {
                                 <View style={styles.inlineEmpty}>
                                     <Ionicons name="add-circle-outline" size={20} color={C.textMuted} />
                                     <Text style={styles.inlineEmptyText}>
-                                        Tap + above to create the first reminder.
+                                        Create your first reminder to get started.
                                     </Text>
                                 </View>
                             </>
@@ -1023,7 +1019,7 @@ export default function CaregiverDashboard() {
                                 <View style={styles.metricRow}>
                                     <MetricTile
                                         count={todayData.takenCount}
-                                        label="Taken"
+                                        label="Completed"
                                         color="#15803D"
                                         bg="#DCFCE7"
                                     />

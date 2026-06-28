@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { RADIUS, SHADOW, T, ThemeColors } from '@/constants/theme';
+import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 

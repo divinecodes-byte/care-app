@@ -277,7 +277,7 @@ export async function registerCaregiverPushToken(caregiverId: string): Promise<P
         return {
             ok: false,
             reason: 'no-permission',
-            message: 'Enable notifications in Settings to receive caregiver alerts.',
+            message: 'Enable notifications in Settings to receive reminder alerts.',
         };
     }
 
@@ -332,27 +332,4 @@ export async function registerCaregiverPushToken(caregiverId: string): Promise<P
                 : 'Could not register for push notifications. Preferences are saved.',
         };
     }
-}
-
-// ─── Dev helper ───────────────────────────────────────────────────────────────
-
-/**
- * Schedule a one-shot test notification 10 seconds from now.
- * Passes the real reminderId so it opens the genuine alert screen.
- * Remove call sites before shipping to production.
- */
-export async function scheduleTestNotification(reminder: ReminderForScheduling): Promise<void> {
-    await Notifications.scheduleNotificationAsync({
-        identifier: `care-test-${reminder.id}-${Date.now()}`,
-        content: {
-            title: `[Test] ${reminder.title}`,
-            body:  'This is a test care reminder notification.',
-            data:  { reminderId: reminder.id },
-            sound: 'default',
-        },
-        trigger: {
-            type:    Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
-            seconds: 10,
-        },
-    });
 }

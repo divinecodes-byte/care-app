@@ -11,9 +11,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { RADIUS, SHADOW, T, ThemeColors } from '@/constants/theme';
+import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
 import { useThemeColors } from '@/lib/theme';
 import { formatFrequency as formatFrequencyDays, isDueOnDate } from '@/lib/frequency';
+import { formatReminderStatus } from '@/lib/reminderStatus';
 import { supabase } from '@/lib/supabase';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -281,12 +282,7 @@ function statusBg(s: ReminderStatus, C: ThemeColors): string {
     return C.bgAlt;
 }
 
-function statusLabel(s: ReminderStatus): string {
-    const map: Record<ReminderStatus, string> = {
-        taken: 'Taken', missed: 'Missed', skipped: 'Skipped', snoozed: 'Snoozed', pending: 'Pending',
-    };
-    return map[s];
-}
+const statusLabel = formatReminderStatus;
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
@@ -527,7 +523,7 @@ export default function ReminderDetailsScreen() {
 
                         <View style={styles.countGrid}>
                             {[
-                                { label: 'Taken',   value: stats.taken,   color: '#15803D', bg: '#DCFCE7' },
+                                { label: 'Completed', value: stats.taken,   color: '#15803D', bg: '#DCFCE7' },
                                 { label: 'Missed',  value: stats.missed,  color: '#B91C1C', bg: '#FEE2E2' },
                                 { label: 'Skipped', value: stats.skipped, color: '#B45309', bg: '#FEF3C7' },
                                 { label: 'Snoozed', value: stats.snoozed, color: '#1D4ED8', bg: '#DBEAFE' },
@@ -562,7 +558,7 @@ export default function ReminderDetailsScreen() {
                                 <Ionicons name="hourglass-outline" size={28} color={C.textMuted} />
                                 <Text style={styles.emptyHistoryTitle}>No history yet</Text>
                                 <Text style={styles.emptyHistoryText}>
-                                    This reminder is too new or hasn't had any eligible occurrences this month. History will appear here as days pass.
+                                    History will appear here once this reminder has had a few days to run.
                                 </Text>
                             </View>
                         ) : (

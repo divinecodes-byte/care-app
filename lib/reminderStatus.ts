@@ -3,6 +3,24 @@
 // caregiver-dashboard and reminder-details have equivalent inline helpers for
 // historical dates — do not consolidate those without verifying them first.
 
+export type DisplayReminderStatus = 'pending' | 'taken' | 'snoozed' | 'skipped' | 'missed';
+
+/**
+ * User-facing label for a reminder status. The internal/DB value stays
+ * `taken` — only the displayed word changed from "Taken" to "Completed"
+ * now that Tavora covers more than medication reminders.
+ */
+export function formatReminderStatus(status: DisplayReminderStatus): string {
+    const map: Record<DisplayReminderStatus, string> = {
+        taken:   'Completed',
+        snoozed: 'Snoozed',
+        skipped: 'Skipped',
+        missed:  'Missed',
+        pending: 'Pending',
+    };
+    return map[status] ?? 'Pending';
+}
+
 /** "YYYY-MM-DD" in local time */
 export function getTodayDateString(): string {
     const d = new Date();

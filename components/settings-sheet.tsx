@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { RADIUS, T, ThemeColors } from '@/constants/theme';
+import { RADIUS, ThemeColors } from '@/constants/theme';
 import { registerCaregiverPushToken } from '@/lib/notifications';
 import { supabase } from '@/lib/supabase';
 import { AppearanceMode, useThemeColors, useThemeMode } from '@/lib/theme';
