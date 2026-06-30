@@ -17,6 +17,8 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { RADIUS, ThemeColors } from '@/constants/theme';
+import { useLanguage } from '@/lib/i18n/context';
+import { LanguageMode } from '@/lib/i18n/storage';
 import { registerCaregiverPushToken } from '@/lib/notifications';
 import { supabase } from '@/lib/supabase';
 import { AppearanceMode, useThemeColors, useThemeMode } from '@/lib/theme';
@@ -29,10 +31,16 @@ const SHEET_HEIGHT  = Math.round(SCREEN_HEIGHT * 0.85);
 const HELP_URL    = 'https://sites.google.com/view/tavora-help';
 const PRIVACY_URL = 'https://sites.google.com/view/tavora-privacy';
 
-const APPEARANCE_OPTIONS: { value: AppearanceMode; label: string; icon: string }[] = [
-    { value: 'system', label: 'System', icon: 'phone-portrait-outline' },
-    { value: 'light',  label: 'Light',  icon: 'sunny-outline' },
-    { value: 'dark',   label: 'Dark',   icon: 'moon-outline' },
+const APPEARANCE_OPTIONS: { value: AppearanceMode; labelKey: string; icon: string }[] = [
+    { value: 'system', labelKey: 'settings.appearanceSystem', icon: 'phone-portrait-outline' },
+    { value: 'light',  labelKey: 'settings.appearanceLight',  icon: 'sunny-outline' },
+    { value: 'dark',   labelKey: 'settings.appearanceDark',   icon: 'moon-outline' },
+];
+
+const LANGUAGE_OPTIONS: { value: LanguageMode; labelKey: string; icon: string }[] = [
+    { value: 'system', labelKey: 'settings.languageSystem',  icon: 'phone-portrait-outline' },
+    { value: 'en',     labelKey: 'settings.languageEnglish', icon: 'globe-outline' },
+    { value: 'es',     labelKey: 'settings.languageSpanish', icon: 'globe-outline' },
 ];
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -61,6 +69,7 @@ export function SettingsSheet({ visible, onClose }: Props) {
     const C = useThemeColors();
     const styles = useMemo(() => createStyles(C), [C]);
     const { mode: appearanceMode, setMode: setAppearanceMode } = useThemeMode();
+    const { languageMode, setLanguageMode, t } = useLanguage();
 
     const [loading,    setLoading]    = useState(true);
     const [signingOut, setSigningOut] = useState(false);
@@ -91,7 +100,7 @@ export function SettingsSheet({ visible, onClose }: Props) {
             .maybeSingle();
 
         const role = profileRow?.role ?? '';
-        let connectionStatus = 'No connection';
+        let connectionStatus = t('settings.noConnection');
         let connectionOk     = false;
 
         if (role === 'caregiver') {
@@ -115,8 +124,8 @@ export function SettingsSheet({ visible, onClose }: Props) {
                 const names = (recipientProfiles ?? []).map((p) => p.full_name).filter(Boolean);
                 connectionStatus =
                     names.length === 1
-                        ? `Connected to ${names[0]}`
-                        : `Connected to ${names.length} participants`;
+                        ? t('settings.connectedToOne', { name: names[0] })
+                        : t('settings.connectedToMany', { count: names.length });
                 connectionOk = true;
             } else {
                 const { data: pending } = await supabase
@@ -127,8 +136,8 @@ export function SettingsSheet({ visible, onClose }: Props) {
                     .limit(1)
                     .maybeSingle();
                 connectionStatus = pending
-                    ? 'Pending — awaiting acceptance'
-                    : 'No participant connected';
+                    ? t('settings.pendingConnection')
+                    : t('settings.noParticipantConnected');
             }
 
             setUserId(user.id);
@@ -154,10 +163,12 @@ export function SettingsSheet({ visible, onClose }: Props) {
                     .select('full_name')
                     .eq('id', conn.caregiver_id)
                     .maybeSingle();
-                connectionStatus = `Connected to ${caregiverProfile?.full_name ?? 'Organizer'}`;
+                connectionStatus = t('settings.connectedToOne', {
+                    name: caregiverProfile?.full_name ?? t('settings.organizerRole'),
+                });
                 connectionOk     = true;
             } else {
-                connectionStatus = 'No organizer connected';
+                connectionStatus = t('settings.noOrganizerConnected');
             }
         }
 
@@ -234,8 +245,8 @@ export function SettingsSheet({ visible, onClose }: Props) {
     }
 
     const roleLabel =
-        profile.role === 'caregiver' ? 'Organizer'
-        : profile.role === 'recipient' ? 'Participant'
+        profile.role === 'caregiver' ? t('settings.organizerRole')
+        : profile.role === 'recipient' ? t('settings.participantRole')
         : profile.role;
 
     function getInitials(name: string): string {
@@ -342,7 +353,7 @@ export function SettingsSheet({ visible, onClose }: Props) {
 
                     {/* Header */}
                     <View style={styles.header}>
-                        <Text style={styles.title}>Settings</Text>
+                        <Text style={styles.title}>{t('settings.title')}</Text>
                         <TouchableOpacity
                             style={styles.closeBtn}
                             onPress={onClose}
@@ -356,7 +367,7 @@ export function SettingsSheet({ visible, onClose }: Props) {
                     {loading ? (
                         <View style={styles.loadingBox}>
                             <ActivityIndicator color={C.primary} />
-                            <Text style={styles.loadingText}>Loading profile…</Text>
+                            <Text style={styles.loadingText}>{t('settings.loadingProfile')}</Text>
                         </View>
                     ) : (
                         <ScrollView
@@ -391,23 +402,23 @@ export function SettingsSheet({ visible, onClose }: Props) {
                             </View>
 
                             {/* ── Profile ────────────────────────────────────── */}
-                            <SectionLabel text="Profile" />
+                            <SectionLabel text={t('settings.sectionProfile')} />
                             <Card>
                                 <Row
                                     icon="person-outline"
-                                    label="Name"
+                                    label={t('settings.nameLabel')}
                                     value={profile.fullName}
                                 />
                                 <Sep />
                                 <Row
                                     icon="mail-outline"
-                                    label="Email"
+                                    label={t('settings.emailLabel')}
                                     value={profile.email}
                                 />
                                 <Sep />
                                 <Row
                                     icon="shield-checkmark-outline"
-                                    label="Role"
+                                    label={t('settings.roleLabel')}
                                     value={roleLabel}
                                     valueStyle={
                                         profile.role === 'caregiver'
@@ -418,7 +429,7 @@ export function SettingsSheet({ visible, onClose }: Props) {
                                 <Sep />
                                 <Row
                                     icon="link-outline"
-                                    label="Connection"
+                                    label={t('settings.connectionLabel')}
                                     value={profile.connectionStatus}
                                     valueStyle={profile.connectionOk ? styles.valConnected : undefined}
                                 />
@@ -427,32 +438,32 @@ export function SettingsSheet({ visible, onClose }: Props) {
                             {/* ── Notifications (caregiver) ── */}
                             {profile.role === 'caregiver' ? (
                                 <>
-                                    <SectionLabel text="Notifications" />
+                                    <SectionLabel text={t('settings.sectionNotifications')} />
                                     <Card>
                                         <ToggleRow
                                             icon="alert-circle-outline"
-                                            label="Missed reminders"
+                                            label={t('settings.notifyMissed')}
                                             value={notifPrefs?.notify_missed ?? true}
                                             onChange={v => updateNotifPref('notify_missed', v)}
                                         />
                                         <Sep />
                                         <ToggleRow
                                             icon="ban-outline"
-                                            label="Skipped reminders"
+                                            label={t('settings.notifySkipped')}
                                             value={notifPrefs?.notify_skipped ?? true}
                                             onChange={v => updateNotifPref('notify_skipped', v)}
                                         />
                                         <Sep />
                                         <ToggleRow
                                             icon="time-outline"
-                                            label="Snoozed reminders"
+                                            label={t('settings.notifySnoozed')}
                                             value={notifPrefs?.notify_snoozed ?? false}
                                             onChange={v => updateNotifPref('notify_snoozed', v)}
                                         />
                                         <Sep />
                                         <ToggleRow
                                             icon="checkmark-circle-outline"
-                                            label="Completed reminders"
+                                            label={t('settings.notifyCompleted')}
                                             value={notifPrefs?.notify_taken ?? false}
                                             onChange={v => updateNotifPref('notify_taken', v)}
                                         />
@@ -475,7 +486,7 @@ export function SettingsSheet({ visible, onClose }: Props) {
                             ) : null}
 
                             {/* ── Appearance ─────────────────────────────────── */}
-                            <SectionLabel text="Appearance" />
+                            <SectionLabel text={t('settings.sectionAppearance')} />
                             <Card>
                                 <View style={styles.appearanceRow}>
                                     {APPEARANCE_OPTIONS.map((option) => {
@@ -493,7 +504,34 @@ export function SettingsSheet({ visible, onClose }: Props) {
                                                     color={active ? C.primary : C.textMuted}
                                                 />
                                                 <Text style={[styles.appearanceChipText, active && styles.appearanceChipTextActive]}>
-                                                    {option.label}
+                                                    {t(option.labelKey)}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        );
+                                    })}
+                                </View>
+                            </Card>
+
+                            {/* ── Language ───────────────────────────────────── */}
+                            <SectionLabel text={t('settings.sectionLanguage')} />
+                            <Card>
+                                <View style={styles.appearanceRow}>
+                                    {LANGUAGE_OPTIONS.map((option) => {
+                                        const active = languageMode === option.value;
+                                        return (
+                                            <TouchableOpacity
+                                                key={option.value}
+                                                style={[styles.appearanceChip, active && styles.appearanceChipActive]}
+                                                onPress={() => setLanguageMode(option.value)}
+                                                activeOpacity={0.75}
+                                            >
+                                                <Ionicons
+                                                    name={option.icon as any}
+                                                    size={16}
+                                                    color={active ? C.primary : C.textMuted}
+                                                />
+                                                <Text style={[styles.appearanceChipText, active && styles.appearanceChipTextActive]}>
+                                                    {t(option.labelKey)}
                                                 </Text>
                                             </TouchableOpacity>
                                         );
@@ -502,19 +540,19 @@ export function SettingsSheet({ visible, onClose }: Props) {
                             </Card>
 
                             {/* ── Support ────────────────────────────────────── */}
-                            <SectionLabel text="Support" />
+                            <SectionLabel text={t('settings.sectionSupport')} />
                             <Card>
                                 <LinkRow
                                     icon="help-circle-outline"
-                                    label="Help & FAQ"
-                                    caption="Open help page"
+                                    label={t('settings.helpLabel')}
+                                    caption={t('settings.helpCaption')}
                                     onPress={() => Linking.openURL(HELP_URL)}
                                 />
                                 <Sep />
                                 <LinkRow
                                     icon="lock-closed-outline"
-                                    label="Privacy policy"
-                                    caption="View privacy policy"
+                                    label={t('settings.privacyLabel')}
+                                    caption={t('settings.privacyCaption')}
                                     onPress={() => Linking.openURL(PRIVACY_URL)}
                                 />
                             </Card>
@@ -531,7 +569,7 @@ export function SettingsSheet({ visible, onClose }: Props) {
                                 ) : (
                                     <>
                                         <Ionicons name="log-out-outline" size={18} color={C.error} />
-                                        <Text style={styles.signOutText}>Sign Out</Text>
+                                        <Text style={styles.signOutText}>{t('settings.signOut')}</Text>
                                     </>
                                 )}
                             </TouchableOpacity>

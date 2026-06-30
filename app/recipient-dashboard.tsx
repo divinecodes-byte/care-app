@@ -16,7 +16,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { SettingsSheet } from '@/components/settings-sheet';
-import { RADIUS, SHADOW, T, ThemeColors } from '@/constants/theme';
+import { RADIUS, SHADOW, SPACING, ThemeColors } from '@/constants/theme';
+import { useLanguage, useStatusLabel } from '@/lib/i18n/context';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 import {
@@ -26,7 +27,7 @@ import {
     scheduleSnoozeNotification,
 } from '@/lib/notifications';
 import { isDueOnDate } from '@/lib/frequency';
-import { formatReminderStatus, getFirstEligibleDateString, isPastNoResponseWindow } from '@/lib/reminderStatus';
+import { getFirstEligibleDateString, isPastNoResponseWindow } from '@/lib/reminderStatus';
 
 type ReminderStatus = 'pending' | 'taken' | 'snoozed' | 'skipped' | 'missed';
 
@@ -54,6 +55,15 @@ const TYPE_ICONS: Record<string, string> = {
     meal:        '🍽️',
     exercise:    '🏃',
     other:       '•',
+};
+
+const TYPE_LABEL_KEYS: Record<string, string> = {
+    medication:  'reminderForm.typeMedication',
+    hydration:   'reminderForm.typeHydration',
+    appointment: 'reminderForm.typeAppointment',
+    meal:        'reminderForm.typeMeal',
+    exercise:    'reminderForm.typeExercise',
+    other:       'reminderForm.typeOther',
 };
 
 // ─── Pure helpers (unchanged) ────────────────────────────────────────────────
@@ -85,10 +95,6 @@ function formatTime(time: string) {
     return `${hour}:${minuteString} ${suffix}`;
 }
 
-function formatStatus(status?: ReminderStatus) {
-    return formatReminderStatus(status ?? 'pending');
-}
-
 function shouldShowToday(daysOfWeek: number[]) {
     return isDueOnDate(daysOfWeek, new Date());
 }
@@ -103,33 +109,33 @@ function getStatusColors(status: ReminderStatus | undefined, C: ThemeColors) {
     return { bg: C.bgAlt, text: C.textMuted, accent: C.border };
 }
 
-function formatDayLabel() {
-    return new Date().toLocaleDateString(undefined, {
+function formatDayLabel(locale: string) {
+    return new Date().toLocaleDateString(locale, {
         weekday: 'long',
         month: 'short',
         day: 'numeric',
     });
 }
 
-function getGreeting(): string {
+function getGreeting(t: (key: string) => string): string {
     const hour = new Date().getHours();
-    if (hour < 5)  return 'Good night';
-    if (hour < 12) return 'Good morning';
-    if (hour < 17) return 'Good afternoon';
-    return 'Good evening';
+    if (hour < 5)  return t('participantDashboard.goodNight');
+    if (hour < 12) return t('participantDashboard.goodMorning');
+    if (hour < 17) return t('participantDashboard.goodAfternoon');
+    return t('participantDashboard.goodEvening');
 }
 
-function getTimeHint(reminder: Reminder): string | null {
+function getTimeHint(reminder: Reminder, t: (key: string, vars?: Record<string, string | number>) => string): string | null {
     const status = reminder.today_status;
 
     if (status === 'snoozed' && reminder.snoozed_until) {
         const until = new Date(reminder.snoozed_until);
-        if (until.getTime() <= Date.now()) return 'Snooze ended';
+        if (until.getTime() <= Date.now()) return t('participantDashboard.snoozeEnded');
         const h = until.getHours();
         const m = until.getMinutes();
         const suffix = h >= 12 ? 'PM' : 'AM';
         const displayH = h === 0 ? 12 : h > 12 ? h - 12 : h;
-        return `Until ${displayH}:${String(m).padStart(2, '0')} ${suffix}`;
+        return t('participantDashboard.until', { time: `${displayH}:${String(m).padStart(2, '0')} ${suffix}` });
     }
 
     if (status === 'pending') {
@@ -141,15 +147,17 @@ function getTimeHint(reminder: Reminder): string | null {
         if (diffMin > 60) {
             const hrs  = Math.floor(diffMin / 60);
             const mins = diffMin % 60;
-            return mins > 0 ? `in ${hrs}h ${mins}m` : `in ${hrs}h`;
+            return mins > 0
+                ? t('participantDashboard.inHoursMinutes', { h: hrs, m: mins })
+                : t('participantDashboard.inHours', { h: hrs });
         }
-        if (diffMin > 1)  return `in ${diffMin} min`;
-        if (diffMin >= 0) return 'now';
+        if (diffMin > 1)  return t('participantDashboard.inMinutes', { n: diffMin });
+        if (diffMin >= 0) return t('participantDashboard.now');
 
         // Past scheduled time but still inside the response window
         const missedAt   = new Date(scheduled.getTime() + reminder.no_response_minutes * 60 * 1000);
         const windowLeft = Math.round((missedAt.getTime() - Date.now()) / 60000);
-        if (windowLeft > 0) return `${windowLeft} min left`;
+        if (windowLeft > 0) return t('participantDashboard.minLeft', { n: windowLeft });
     }
 
     return null;
@@ -159,6 +167,8 @@ function getTimeHint(reminder: Reminder): string | null {
 
 export default function RecipientDashboard() {
     const C = useThemeColors();
+    const { t, language } = useLanguage();
+    const formatStatus = useStatusLabel();
     const styles = useMemo(() => createStyles(C), [C]);
     const [reminders, setReminders]               = useState<Reminder[]>([]);
     const [loading, setLoading]                   = useState(true);
@@ -186,7 +196,7 @@ export default function RecipientDashboard() {
 
         if (error) {
             setLoading(false);
-            Alert.alert('Reminder error', error.message);
+            Alert.alert(t('participantDashboard.reminderErrorTitle'), error.message);
             return;
         }
 
@@ -225,7 +235,7 @@ export default function RecipientDashboard() {
 
         if (logsError) {
             setLoading(false);
-            Alert.alert('Logs error', logsError.message);
+            Alert.alert(t('participantDashboard.logsErrorTitle'), logsError.message);
             return;
         }
 
@@ -333,7 +343,7 @@ export default function RecipientDashboard() {
         setSavingReminderId(null);
 
         if (error) {
-            Alert.alert('Save error', error.message);
+            Alert.alert(t('participantDashboard.saveErrorTitle'), error.message);
             return;
         }
 
@@ -374,9 +384,13 @@ export default function RecipientDashboard() {
             >
                 {/* Header */}
                 <View style={styles.header}>
-                    <View style={{ flex: 1 }}>
-                        <Text style={styles.heading}>{getGreeting()}</Text>
-                        <Text style={styles.subheading}>{formatDayLabel()}</Text>
+                    <View style={styles.headerTextBlock}>
+                        <Text style={styles.heading} numberOfLines={2} adjustsFontSizeToFit minimumFontScale={0.85}>
+                            {getGreeting(t)}
+                        </Text>
+                        <Text style={styles.subheading} numberOfLines={1}>
+                            {formatDayLabel(language === 'es' ? 'es-ES' : 'en-US')}
+                        </Text>
                     </View>
                     <TouchableOpacity
                         style={styles.alertIconButton}
@@ -397,8 +411,8 @@ export default function RecipientDashboard() {
                             <View style={styles.progressTextRow}>
                                 <Text style={styles.progressLabel}>
                                     {done === total
-                                        ? 'All done for today'
-                                        : `${done} of ${total} done today`}
+                                        ? t('participantDashboard.allDoneToday')
+                                        : t('participantDashboard.doneOfTotalToday', { done, total })}
                                 </Text>
                                 <Text style={styles.progressPct}>{pct}%</Text>
                             </View>
@@ -419,7 +433,7 @@ export default function RecipientDashboard() {
                     <View style={styles.notifDeniedBanner}>
                         <Ionicons name="notifications-off-outline" size={16} color="#92400E" />
                         <Text style={styles.notifDeniedText}>
-                            Notifications are off. Enable them in Settings to receive reminder alerts.
+                            {t('participantDashboard.notifDeniedText')}
                         </Text>
                     </View>
                 )}
@@ -430,8 +444,8 @@ export default function RecipientDashboard() {
                         <View style={styles.emptyIconWrap}>
                             <ActivityIndicator color={C.primary} size="large" />
                         </View>
-                        <Text style={styles.emptyTitle}>Loading your reminders…</Text>
-                        <Text style={styles.emptyText}>Just a moment.</Text>
+                        <Text style={styles.emptyTitle}>{t('participantDashboard.loadingReminders')}</Text>
+                        <Text style={styles.emptyText}>{t('participantDashboard.justAMoment')}</Text>
                     </View>
                 )}
 
@@ -441,9 +455,9 @@ export default function RecipientDashboard() {
                         <View style={styles.emptyIconWrap}>
                             <Text style={styles.emptyEmoji}>🕊️</Text>
                         </View>
-                        <Text style={styles.emptyTitle}>All clear for today</Text>
+                        <Text style={styles.emptyTitle}>{t('participantDashboard.allClearTitle')}</Text>
                         <Text style={styles.emptyText}>
-                            No reminders are scheduled right now. Your organizer will send them when needed.
+                            {t('participantDashboard.allClearText')}
                         </Text>
                     </View>
                 )}
@@ -473,7 +487,7 @@ export default function RecipientDashboard() {
                                 <View style={styles.typePill}>
                                     <Text style={styles.typePillEmoji}>{typeIcon}</Text>
                                     <Text style={styles.typePillText}>
-                                        {reminder.reminder_type.charAt(0).toUpperCase() + reminder.reminder_type.slice(1)}
+                                        {TYPE_LABEL_KEYS[reminder.reminder_type] ? t(TYPE_LABEL_KEYS[reminder.reminder_type]) : reminder.reminder_type}
                                     </Text>
                                 </View>
                                 <Text style={styles.timeText}>{formatTime(reminder.time_of_day)}</Text>
@@ -486,22 +500,22 @@ export default function RecipientDashboard() {
                             {reminder.notes ? (
                                 <Text style={styles.notes}>{reminder.notes}</Text>
                             ) : (
-                                <Text style={styles.notesMuted}>No notes from your organizer.</Text>
+                                <Text style={styles.notesMuted}>{t('participantDashboard.noNotesFromOrganizer')}</Text>
                             )}
 
                             {/* Status row */}
                             {(() => {
-                                const timeHint = getTimeHint(reminder);
+                                const timeHint = getTimeHint(reminder, t);
                                 return (
                                     <View style={styles.statusRow}>
-                                        <Text style={styles.statusLabel}>Today's status</Text>
+                                        <Text style={styles.statusLabel}>{t('participantDashboard.todaysStatus')}</Text>
                                         <View style={styles.statusRight}>
                                             {timeHint ? (
                                                 <Text style={styles.timeHint}>{timeHint}</Text>
                                             ) : null}
                                             <View style={[styles.statusPill, { backgroundColor: statusInfo.bg }]}>
                                                 <Text style={[styles.statusPillText, { color: statusInfo.text }]}>
-                                                    {formatStatus(reminder.today_status)}
+                                                    {formatStatus(reminder.today_status ?? 'pending')}
                                                 </Text>
                                             </View>
                                         </View>
@@ -513,17 +527,17 @@ export default function RecipientDashboard() {
                             {isSaving ? (
                                 <View style={[styles.savingBox, SHADOW.xs]}>
                                     <ActivityIndicator color={C.primary} />
-                                    <Text style={styles.savingText}>Saving…</Text>
+                                    <Text style={styles.savingText}>{t('participantDashboard.saving')}</Text>
                                 </View>
                             ) : reminder.today_status === 'taken' ? (
                                 <View style={styles.respondedBox}>
                                     <Ionicons name="checkmark-circle" size={20} color={C.success} />
-                                    <Text style={[styles.respondedText, { color: C.success }]}>Marked as completed</Text>
+                                    <Text style={[styles.respondedText, { color: C.success }]}>{t('participantDashboard.markedCompleted')}</Text>
                                 </View>
                             ) : reminder.today_status === 'skipped' ? (
                                 <View style={styles.respondedBox}>
                                     <Ionicons name="remove-circle-outline" size={20} color={C.textMuted} />
-                                    <Text style={[styles.respondedText, { color: C.textMuted }]}>Skipped for today</Text>
+                                    <Text style={[styles.respondedText, { color: C.textMuted }]}>{t('participantDashboard.skippedForToday')}</Text>
                                 </View>
                             ) : (
                                 <View style={styles.actionArea}>
@@ -534,7 +548,7 @@ export default function RecipientDashboard() {
                                         activeOpacity={0.88}
                                     >
                                         <Ionicons name="checkmark-circle" size={22} color="#FFFFFF" />
-                                        <Text style={styles.takenButtonText}>Done</Text>
+                                        <Text style={styles.takenButtonText}>{t('participantDashboard.done')}</Text>
                                     </TouchableOpacity>
 
                                     {/* Secondary actions */}
@@ -545,7 +559,7 @@ export default function RecipientDashboard() {
                                             activeOpacity={0.8}
                                         >
                                             <Ionicons name="time-outline" size={18} color="#92400E" />
-                                            <Text style={styles.laterButtonText}>Later</Text>
+                                            <Text style={styles.laterButtonText}>{t('participantDashboard.later')}</Text>
                                         </TouchableOpacity>
 
                                         <TouchableOpacity
@@ -553,7 +567,7 @@ export default function RecipientDashboard() {
                                             onPress={() => saveReminderAction(reminder, 'skipped')}
                                             activeOpacity={0.7}
                                         >
-                                            <Text style={styles.skipButtonText}>Skip</Text>
+                                            <Text style={styles.skipButtonText}>{t('participantDashboard.skip')}</Text>
                                         </TouchableOpacity>
                                     </View>
                                 </View>
@@ -577,7 +591,7 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
         backgroundColor: C.bgPage,
     },
     content: {
-        paddingHorizontal: 20,
+        paddingHorizontal: SPACING.screen,
         paddingTop: 8,
         paddingBottom: 48,
     },
@@ -587,14 +601,17 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        marginBottom: 24,
+        marginBottom: SPACING.section,
         paddingTop: 8,
+        gap: 12,
     },
+    headerTextBlock: { flex: 1 },
     heading: {
-        fontSize: 34,
+        fontSize: 27,
         fontWeight: '800',
         color: C.textPrimary,
-        letterSpacing: -0.8,
+        letterSpacing: -0.6,
+        lineHeight: 32,
     },
     subheading: {
         fontSize: 14,

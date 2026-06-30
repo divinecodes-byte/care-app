@@ -16,11 +16,13 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
+import { useTranslation } from '@/lib/i18n/context';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 
 export default function SignupScreen() {
     const C = useThemeColors();
+    const t = useTranslation();
     const styles = useMemo(() => createStyles(C), [C]);
     const [fullName, setFullName] = useState('');
     const [email, setEmail]       = useState('');
@@ -30,12 +32,12 @@ export default function SignupScreen() {
 
     async function handleSignup() {
         if (!fullName || !email || !password) {
-            Alert.alert('Missing info', 'Please fill out your name, email, and password.');
+            Alert.alert(t('signup.missingInfoTitle'), t('signup.missingInfoMessage'));
             return;
         }
 
         if (password.length < 6) {
-            Alert.alert('Password too short', 'Password must be at least 6 characters.');
+            Alert.alert(t('signup.passwordShortTitle'), t('signup.passwordShortMessage'));
             return;
         }
 
@@ -49,7 +51,7 @@ export default function SignupScreen() {
 
         if (error) {
             setLoading(false);
-            Alert.alert('Signup failed', error.message);
+            Alert.alert(t('signup.failedTitle'), error.message);
             return;
         }
 
@@ -57,7 +59,7 @@ export default function SignupScreen() {
 
         if (!userId) {
             setLoading(false);
-            Alert.alert('Signup issue', 'Account created, but no user ID was returned.');
+            Alert.alert(t('signup.issueTitle'), t('signup.issueMessage'));
             return;
         }
 
@@ -69,7 +71,7 @@ export default function SignupScreen() {
         setLoading(false);
 
         if (profileError) {
-            Alert.alert('Profile error', profileError.message);
+            Alert.alert(t('signup.profileErrorTitle'), profileError.message);
             return;
         }
 
@@ -94,18 +96,18 @@ export default function SignupScreen() {
                     showsVerticalScrollIndicator={false}
                 >
                     {/* Header */}
-                    <Text style={styles.heading}>Create your account</Text>
+                    <Text style={styles.heading}>{t('signup.heading')}</Text>
                     <Text style={styles.subheading}>
-                        Start sharing reminders and tracking progress together.
+                        {t('signup.subheading')}
                     </Text>
 
                     {/* Form */}
                     <View style={styles.form}>
                         <View style={styles.formGroup}>
-                            <Text style={styles.label}>Full Name</Text>
+                            <Text style={styles.label}>{t('signup.fullNameLabel')}</Text>
                             <TextInput
                                 style={inputStyle('name')}
-                                placeholder="Jane Smith"
+                                placeholder={t('signup.fullNamePlaceholder')}
                                 placeholderTextColor={C.textMuted}
                                 value={fullName}
                                 onChangeText={setFullName}
@@ -117,10 +119,10 @@ export default function SignupScreen() {
                         </View>
 
                         <View style={styles.formGroup}>
-                            <Text style={styles.label}>Email</Text>
+                            <Text style={styles.label}>{t('signup.emailLabel')}</Text>
                             <TextInput
                                 style={inputStyle('email')}
-                                placeholder="you@example.com"
+                                placeholder={t('signup.emailPlaceholder')}
                                 placeholderTextColor={C.textMuted}
                                 keyboardType="email-address"
                                 autoCapitalize="none"
@@ -134,10 +136,10 @@ export default function SignupScreen() {
                         </View>
 
                         <View style={styles.formGroup}>
-                            <Text style={styles.label}>Password</Text>
+                            <Text style={styles.label}>{t('signup.passwordLabel')}</Text>
                             <TextInput
                                 style={inputStyle('password')}
-                                placeholder="At least 6 characters"
+                                placeholder={t('signup.passwordPlaceholder')}
                                 placeholderTextColor={C.textMuted}
                                 secureTextEntry
                                 value={password}
@@ -163,7 +165,7 @@ export default function SignupScreen() {
                         {loading ? (
                             <ActivityIndicator color={C.textInverse} />
                         ) : (
-                            <Text style={styles.buttonText}>Create Account</Text>
+                            <Text style={styles.buttonText}>{t('signup.submit')}</Text>
                         )}
                     </TouchableOpacity>
 
@@ -172,8 +174,8 @@ export default function SignupScreen() {
                         onPress={() => router.push('/signin')}
                     >
                         <Text style={styles.footerText}>
-                            Already have an account?{' '}
-                            <Text style={styles.footerTextBold}>Sign in</Text>
+                            {t('signup.haveAccount')}{' '}
+                            <Text style={styles.footerTextBold}>{t('signup.haveAccountAction')}</Text>
                         </Text>
                     </TouchableOpacity>
                 </ScrollView>

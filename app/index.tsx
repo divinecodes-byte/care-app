@@ -6,15 +6,26 @@ import { Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
+import { useLanguage } from '@/lib/i18n/context';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 
 export default function HomeScreen() {
     const C = useThemeColors();
+    const { t, ready, hasChosenLanguage } = useLanguage();
     const styles = useMemo(() => createStyles(C), [C]);
     const insets = useSafeAreaInsets();
 
+    // Gate first-launch users into the language picker before they see the
+    // welcome/auth flow. Once a choice (including "system") is persisted,
+    // this effect falls through to the normal session check below.
     useEffect(() => {
+        if (!ready) return;
+        if (!hasChosenLanguage) {
+            router.replace('/select-language');
+            return;
+        }
+
         supabase.auth.getSession().then(async ({ data: { session } }) => {
             if (!session?.user) return;
             const { data } = await supabase
@@ -25,7 +36,11 @@ export default function HomeScreen() {
             if (data?.role === 'caregiver') router.replace('/caregiver-dashboard');
             else if (data?.role === 'recipient') router.replace('/recipient-dashboard');
         });
-    }, []);
+    }, [ready, hasChosenLanguage]);
+
+    if (!ready || !hasChosenLanguage) {
+        return <View style={[styles.container, { paddingTop: insets.top }]} />;
+    }
 
     function navigate(href: '/signup' | '/signin') {
         if (Platform.OS === 'ios') {
@@ -55,11 +70,11 @@ export default function HomeScreen() {
                 </View>
 
                 <Text style={styles.headline}>
-                    Stay on track,{'\n'}together.
+                    {t('welcome.headline')}
                 </Text>
 
                 <Text style={styles.subtitle}>
-                    Shared reminders, responses, and progress visibility — for anyone helping someone stay on track.
+                    {t('welcome.subtitle')}
                 </Text>
             </View>
 
@@ -76,7 +91,7 @@ export default function HomeScreen() {
                     onPress={() => navigate('/signup')}
                     activeOpacity={0.88}
                 >
-                    <Text style={styles.primaryButtonText}>Get Started</Text>
+                    <Text style={styles.primaryButtonText}>{t('welcome.getStarted')}</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -84,11 +99,11 @@ export default function HomeScreen() {
                     onPress={() => navigate('/signin')}
                     activeOpacity={0.7}
                 >
-                    <Text style={styles.secondaryButtonText}>I already have an account</Text>
+                    <Text style={styles.secondaryButtonText}>{t('welcome.haveAccount')}</Text>
                 </TouchableOpacity>
 
                 <Text style={styles.termsText}>
-                    By continuing, you agree to our Terms of Use and Privacy Policy.
+                    {t('welcome.terms')}
                 </Text>
             </View>
         </View>

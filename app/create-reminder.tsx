@@ -17,6 +17,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
+import { useTranslation } from '@/lib/i18n/context';
 import { useThemeColors } from '@/lib/theme';
 import { buildTimeString, TimePickerField } from '@/components/TimePickerField';
 import { DAY_OPTIONS, daysForFrequency, Frequency } from '@/lib/frequency';
@@ -42,34 +43,35 @@ const TYPE_ICON_NAMES: Record<ReminderType, string> = {
     other:       'ellipsis-horizontal-outline',
 };
 
-const TYPE_LABELS: Record<ReminderType, string> = {
-    medication:  'Medication',
-    hydration:   'Hydration',
-    appointment: 'Appointment',
-    meal:        'Meal',
-    exercise:    'Exercise',
-    other:       'Other',
+const TYPE_LABEL_KEYS: Record<ReminderType, string> = {
+    medication:  'reminderForm.typeMedication',
+    hydration:   'reminderForm.typeHydration',
+    appointment: 'reminderForm.typeAppointment',
+    meal:        'reminderForm.typeMeal',
+    exercise:    'reminderForm.typeExercise',
+    other:       'reminderForm.typeOther',
 };
 
-const FREQUENCY_LABELS: Record<Frequency, string> = {
-    daily:    'Every day',
-    weekdays: 'Mon–Fri',
-    weekends: 'Sat–Sun',
-    custom:   'Custom days',
+const FREQUENCY_LABEL_KEYS: Record<Frequency, string> = {
+    daily:    'reminderForm.freqDaily',
+    weekdays: 'reminderForm.freqWeekdays',
+    weekends: 'reminderForm.freqWeekends',
+    custom:   'reminderForm.freqCustom',
 };
 
 const NO_RESPONSE_OPTIONS = [1, 5, 10, 15, 30, 60];
-
-function formatResponseMinutes(m: number): string {
-    return m < 60 ? `${m} min` : `${m / 60} hr`;
-}
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function CreateReminderScreen() {
     const C = useThemeColors();
+    const t = useTranslation();
     const styles = useMemo(() => createStyles(C), [C]);
     const { connectionId: preselectConnectionId } = useLocalSearchParams<{ connectionId?: string }>();
+
+    function formatResponseMinutes(m: number): string {
+        return m < 60 ? t('reminderForm.minutesShort', { n: m }) : t('reminderForm.hoursShort', { n: m / 60 });
+    }
 
     const [participants, setParticipants]           = useState<ParticipantOption[]>([]);
     const [participantsLoading, setParticipantsLoading] = useState(true);
@@ -121,7 +123,7 @@ export default function CreateReminderScreen() {
             const options: ParticipantOption[] = accepted.map((c) => ({
                 connectionId:  c.id,
                 recipientId:   c.recipient_id as string,
-                recipientName: nameById.get(c.recipient_id as string) || 'Participant',
+                recipientName: nameById.get(c.recipient_id as string) || t('common.participant'),
             }));
 
             setParticipants(options);
@@ -144,17 +146,17 @@ export default function CreateReminderScreen() {
     async function saveReminder() {
         const selected = participants.find((p) => p.connectionId === selectedConnectionId);
         if (!selected) {
-            Alert.alert('Choose a participant', 'Select who this reminder is for before saving.');
+            Alert.alert(t('reminderForm.chooseParticipantTitle'), t('reminderForm.chooseParticipantMessage'));
             return;
         }
 
         if (!title.trim()) {
-            Alert.alert('Missing title', 'Please enter a reminder name.');
+            Alert.alert(t('reminderForm.missingTitleTitle'), t('reminderForm.missingTitleMessage'));
             return;
         }
 
         if (frequency === 'custom' && selectedDays.length === 0) {
-            Alert.alert('Select at least one day', 'Choose at least one day for a custom schedule.');
+            Alert.alert(t('reminderForm.selectDayTitle'), t('reminderForm.selectDayMessage'));
             return;
         }
 
@@ -165,7 +167,7 @@ export default function CreateReminderScreen() {
 
         if (userError || !user) {
             setLoading(false);
-            Alert.alert('Not signed in', 'Please sign in again.');
+            Alert.alert(t('reminderForm.notSignedInTitle'), t('reminderForm.notSignedInMessage'));
             return;
         }
 
@@ -186,11 +188,11 @@ export default function CreateReminderScreen() {
         setLoading(false);
 
         if (error) {
-            Alert.alert('Reminder error', error.message);
+            Alert.alert(t('reminderForm.errorTitle'), error.message);
             return;
         }
 
-        Alert.alert('Reminder saved', `Reminder created for ${selected.recipientName}.`);
+        Alert.alert(t('reminderForm.savedTitle'), t('reminderForm.savedMessage', { name: selected.recipientName }));
         router.replace({ pathname: '/caregiver-dashboard', params: { connectionId: selected.connectionId } });
     }
 
@@ -217,28 +219,28 @@ export default function CreateReminderScreen() {
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
                         <Ionicons name="chevron-back" size={22} color={C.primary} />
-                        <Text style={styles.backText}>Back</Text>
+                        <Text style={styles.backText}>{t('reminderForm.back')}</Text>
                     </TouchableOpacity>
 
                     {/* Header */}
-                    <Text style={styles.heading}>Create Reminder</Text>
+                    <Text style={styles.heading}>{t('reminderForm.createHeading')}</Text>
                     <Text style={styles.subheading}>
-                        Add a task your participant needs to complete.
+                        {t('reminderForm.createSubheading')}
                     </Text>
 
                     {participantsLoading ? (
                         <View style={[styles.sectionCard, SHADOW.xs, styles.loadingCard]}>
                             <ActivityIndicator color={C.primary} />
-                            <Text style={styles.loadingText}>Loading participants…</Text>
+                            <Text style={styles.loadingText}>{t('reminderForm.loadingParticipants')}</Text>
                         </View>
                     ) : participants.length === 0 ? (
                         <View style={[styles.sectionCard, SHADOW.xs, styles.emptyCard]}>
                             <View style={[styles.sectionIconWrap, { backgroundColor: C.primaryLight }]}>
                                 <Ionicons name="person-add-outline" size={20} color={C.primary} />
                             </View>
-                            <Text style={styles.emptyTitle}>No participants yet</Text>
+                            <Text style={styles.emptyTitle}>{t('reminderForm.noParticipantsTitle')}</Text>
                             <Text style={styles.emptyText}>
-                                Invite a participant and have them accept the code before you can create reminders.
+                                {t('reminderForm.noParticipantsText')}
                             </Text>
                             <TouchableOpacity
                                 style={[styles.inviteButton, SHADOW.primary]}
@@ -246,7 +248,7 @@ export default function CreateReminderScreen() {
                                 activeOpacity={0.88}
                             >
                                 <Ionicons name="person-add" size={16} color={C.textInverse} />
-                                <Text style={styles.inviteButtonText}>Invite Participant</Text>
+                                <Text style={styles.inviteButtonText}>{t('reminderForm.inviteParticipant')}</Text>
                             </TouchableOpacity>
                         </View>
                     ) : (
@@ -257,7 +259,7 @@ export default function CreateReminderScreen() {
                             <View style={[styles.sectionIconWrap, { backgroundColor: C.successLight }]}>
                                 <Ionicons name="person-outline" size={18} color={C.success} />
                             </View>
-                            <Text style={styles.sectionTitle}>Who is this for?</Text>
+                            <Text style={styles.sectionTitle}>{t('reminderForm.whoIsThisFor')}</Text>
                         </View>
 
                         {participants.length === 1 ? (
@@ -306,10 +308,10 @@ export default function CreateReminderScreen() {
                             <View style={[styles.sectionIconWrap, { backgroundColor: C.primaryLight }]}>
                                 <Ionicons name="create-outline" size={18} color={C.primary} />
                             </View>
-                            <Text style={styles.sectionTitle}>What</Text>
+                            <Text style={styles.sectionTitle}>{t('reminderForm.sectionWhat')}</Text>
                         </View>
 
-                        <Text style={styles.label}>Reminder name</Text>
+                        <Text style={styles.label}>{t('reminderForm.nameLabel')}</Text>
                         <TextInput
                             style={inputStyle('title')}
                             placeholderTextColor={C.textMuted}
@@ -320,7 +322,7 @@ export default function CreateReminderScreen() {
                             returnKeyType="next"
                         />
 
-                        <Text style={[styles.label, { marginTop: 18 }]}>Type</Text>
+                        <Text style={[styles.label, { marginTop: 18 }]}>{t('reminderForm.typeLabel')}</Text>
                         <View style={styles.typeGrid}>
                             {REMINDER_TYPES.map((type) => (
                                 <TouchableOpacity
@@ -343,7 +345,7 @@ export default function CreateReminderScreen() {
                                             reminderType === type && styles.typeChipTextActive,
                                         ]}
                                     >
-                                        {TYPE_LABELS[type]}
+                                        {t(TYPE_LABEL_KEYS[type])}
                                     </Text>
                                 </TouchableOpacity>
                             ))}
@@ -356,13 +358,13 @@ export default function CreateReminderScreen() {
                             <View style={[styles.sectionIconWrap, { backgroundColor: '#FEF3C7' }]}>
                                 <Ionicons name="time-outline" size={18} color="#D97706" />
                             </View>
-                            <Text style={styles.sectionTitle}>When</Text>
+                            <Text style={styles.sectionTitle}>{t('reminderForm.sectionWhen')}</Text>
                         </View>
 
-                        <Text style={styles.label}>Time of day</Text>
+                        <Text style={styles.label}>{t('reminderForm.timeOfDayLabel')}</Text>
                         <TimePickerField value={timeValue} onChange={setTimeValue} />
 
-                        <Text style={[styles.label, { marginTop: 18 }]}>Frequency</Text>
+                        <Text style={[styles.label, { marginTop: 18 }]}>{t('reminderForm.frequencyLabel')}</Text>
                         <View style={styles.frequencyRow}>
                             {FREQUENCIES.map((item) => (
                                 <TouchableOpacity
@@ -380,7 +382,7 @@ export default function CreateReminderScreen() {
                                             frequency === item && styles.chipTextActive,
                                         ]}
                                     >
-                                        {FREQUENCY_LABELS[item]}
+                                        {t(FREQUENCY_LABEL_KEYS[item])}
                                     </Text>
                                 </TouchableOpacity>
                             ))}
@@ -418,10 +420,10 @@ export default function CreateReminderScreen() {
                             <View style={[styles.sectionIconWrap, { backgroundColor: C.successLight }]}>
                                 <Ionicons name="timer-outline" size={18} color={C.success} />
                             </View>
-                            <Text style={styles.sectionTitle}>Alerts</Text>
+                            <Text style={styles.sectionTitle}>{t('reminderForm.sectionAlerts')}</Text>
                         </View>
 
-                        <Text style={styles.label}>Mark as missed after</Text>
+                        <Text style={styles.label}>{t('reminderForm.missedAfterLabel')}</Text>
                         <View style={styles.chipGrid}>
                             {[NO_RESPONSE_OPTIONS.slice(0, 3), NO_RESPONSE_OPTIONS.slice(3)].map(
                                 (row, ri) => (
@@ -451,13 +453,13 @@ export default function CreateReminderScreen() {
                             )}
                         </View>
                         <Text style={styles.helperText}>
-                            Reminder is marked as missed if no response arrives within this window.
+                            {t('reminderForm.missedAfterHelper')}
                         </Text>
 
-                        <Text style={[styles.label, { marginTop: 18 }]}>Notes <Text style={styles.labelOptional}>(optional)</Text></Text>
+                        <Text style={[styles.label, { marginTop: 18 }]}>{t('reminderForm.notesLabel')} <Text style={styles.labelOptional}>({t('reminderForm.notesOptional')})</Text></Text>
                         <TextInput
                             style={[inputStyle('notes'), styles.notesInput]}
-                            placeholder="Add any extra details"
+                            placeholder={t('reminderForm.notesPlaceholder')}
                             placeholderTextColor={C.textMuted}
                             value={notes}
                             onChangeText={setNotes}
@@ -480,7 +482,7 @@ export default function CreateReminderScreen() {
                         ) : (
                             <>
                                 <Ionicons name="checkmark-circle" size={20} color={C.textInverse} />
-                                <Text style={styles.saveButtonText}>Save Reminder</Text>
+                                <Text style={styles.saveButtonText}>{t('reminderForm.saveReminder')}</Text>
                             </>
                         )}
                     </TouchableOpacity>
@@ -517,10 +519,10 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
 
     // ── Header ────────────────────────────────────────────────────────
     heading: {
-        fontSize: 30,
+        fontSize: 26,
         fontWeight: '800',
         color: C.textPrimary,
-        letterSpacing: -0.6,
+        letterSpacing: -0.5,
         marginBottom: 8,
     },
     subheading: {

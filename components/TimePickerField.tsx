@@ -12,6 +12,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { RADIUS, T } from '@/constants/theme';
+import { useTranslation } from '@/lib/i18n/context';
 
 // ─── Shared helpers (exported for screens) ────────────────────────────────────
 
@@ -53,6 +54,7 @@ type Props = {
  * Done converts those back to a 24-hour Date before calling onChange.
  */
 export function TimePickerField({ value, onChange }: Props) {
+    const t = useTranslation();
     const [visible,       setVisible]       = useState(false);
     const [draftHour,     setDraftHour]     = useState(12);
     const [draftMinute,   setDraftMinute]   = useState(0);
@@ -141,14 +143,14 @@ export function TimePickerField({ value, onChange }: Props) {
                                 onPress={cancel}
                                 hitSlop={{ top: 12, bottom: 12, left: 16, right: 16 }}
                             >
-                                <Text style={s.cancelText}>Cancel</Text>
+                                <Text style={s.cancelText}>{t('common.cancel')}</Text>
                             </TouchableOpacity>
-                            <Text style={s.headerTitle}>Time of day</Text>
+                            <Text style={s.headerTitle}>{t('reminderForm.timeOfDayLabel')}</Text>
                             <TouchableOpacity
                                 onPress={confirm}
                                 hitSlop={{ top: 12, bottom: 12, left: 16, right: 16 }}
                             >
-                                <Text style={s.doneText}>Done</Text>
+                                <Text style={s.doneText}>{t('common.done')}</Text>
                             </TouchableOpacity>
                         </View>
 

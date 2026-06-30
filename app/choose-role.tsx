@@ -12,7 +12,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { RADIUS, SHADOW, T, ThemeColors } from '@/constants/theme';
+import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
+import { useTranslation } from '@/lib/i18n/context';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 
@@ -20,6 +21,7 @@ type Role = 'caregiver' | 'recipient';
 
 export default function ChooseRoleScreen() {
     const C = useThemeColors();
+    const t = useTranslation();
     const styles = useMemo(() => createStyles(C), [C]);
     const [loadingRole, setLoadingRole] = useState<Role | null>(null);
 
@@ -66,9 +68,9 @@ export default function ChooseRoleScreen() {
                     <View style={styles.headerIcon}>
                         <Ionicons name="people" size={26} color={C.primary} />
                     </View>
-                    <Text style={styles.title}>How will you use{'\n'}Tavora?</Text>
+                    <Text style={styles.title}>{t('chooseRole.title')}</Text>
                     <Text style={styles.subtitle}>
-                        Choose your role so we can personalize your experience.
+                        {t('chooseRole.subtitle')}
                     </Text>
                 </View>
 
@@ -91,9 +93,9 @@ export default function ChooseRoleScreen() {
                         </View>
 
                         <View style={styles.cardBody}>
-                            <Text style={styles.cardTitle}>I'm an Organizer</Text>
+                            <Text style={styles.cardTitle}>{t('chooseRole.organizerTitle')}</Text>
                             <Text style={styles.cardText}>
-                                Create reminders and track a participant's progress.
+                                {t('chooseRole.organizerDesc')}
                             </Text>
                         </View>
 
@@ -123,9 +125,9 @@ export default function ChooseRoleScreen() {
                         </View>
 
                         <View style={styles.cardBody}>
-                            <Text style={styles.cardTitle}>I'm a Participant</Text>
+                            <Text style={styles.cardTitle}>{t('chooseRole.participantTitle')}</Text>
                             <Text style={styles.cardText}>
-                                See today's reminders and mark tasks as completed.
+                                {t('chooseRole.participantDesc')}
                             </Text>
                         </View>
 
@@ -140,7 +142,7 @@ export default function ChooseRoleScreen() {
                 </View>
 
                 <Text style={styles.hint}>
-                    You can only choose your role once. This helps us set up the right experience for you.
+                    {t('chooseRole.hint')}
                 </Text>
             </View>
         </SafeAreaView>

@@ -15,11 +15,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { SettingsSheet } from '@/components/settings-sheet';
-import { RADIUS, SHADOW, T, ThemeColors } from '@/constants/theme';
+import { RADIUS, SHADOW, SPACING, ThemeColors } from '@/constants/theme';
 import { formatFrequency as formatFrequencyDays, isDueOnDate } from '@/lib/frequency';
+import { useStatusLabel, useTranslation } from '@/lib/i18n/context';
 import { MAX_FREE_PARTICIPANTS } from '@/lib/limits';
 import { registerCaregiverPushToken } from '@/lib/notifications';
-import { formatReminderStatus } from '@/lib/reminderStatus';
 import { getStoredSelectedConnectionId, setStoredSelectedConnectionId } from '@/lib/selected-participant';
 import { supabase } from '@/lib/supabase';
 import { useThemeColors } from '@/lib/theme';
@@ -107,6 +107,12 @@ type ConnectionSummary = {
 
 type RangeStats = { adherence: number | null; countable: number; taken: number };
 
+const RANGE_LABEL_KEYS: Record<'Today' | 'Week' | 'Month', string> = {
+    Today: 'organizerDashboard.rangeToday',
+    Week:  'organizerDashboard.rangeWeek',
+    Month: 'organizerDashboard.rangeMonth',
+};
+
 // ─── Pure date helpers ────────────────────────────────────────────────────────
 
 function getLocalDateString(date: Date): string {
@@ -152,8 +158,6 @@ function formatTime(time: string): string {
     else if (h > 12) h -= 12;
     return `${h}:${mStr} ${suffix}`;
 }
-
-const formatStatus = formatReminderStatus;
 
 function formatFrequency(freq: Reminder['frequency'], daysOfWeek: number[]): string {
     return formatFrequencyDays(freq, daysOfWeek);
@@ -343,6 +347,8 @@ function buildReminderBreakdown(
 
 export default function CaregiverDashboard() {
     const C = useThemeColors();
+    const t = useTranslation();
+    const formatStatus = useStatusLabel();
     const styles = useMemo(() => createStyles(C), [C]);
 
     function getAdherenceColor(pct: number | null): string {
@@ -401,7 +407,7 @@ export default function CaregiverDashboard() {
                         <Text style={styles.reminderName}>{reminder.name}</Text>
                         {!reminder.isActive && (
                             <View style={styles.inactiveTag}>
-                                <Text style={styles.inactiveTagText}>Deleted</Text>
+                                <Text style={styles.inactiveTagText}>{t('organizerDashboard.deleted')}</Text>
                             </View>
                         )}
                     </View>
@@ -430,28 +436,28 @@ export default function CaregiverDashboard() {
         const adherenceColor = hasCountable ? getAdherenceColor(item.adherence) : C.textMuted;
 
         const chips = [
-            item.completed > 0 ? { label: `${item.completed} Completed`, bg: '#DCFCE7', color: '#15803D' } : null,
-            item.missed    > 0 ? { label: `${item.missed} Missed`,     bg: '#FEE2E2', color: '#B91C1C' } : null,
-            item.skipped   > 0 ? { label: `${item.skipped} Skipped`,   bg: '#FEF3C7', color: '#B45309' } : null,
-            item.snoozed   > 0 ? { label: `${item.snoozed} Snoozed`,   bg: '#DBEAFE', color: '#1D4ED8' } : null,
-            item.pending   > 0 ? { label: `${item.pending} Pending`,   bg: C.bgAlt,   color: C.textMuted } : null,
+            item.completed > 0 ? { label: t('organizerDashboard.chipCompleted', { n: item.completed }), bg: '#DCFCE7', color: '#15803D' } : null,
+            item.missed    > 0 ? { label: t('organizerDashboard.chipMissed', { n: item.missed }),     bg: '#FEE2E2', color: '#B91C1C' } : null,
+            item.skipped   > 0 ? { label: t('organizerDashboard.chipSkipped', { n: item.skipped }),   bg: '#FEF3C7', color: '#B45309' } : null,
+            item.snoozed   > 0 ? { label: t('organizerDashboard.chipSnoozed', { n: item.snoozed }),   bg: '#DBEAFE', color: '#1D4ED8' } : null,
+            item.pending   > 0 ? { label: t('organizerDashboard.chipPending', { n: item.pending }),   bg: C.bgAlt,   color: C.textMuted } : null,
         ].filter(Boolean) as { label: string; bg: string; color: string }[];
 
         let summaryText: string;
         if (!hasCountable && item.pending === 0) {
-            summaryText = 'No countable history yet';
+            summaryText = t('organizerDashboard.noCountableHistory');
         } else if (!hasCountable) {
-            summaryText = `${item.pending} pending — no past data yet`;
+            summaryText = t('organizerDashboard.pendingNoPastData', { n: item.pending });
         } else if (item.adherence === 100) {
-            summaryText = `${item.completed} of ${item.scheduled} taken`;
+            summaryText = t('organizerDashboard.takenOfScheduled', { completed: item.completed, scheduled: item.scheduled });
         } else if (item.missed > 0 && item.pending > 0) {
-            summaryText = `${item.missed} missed · ${item.pending} pending`;
+            summaryText = t('organizerDashboard.missedAndPending', { missed: item.missed, pending: item.pending });
         } else if (item.missed > 0) {
-            summaryText = `${item.missed} missed this month`;
+            summaryText = t('organizerDashboard.missedThisMonth', { n: item.missed });
         } else if (item.pending > 0) {
-            summaryText = `${item.pending} pending today`;
+            summaryText = t('organizerDashboard.pendingToday', { n: item.pending });
         } else {
-            summaryText = `${item.completed} of ${item.scheduled} taken`;
+            summaryText = t('organizerDashboard.takenOfScheduled', { completed: item.completed, scheduled: item.scheduled });
         }
 
         return (
@@ -468,21 +474,21 @@ export default function CaregiverDashboard() {
                             <Text style={styles.bcName} numberOfLines={1}>{item.name}</Text>
                             {!item.isActive && (
                                 <View style={styles.bcDeletedPill}>
-                                    <Text style={styles.bcDeletedText}>Deleted</Text>
+                                    <Text style={styles.bcDeletedText}>{t('organizerDashboard.deleted')}</Text>
                                 </View>
                             )}
                         </View>
                         <Text style={styles.bcMeta}>
                             {item.isActive
                                 ? `${formatTime(item.time_of_day)} · ${formatFrequency(item.frequency, item.days_of_week)}`
-                                : 'No longer scheduled'}
+                                : t('organizerDashboard.noLongerScheduled')}
                         </Text>
                     </View>
                     <View style={styles.bcAdherenceBlock}>
                         <Text style={[styles.bcAdherencePct, { color: adherenceColor }]}>
                             {hasCountable ? `${item.adherence}%` : '—'}
                         </Text>
-                        <Text style={styles.bcAdherenceLabel}>adherence</Text>
+                        <Text style={styles.bcAdherenceLabel}>{t('organizerDashboard.adherence')}</Text>
                     </View>
                 </View>
 
@@ -497,7 +503,7 @@ export default function CaregiverDashboard() {
                             />
                         </View>
                         <Text style={styles.bcCountLine}>
-                            {item.completed} of {item.scheduled} countable scheduled
+                            {t('organizerDashboard.countableScheduled', { completed: item.completed, scheduled: item.scheduled })}
                         </Text>
                     </>
                 )}
@@ -515,7 +521,7 @@ export default function CaregiverDashboard() {
                 <View style={styles.bcFooter}>
                     <Text style={styles.bcSummary}>{summaryText}</Text>
                     <View style={styles.bcCta}>
-                        <Text style={styles.bcCtaText}>Details</Text>
+                        <Text style={styles.bcCtaText}>{t('organizerDashboard.details')}</Text>
                         <Ionicons name="chevron-forward" size={13} color={C.primary} />
                     </View>
                 </View>
@@ -700,7 +706,7 @@ export default function CaregiverDashboard() {
             id: c.id,
             status: 'accepted',
             recipientId: c.recipient_id as string,
-            recipientName: nameById.get(c.recipient_id as string) || 'Participant',
+            recipientName: nameById.get(c.recipient_id as string) || t('common.participant'),
             acceptedAt: c.accepted_at || c.created_at || new Date().toISOString(),
         }));
 
@@ -755,8 +761,8 @@ export default function CaregiverDashboard() {
                             <ActivityIndicator size="small" color={C.textMuted} />
                         </View>
                         <View style={{ flex: 1 }}>
-                            <Text style={styles.connectionLabel}>Connection</Text>
-                            <Text style={styles.connectionTitle}>Checking connection…</Text>
+                            <Text style={styles.connectionLabel}>{t('organizerDashboard.connectionLabel')}</Text>
+                            <Text style={styles.connectionTitle}>{t('organizerDashboard.checkingConnection')}</Text>
                         </View>
                     </View>
                 </View>
@@ -771,10 +777,10 @@ export default function CaregiverDashboard() {
                             <Ionicons name="link-outline" size={22} color={C.textMuted} />
                         </View>
                         <View style={{ flex: 1 }}>
-                            <Text style={styles.connectionLabel}>Connection</Text>
-                            <Text style={styles.connectionTitle}>No participant linked</Text>
+                            <Text style={styles.connectionLabel}>{t('organizerDashboard.connectionLabel')}</Text>
+                            <Text style={styles.connectionTitle}>{t('organizerDashboard.noParticipantLinked')}</Text>
                             <Text style={styles.connectionText}>
-                                Send an invite so they can receive reminders.
+                                {t('organizerDashboard.sendInviteHint')}
                             </Text>
                         </View>
                     </View>
@@ -783,7 +789,7 @@ export default function CaregiverDashboard() {
                         onPress={() => router.push('/invite-recipient')}
                         activeOpacity={0.88}
                     >
-                        <Text style={styles.connectionButtonText}>Invite Participant</Text>
+                        <Text style={styles.connectionButtonText}>{t('organizerDashboard.invite')}</Text>
                     </TouchableOpacity>
                 </View>
             );
@@ -797,10 +803,10 @@ export default function CaregiverDashboard() {
                             <Ionicons name="time-outline" size={22} color="#D97706" />
                         </View>
                         <View style={{ flex: 1 }}>
-                            <Text style={styles.connectionLabel}>Connection</Text>
-                            <Text style={styles.connectionTitle}>Waiting for acceptance</Text>
+                            <Text style={styles.connectionLabel}>{t('organizerDashboard.connectionLabel')}</Text>
+                            <Text style={styles.connectionTitle}>{t('organizerDashboard.waitingForAcceptance')}</Text>
                             <Text style={styles.connectionText}>
-                                Share this code with your participant:
+                                {t('organizerDashboard.shareCodeHint')}
                             </Text>
                         </View>
                     </View>
@@ -812,7 +818,7 @@ export default function CaregiverDashboard() {
                         onPress={() => router.push('/invite-recipient')}
                         activeOpacity={0.75}
                     >
-                        <Text style={styles.connectionButtonOutlineText}>View Full Invite</Text>
+                        <Text style={styles.connectionButtonOutlineText}>{t('organizerDashboard.viewFullInvite')}</Text>
                     </TouchableOpacity>
                 </View>
             );
@@ -873,7 +879,7 @@ export default function CaregiverDashboard() {
                         size={18}
                         color={C.primary}
                     />
-                    <Text style={styles.addParticipantChipText}>Add</Text>
+                    <Text style={styles.addParticipantChipText}>{t('organizerDashboard.add')}</Text>
                 </TouchableOpacity>
             </ScrollView>
         );
@@ -889,11 +895,11 @@ export default function CaregiverDashboard() {
                         <View style={styles.emptyIconWrap}>
                             <Ionicons name="bar-chart-outline" size={28} color={C.textMuted} />
                         </View>
-                        <Text style={styles.emptyTitle}>No analytics yet</Text>
+                        <Text style={styles.emptyTitle}>{t('organizerDashboard.noAnalyticsYet')}</Text>
                         <Text style={styles.emptyText}>
                             {connectionSummary.status === 'pending'
-                                ? "Waiting for your participant to accept your invite. Analytics will appear once they're connected."
-                                : 'Invite a participant to get started. Analytics will appear once they start responding to reminders.'}
+                                ? t('organizerDashboard.analyticsWaitingPending')
+                                : t('organizerDashboard.analyticsWaitingNone')}
                         </Text>
                     </View>
                 </View>
@@ -905,7 +911,7 @@ export default function CaregiverDashboard() {
                 <View style={[styles.card, SHADOW.xs]}>
                     <View style={styles.loadingState}>
                         <ActivityIndicator color={C.primary} />
-                        <Text style={styles.loadingText}>Loading reminders…</Text>
+                        <Text style={styles.loadingText}>{t('organizerDashboard.loadingReminders')}</Text>
                     </View>
                 </View>
             );
@@ -940,7 +946,7 @@ export default function CaregiverDashboard() {
                             activeOpacity={0.75}
                         >
                             <Text style={[styles.tabText, selectedRange === range && styles.activeTabText]}>
-                                {range}
+                                {t(RANGE_LABEL_KEYS[range])}
                             </Text>
                         </TouchableOpacity>
                     ))}
@@ -948,7 +954,9 @@ export default function CaregiverDashboard() {
 
                 {/* Adherence metric */}
                 <View style={[styles.card, SHADOW.xs]}>
-                    <Text style={styles.cardLabel}>{selectedRange} Adherence</Text>
+                    <Text style={styles.cardLabel}>
+                        {t('organizerDashboard.adherenceLabel', { range: t(RANGE_LABEL_KEYS[selectedRange]) })}
+                    </Text>
 
                     {rangeStats.adherence !== null ? (
                         <>
@@ -964,8 +972,11 @@ export default function CaregiverDashboard() {
                                 />
                             </View>
                             <Text style={styles.helperText}>
-                                {rangeStats.taken} taken of {rangeStats.countable} countable reminder
-                                {rangeStats.countable !== 1 ? 's' : ''}
+                                {t('organizerDashboard.takenOfCountable', {
+                                    taken: rangeStats.taken,
+                                    countable: rangeStats.countable,
+                                    plural: rangeStats.countable !== 1 ? 's' : '',
+                                })}
                             </Text>
                         </>
                     ) : (
@@ -973,8 +984,8 @@ export default function CaregiverDashboard() {
                             <Text style={[styles.bigMetric, { color: C.textMuted }]}>—</Text>
                             <Text style={styles.helperText}>
                                 {!hasAnyReminders
-                                    ? 'No reminders created yet. Tap + to add one.'
-                                    : 'No countable data yet — adherence appears once reminders pass their response window.'}
+                                    ? t('organizerDashboard.noRemindersTapAdd')
+                                    : t('organizerDashboard.noCountableDataYet')}
                             </Text>
                         </>
                     )}
@@ -983,17 +994,17 @@ export default function CaregiverDashboard() {
                 {/* ── Today view ── */}
                 {selectedRange === 'Today' && (
                     <View style={[styles.card, SHADOW.xs]}>
-                        <Text style={styles.cardTitle}>Today's Reminders</Text>
+                        <Text style={styles.cardTitle}>{t('organizerDashboard.todaysReminders')}</Text>
 
                         {!hasAnyReminders ? (
                             <>
                                 <Text style={[styles.helperText, { marginBottom: 12 }]}>
-                                    No reminders have been created yet.
+                                    {t('organizerDashboard.noRemindersCreatedYet')}
                                 </Text>
                                 <View style={styles.inlineEmpty}>
                                     <Ionicons name="add-circle-outline" size={20} color={C.textMuted} />
                                     <Text style={styles.inlineEmptyText}>
-                                        Create your first reminder to get started.
+                                        {t('organizerDashboard.createFirstReminder')}
                                     </Text>
                                 </View>
                             </>
@@ -1002,42 +1013,44 @@ export default function CaregiverDashboard() {
                                 <Ionicons name="calendar-outline" size={20} color={C.textMuted} />
                                 <Text style={styles.inlineEmptyText}>
                                     {todayData && todayData.scheduledCount > 0 && reminderBreakdown.length > 0
-                                        ? "This reminder hasn't started yet — it'll appear here from tomorrow."
+                                        ? t('organizerDashboard.notStartedYet')
                                         : reminderBreakdown.length === 0
-                                        ? 'No active reminders today.'
-                                        : 'Nothing scheduled for today.'}
+                                        ? t('organizerDashboard.noActiveRemindersToday')
+                                        : t('organizerDashboard.nothingScheduledToday')}
                                 </Text>
                             </View>
                         ) : (
                             <>
                                 <Text style={[styles.helperText, { marginBottom: 12 }]}>
-                                    {todayData.eligibleCount} reminder
-                                    {todayData.eligibleCount !== 1 ? 's' : ''} today
+                                    {t('organizerDashboard.reminderCountToday', {
+                                        n: todayData.eligibleCount,
+                                        plural: todayData.eligibleCount !== 1 ? 's' : '',
+                                    })}
                                 </Text>
 
                                 {/* Stats row */}
                                 <View style={styles.metricRow}>
                                     <MetricTile
                                         count={todayData.takenCount}
-                                        label="Completed"
+                                        label={formatStatus('taken')}
                                         color="#15803D"
                                         bg="#DCFCE7"
                                     />
                                     <MetricTile
                                         count={todayData.pendingCount}
-                                        label="Pending"
+                                        label={formatStatus('pending')}
                                         color={C.textSecondary}
                                         bg={C.bgAlt}
                                     />
                                     <MetricTile
                                         count={todayData.missedCount}
-                                        label="Missed"
+                                        label={formatStatus('missed')}
                                         color="#B91C1C"
                                         bg="#FEE2E2"
                                     />
                                     <MetricTile
                                         count={todayData.skippedCount + todayData.snoozedCount}
-                                        label="Skipped"
+                                        label={formatStatus('skipped')}
                                         color="#B45309"
                                         bg="#FEF3C7"
                                     />
@@ -1054,9 +1067,9 @@ export default function CaregiverDashboard() {
                 {/* ── Week view ── */}
                 {selectedRange === 'Week' && (
                     <View style={[styles.card, SHADOW.xs]}>
-                        <Text style={styles.cardTitle}>Weekly Activity</Text>
+                        <Text style={styles.cardTitle}>{t('organizerDashboard.weeklyActivity')}</Text>
                         <Text style={styles.helperText}>
-                            Tap a day to see details. Gray bars = no data yet.
+                            {t('organizerDashboard.tapDayHint')}
                         </Text>
 
                         <View style={styles.chart}>
@@ -1098,8 +1111,8 @@ export default function CaregiverDashboard() {
                 {/* ── Month heatmap ── */}
                 {selectedRange === 'Month' && (
                     <View style={[styles.card, SHADOW.xs]}>
-                        <Text style={styles.cardTitle}>Monthly Heatmap</Text>
-                        <Text style={styles.helperText}>Tap any day to see reminder details.</Text>
+                        <Text style={styles.cardTitle}>{t('organizerDashboard.monthlyHeatmap')}</Text>
+                        <Text style={styles.helperText}>{t('organizerDashboard.tapDayDetailsHint')}</Text>
 
                         <View style={styles.weekLabels}>
                             {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((label, i) => (
@@ -1129,12 +1142,12 @@ export default function CaregiverDashboard() {
 
                         <View style={styles.legendRow}>
                             {[
-                                { style: styles.heatmapNoData,  label: 'No data' },
+                                { style: styles.heatmapNoData,  label: t('organizerDashboard.legendNoData') },
                                 { style: styles.heatmapHigh,    label: '100%' },
                                 { style: styles.heatmapMedium,  label: '75%+' },
                                 { style: styles.heatmapLow,     label: '50%+' },
                                 { style: styles.heatmapMissed,  label: '<50%' },
-                                { style: styles.heatmapPending, label: 'Pending' },
+                                { style: styles.heatmapPending, label: t('organizerDashboard.legendPending') },
                             ].map(({ style, label }) => (
                                 <View key={label} style={styles.legendItem}>
                                     <View style={[styles.legendSwatch, style]} />
@@ -1153,29 +1166,29 @@ export default function CaregiverDashboard() {
                         {selectedDay.isFuture ? (
                             <View style={styles.inlineEmpty}>
                                 <Ionicons name="time-outline" size={20} color={C.textMuted} />
-                                <Text style={styles.inlineEmptyText}>Future date — no data yet.</Text>
+                                <Text style={styles.inlineEmptyText}>{t('organizerDashboard.futureNoData')}</Text>
                             </View>
                         ) : !selectedDay.hasData ? (
                             <View style={styles.inlineEmpty}>
                                 <Ionicons name="information-circle-outline" size={20} color={C.textMuted} />
                                 <Text style={styles.inlineEmptyText}>
-                                    No data — reminders had not started yet on this day. Analytics begin from the date each reminder was created.
+                                    {t('organizerDashboard.noDataNotStarted')}
                                 </Text>
                             </View>
                         ) : selectedDay.eligibleCount === 0 ? (
                             <View style={styles.inlineEmpty}>
                                 <Ionicons name="calendar-outline" size={20} color={C.textMuted} />
-                                <Text style={styles.inlineEmptyText}>No reminders scheduled.</Text>
+                                <Text style={styles.inlineEmptyText}>{t('organizerDashboard.noRemindersScheduled')}</Text>
                             </View>
                         ) : (
                             <>
                                 <Text style={styles.helperText}>
-                                    {selectedDay.takenCount}/{selectedDay.eligibleCount} taken
+                                    {t('organizerDashboard.takenSlashEligible', { taken: selectedDay.takenCount, eligible: selectedDay.eligibleCount })}
                                     {selectedDay.pendingCount > 0
-                                        ? ` · ${selectedDay.pendingCount} pending`
+                                        ? t('organizerDashboard.pendingSuffix', { n: selectedDay.pendingCount })
                                         : ''}
                                     {selectedDay.countableCount > 0
-                                        ? ` · ${selectedDay.adherence}% adherence`
+                                        ? t('organizerDashboard.adherenceSuffix', { n: selectedDay.adherence })
                                         : ''}
                                 </Text>
                                 {selectedDay.reminders.map((r) => (
@@ -1188,9 +1201,9 @@ export default function CaregiverDashboard() {
 
                 {/* ── Reminder breakdown ── */}
                 <View style={styles.bdSection}>
-                    <Text style={styles.bdSectionTitle}>Reminder Breakdown</Text>
+                    <Text style={styles.bdSectionTitle}>{t('organizerDashboard.reminderBreakdown')}</Text>
                     <Text style={styles.bdSectionSub}>
-                        Month-to-date · counts start the day each reminder was created
+                        {t('organizerDashboard.breakdownSub')}
                     </Text>
                 </View>
 
@@ -1200,8 +1213,8 @@ export default function CaregiverDashboard() {
                             <Ionicons name="list-outline" size={20} color={C.textMuted} />
                             <Text style={styles.inlineEmptyText}>
                                 {hasAnyReminders
-                                    ? 'No active reminders — all reminders are currently inactive.'
-                                    : 'No reminders created yet. Tap + to add one.'}
+                                    ? t('organizerDashboard.noActiveAllInactive')
+                                    : t('organizerDashboard.noRemindersTapAdd')}
                             </Text>
                         </View>
                     </View>
@@ -1233,40 +1246,52 @@ export default function CaregiverDashboard() {
                 }
             >
                 <View style={styles.header}>
-                    <View style={styles.headerTextBlock}>
-                        <Text style={styles.heading}>Organizer Overview</Text>
-                        <Text style={styles.subheading}>
-                            {!connectionLoading && connectionSummary.status === 'accepted' && connectionSummary.recipientName
-                                ? `Tracking ${connectionSummary.recipientName}'s progress`
-                                : 'Participant activity'}
+                    <View style={styles.headerRow}>
+                        <Text
+                            style={styles.heading}
+                            numberOfLines={2}
+                            adjustsFontSizeToFit
+                            minimumFontScale={0.85}
+                        >
+                            {t('organizerDashboard.heading')}
                         </Text>
-                    </View>
 
-                    <View style={styles.headerActions}>
                         <TouchableOpacity
                             style={styles.iconButton}
                             onPress={() => setSettingsVisible(true)}
                             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                         >
-                            <Ionicons name="settings-outline" size={20} color={C.textSecondary} />
+                            <Ionicons name="settings-outline" size={19} color={C.textSecondary} />
                         </TouchableOpacity>
+                    </View>
 
-                        <TouchableOpacity
-                            style={styles.inviteButton}
-                            onPress={() => router.push('/invite-recipient')}
-                            activeOpacity={0.75}
-                        >
-                            <Ionicons name="person-add-outline" size={16} color={C.textSecondary} />
-                            <Text style={styles.inviteButtonText}>Invite</Text>
-                        </TouchableOpacity>
+                    <View style={styles.headerSubRow}>
+                        <Text style={styles.subheading} numberOfLines={2}>
+                            {!connectionLoading && connectionSummary.status === 'accepted' && connectionSummary.recipientName
+                                ? t('organizerDashboard.trackingProgress', { name: connectionSummary.recipientName })
+                                : t('organizerDashboard.participantActivity')}
+                        </Text>
 
-                        <TouchableOpacity
-                            style={[styles.createButton, SHADOW.primary]}
-                            onPress={handleCreateReminder}
-                            activeOpacity={0.88}
-                        >
-                            <Ionicons name="add" size={26} color={C.textInverse} />
-                        </TouchableOpacity>
+                        <View style={styles.headerSubActions}>
+                            <TouchableOpacity
+                                style={styles.inviteButton}
+                                onPress={() => router.push('/invite-recipient')}
+                                activeOpacity={0.75}
+                            >
+                                <Ionicons name="person-add-outline" size={14} color={C.textSecondary} />
+                                <Text style={styles.inviteButtonText} numberOfLines={1}>
+                                    {t('organizerDashboard.inviteShort')}
+                                </Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={[styles.createButton, SHADOW.primary]}
+                                onPress={handleCreateReminder}
+                                activeOpacity={0.88}
+                            >
+                                <Ionicons name="add" size={22} color={C.textInverse} />
+                            </TouchableOpacity>
+                        </View>
                     </View>
                 </View>
 
@@ -1288,37 +1313,51 @@ export default function CaregiverDashboard() {
 
 const createStyles = (C: ThemeColors) => StyleSheet.create({
     container: { flex: 1, backgroundColor: C.bgPage },
-    content:   { padding: 20, paddingBottom: 48 },
+    content:   { padding: SPACING.screen, paddingBottom: 48 },
 
     // ── Header ──────────────────────────────────────────────────────────────
+    // Two-row layout keeps the title from being squeezed by action buttons:
+    // row 1 is title + settings, row 2 is subtitle + invite/add actions.
     header: {
+        marginBottom: SPACING.section,
+        gap: SPACING.header,
+    },
+    headerRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: 20,
         gap: 12,
     },
-    headerTextBlock: { flex: 1 },
     heading: {
-        fontSize: 30,
+        flex: 1,
+        fontSize: 23,
         fontWeight: '800',
         color: C.textPrimary,
-        letterSpacing: -0.6,
+        letterSpacing: -0.4,
+        lineHeight: 28,
     },
-    subheading: {
-        fontSize: 15,
-        color: C.textSecondary,
-        marginTop: 3,
-        letterSpacing: -0.1,
-    },
-    headerActions: {
+    headerSubRow: {
         flexDirection: 'row',
+        justifyContent: 'space-between',
         alignItems: 'center',
         gap: 10,
     },
+    subheading: {
+        flex: 1,
+        fontSize: 14,
+        color: C.textSecondary,
+        letterSpacing: -0.1,
+        lineHeight: 19,
+    },
+    headerSubActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        flexShrink: 0,
+    },
     iconButton: {
-        width: 40,
-        height: 40,
+        width: 38,
+        height: 38,
         borderRadius: RADIUS.lg,
         backgroundColor: C.bgSurface,
         borderWidth: 1.5,
@@ -1327,8 +1366,8 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
         justifyContent: 'center',
     },
     inviteButton: {
-        height: 44,
-        paddingHorizontal: 14,
+        height: 38,
+        paddingHorizontal: 12,
         borderRadius: RADIUS.lg,
         backgroundColor: C.bgSurface,
         borderWidth: 1.5,
@@ -1336,12 +1375,12 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         flexDirection: 'row',
-        gap: 6,
+        gap: 5,
     },
-    inviteButtonText: { color: C.textSecondary, fontSize: 14, fontWeight: '600' },
+    inviteButtonText: { color: C.textSecondary, fontSize: 13, fontWeight: '600' },
     createButton: {
-        width: 44,
-        height: 44,
+        width: 38,
+        height: 38,
         borderRadius: RADIUS.lg,
         backgroundColor: C.primary,
         alignItems: 'center',

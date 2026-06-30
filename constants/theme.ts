@@ -140,6 +140,15 @@ export const RADIUS = {
   full: 9999,
 } as const;
 
+/** Shared spacing scale for consistent vertical rhythm across screens. */
+export const SPACING = {
+  screen:  20, // screen horizontal padding
+  section: 20, // gap between major sections (e.g. below a header)
+  card:    14, // gap between stacked cards
+  header:  10, // gap between header rows/elements
+  chip:    8,  // gap between chips in a row
+} as const;
+
 /**
  * Shadow presets. Use as style array: `style={[styles.card, SHADOW.md]}`
  * Includes both iOS shadow props and Android elevation so both platforms render depth.

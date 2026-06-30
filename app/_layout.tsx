@@ -3,6 +3,7 @@ import { router, Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef } from 'react';
 
+import { LanguageProvider } from '@/lib/i18n/context';
 import { setupAndroidChannel } from '@/lib/notifications';
 import { ThemeProvider, useThemeMode } from '@/lib/theme';
 
@@ -19,9 +20,11 @@ Notifications.setNotificationHandler({
 
 export default function RootLayout() {
     return (
-        <ThemeProvider>
-            <RootLayoutNav />
-        </ThemeProvider>
+        <LanguageProvider>
+            <ThemeProvider>
+                <RootLayoutNav />
+            </ThemeProvider>
+        </LanguageProvider>
     );
 }
 

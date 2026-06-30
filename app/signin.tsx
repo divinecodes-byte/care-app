@@ -16,11 +16,13 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
+import { useTranslation } from '@/lib/i18n/context';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 
 export default function SigninScreen() {
     const C = useThemeColors();
+    const t = useTranslation();
     const styles = useMemo(() => createStyles(C), [C]);
     const [email, setEmail]       = useState('');
     const [password, setPassword] = useState('');
@@ -29,7 +31,7 @@ export default function SigninScreen() {
 
     async function handleSignin() {
         if (!email || !password) {
-            Alert.alert('Missing info', 'Please enter your email and password.');
+            Alert.alert(t('signin.missingInfoTitle'), t('signin.missingInfoMessage'));
             return;
         }
 
@@ -43,7 +45,7 @@ export default function SigninScreen() {
 
         if (error) {
             setLoading(false);
-            Alert.alert('Signin failed', error.message);
+            Alert.alert(t('signin.failedTitle'), error.message);
             return;
         }
 
@@ -51,7 +53,7 @@ export default function SigninScreen() {
 
         if (!userId) {
             setLoading(false);
-            Alert.alert('Signin issue', 'No user account was returned.');
+            Alert.alert(t('signin.issueTitle'), t('signin.issueMessage'));
             return;
         }
 
@@ -64,7 +66,7 @@ export default function SigninScreen() {
         setLoading(false);
 
         if (profileError) {
-            Alert.alert('Profile error', profileError.message);
+            Alert.alert(t('signin.profileErrorTitle'), profileError.message);
             return;
         }
 
@@ -99,18 +101,18 @@ export default function SigninScreen() {
                     showsVerticalScrollIndicator={false}
                 >
                     {/* Header */}
-                    <Text style={styles.heading}>Welcome back</Text>
+                    <Text style={styles.heading}>{t('signin.heading')}</Text>
                     <Text style={styles.subheading}>
-                        Sign in to view reminders, care activity, and completion updates.
+                        {t('signin.subheading')}
                     </Text>
 
                     {/* Form */}
                     <View style={styles.form}>
                         <View style={styles.formGroup}>
-                            <Text style={styles.label}>Email</Text>
+                            <Text style={styles.label}>{t('signin.emailLabel')}</Text>
                             <TextInput
                                 style={inputStyle('email')}
-                                placeholder="you@example.com"
+                                placeholder={t('signin.emailPlaceholder')}
                                 placeholderTextColor={C.textMuted}
                                 keyboardType="email-address"
                                 autoCapitalize="none"
@@ -124,10 +126,10 @@ export default function SigninScreen() {
                         </View>
 
                         <View style={styles.formGroup}>
-                            <Text style={styles.label}>Password</Text>
+                            <Text style={styles.label}>{t('signin.passwordLabel')}</Text>
                             <TextInput
                                 style={inputStyle('password')}
-                                placeholder="Enter your password"
+                                placeholder={t('signin.passwordPlaceholder')}
                                 placeholderTextColor={C.textMuted}
                                 secureTextEntry
                                 value={password}
@@ -153,7 +155,7 @@ export default function SigninScreen() {
                         {loading ? (
                             <ActivityIndicator color={C.textInverse} />
                         ) : (
-                            <Text style={styles.buttonText}>Sign In</Text>
+                            <Text style={styles.buttonText}>{t('signin.submit')}</Text>
                         )}
                     </TouchableOpacity>
 
@@ -162,8 +164,8 @@ export default function SigninScreen() {
                         onPress={() => router.push('/signup')}
                     >
                         <Text style={styles.footerText}>
-                            Need an account?{' '}
-                            <Text style={styles.footerTextBold}>Create one</Text>
+                            {t('signin.noAccount')}{' '}
+                            <Text style={styles.footerTextBold}>{t('signin.noAccountAction')}</Text>
                         </Text>
                     </TouchableOpacity>
                 </ScrollView>

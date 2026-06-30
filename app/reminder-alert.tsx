@@ -16,6 +16,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { RADIUS, SHADOW, T } from '@/constants/theme';
+import { useTranslation, useStatusLabel } from '@/lib/i18n/context';
 import { cancelReminderOccurrenceNotification, scheduleSnoozeNotification } from '@/lib/notifications';
 import { getFirstEligibleDateString, isPastNoResponseWindow } from '@/lib/reminderStatus';
 import { supabase } from '@/lib/supabase';
@@ -77,12 +78,13 @@ const TYPE_ICONS: Record<string, string> = {
     other:       '•',
 };
 
-const STATUS_LABELS: Record<ReminderStatus, string> = {
-    pending: 'Pending',
-    taken:   'Completed ✓',
-    snoozed: 'Snoozed',
-    skipped: 'Skipped',
-    missed:  'Missed',
+const TYPE_LABEL_KEYS: Record<string, string> = {
+    medication:  'reminderForm.typeMedication',
+    hydration:   'reminderForm.typeHydration',
+    appointment: 'reminderForm.typeAppointment',
+    meal:        'reminderForm.typeMeal',
+    exercise:    'reminderForm.typeExercise',
+    other:       'reminderForm.typeOther',
 };
 
 const STATUS_COLORS: Record<ReminderStatus, { bg: string; text: string }> = {
@@ -97,6 +99,8 @@ const STATUS_COLORS: Record<ReminderStatus, { bg: string; text: string }> = {
 
 export default function ReminderAlertScreen() {
     const insets = useSafeAreaInsets();
+    const t = useTranslation();
+    const statusLabel = useStatusLabel();
     const { reminderId } = useLocalSearchParams<{ reminderId: string }>();
 
     const [loading, setLoading]         = useState(true);
@@ -137,7 +141,7 @@ export default function ReminderAlertScreen() {
         setInactive(false);
 
         if (!reminderId) {
-            setError('No reminder specified.');
+            setError(t('reminderAlert.noReminderSpecified'));
             setLoading(false);
             return;
         }
@@ -145,7 +149,7 @@ export default function ReminderAlertScreen() {
         const { data: { user }, error: userError } = await supabase.auth.getUser();
 
         if (userError || !user) {
-            setError('You must be signed in to view this reminder.');
+            setError(t('reminderAlert.mustBeSignedIn'));
             setLoading(false);
             return;
         }
@@ -157,19 +161,19 @@ export default function ReminderAlertScreen() {
             .maybeSingle();
 
         if (reminderError) {
-            setError('Could not load reminder. Please try again.');
+            setError(t('reminderAlert.couldNotLoad'));
             setLoading(false);
             return;
         }
 
         if (!reminderData) {
-            setError('Reminder not found.');
+            setError(t('reminderAlert.reminderNotFound'));
             setLoading(false);
             return;
         }
 
         if (reminderData.recipient_id !== user.id) {
-            setError('This reminder does not belong to your account.');
+            setError(t('reminderAlert.notYourAccount'));
             setLoading(false);
             return;
         }
@@ -270,7 +274,7 @@ export default function ReminderAlertScreen() {
         setSaving(false);
 
         if (saveError) {
-            Alert.alert('Save error', saveError.message);
+            Alert.alert(t('reminderAlert.saveErrorTitle'), saveError.message);
             return;
         }
 
@@ -307,7 +311,7 @@ export default function ReminderAlertScreen() {
                 />
                 <View style={styles.centeredState}>
                     <ActivityIndicator size="large" color="#93C5FD" />
-                    <Text style={styles.loadingText}>Loading reminder…</Text>
+                    <Text style={styles.loadingText}>{t('reminderAlert.loadingReminder')}</Text>
                 </View>
             </View>
         );
@@ -327,16 +331,16 @@ export default function ReminderAlertScreen() {
                     <View style={styles.inactiveIconWrap}>
                         <Ionicons name="moon-outline" size={36} color="rgba(255,255,255,0.55)" />
                     </View>
-                    <Text style={styles.inactiveTitle}>This reminder is no longer active</Text>
+                    <Text style={styles.inactiveTitle}>{t('reminderAlert.noLongerActiveTitle')}</Text>
                     <Text style={styles.inactiveText}>
-                        Your organizer removed this reminder. There's nothing to respond to here.
+                        {t('reminderAlert.noLongerActiveText')}
                     </Text>
                     <TouchableOpacity
                         style={styles.errorButton}
                         onPress={() => router.replace('/recipient-dashboard')}
                         activeOpacity={0.8}
                     >
-                        <Text style={styles.errorButtonText}>Back to Today</Text>
+                        <Text style={styles.errorButtonText}>{t('reminderAlert.backToToday')}</Text>
                     </TouchableOpacity>
                 </View>
             </View>
@@ -355,14 +359,14 @@ export default function ReminderAlertScreen() {
                     <View style={styles.errorIconWrap}>
                         <Ionicons name="alert-circle" size={40} color="#F87171" />
                     </View>
-                    <Text style={styles.errorTitle}>Unable to load reminder</Text>
-                    <Text style={styles.errorText}>{error ?? 'An unexpected error occurred.'}</Text>
+                    <Text style={styles.errorTitle}>{t('reminderAlert.unableToLoad')}</Text>
+                    <Text style={styles.errorText}>{error ?? t('reminderAlert.unexpectedError')}</Text>
                     <TouchableOpacity
                         style={styles.errorButton}
                         onPress={() => router.replace('/recipient-dashboard')}
                         activeOpacity={0.8}
                     >
-                        <Text style={styles.errorButtonText}>Go back</Text>
+                        <Text style={styles.errorButtonText}>{t('reminderAlert.goBack')}</Text>
                     </TouchableOpacity>
                 </View>
             </View>
@@ -372,7 +376,7 @@ export default function ReminderAlertScreen() {
     // ── Alert screen ───────────────────────────────────────────────────────────
 
     const typeIcon   = TYPE_ICONS[reminder.reminder_type] ?? '•';
-    const typeLabel  = reminder.reminder_type.charAt(0).toUpperCase() + reminder.reminder_type.slice(1);
+    const typeLabel  = TYPE_LABEL_KEYS[reminder.reminder_type] ? t(TYPE_LABEL_KEYS[reminder.reminder_type]) : reminder.reminder_type;
     const statusInfo = todayStatus ? STATUS_COLORS[todayStatus] : null;
 
     return (
@@ -403,7 +407,7 @@ export default function ReminderAlertScreen() {
                 {/* Badge */}
                 <View style={styles.alertBadge}>
                     <Ionicons name="notifications" size={14} color="#93C5FD" />
-                    <Text style={styles.alertBadgeText}>Reminder</Text>
+                    <Text style={styles.alertBadgeText}>{t('reminderAlert.reminderBadge')}</Text>
                 </View>
 
                 {/* Time */}
@@ -421,14 +425,14 @@ export default function ReminderAlertScreen() {
                 {/* Notes */}
                 {reminder.notes ? (
                     <View style={styles.notesCard}>
-                        <Text style={styles.notesLabel}>Notes from organizer</Text>
+                        <Text style={styles.notesLabel}>{t('reminderAlert.notesFromOrganizer')}</Text>
                         <Text style={styles.notesText}>{reminder.notes}</Text>
                     </View>
                 ) : null}
 
                 {/* Response window */}
                 <Text style={styles.windowText}>
-                    Response window: {reminder.no_response_minutes} min
+                    {t('reminderAlert.responseWindow', { n: reminder.no_response_minutes })}
                 </Text>
 
                 {/* Overdue notice */}
@@ -436,7 +440,7 @@ export default function ReminderAlertScreen() {
                     <View style={styles.overdueBanner}>
                         <Ionicons name="time-outline" size={14} color="#FCA5A5" />
                         <Text style={styles.overdueText}>
-                            Response window has passed · You can still respond
+                            {t('reminderAlert.windowPassed')}
                         </Text>
                     </View>
                 )}
@@ -445,7 +449,9 @@ export default function ReminderAlertScreen() {
                 {todayStatus && statusInfo ? (
                     <View style={[styles.todayStatusPill, { backgroundColor: statusInfo.bg }]}>
                         <Text style={[styles.todayStatusText, { color: statusInfo.text }]}>
-                            Today: {STATUS_LABELS[todayStatus]}
+                            {t('reminderAlert.todayStatus', {
+                                status: todayStatus === 'taken' ? `${statusLabel('taken')} ✓` : statusLabel(todayStatus),
+                            })}
                         </Text>
                     </View>
                 ) : null}
@@ -456,7 +462,7 @@ export default function ReminderAlertScreen() {
                 {saving ? (
                     <View style={styles.savingBox}>
                         <ActivityIndicator color="#93C5FD" />
-                        <Text style={styles.savingText}>Saving…</Text>
+                        <Text style={styles.savingText}>{t('reminderAlert.saving')}</Text>
                     </View>
                 ) : todayStatus === 'taken' || todayStatus === 'skipped' ? (
                     <View style={styles.respondedBox}>
@@ -466,7 +472,7 @@ export default function ReminderAlertScreen() {
                             color={todayStatus === 'taken' ? '#4ADE80' : 'rgba(255,255,255,0.4)'}
                         />
                         <Text style={styles.respondedText}>
-                            {todayStatus === 'taken' ? 'Marked as completed' : 'Skipped for today'}
+                            {todayStatus === 'taken' ? t('reminderAlert.markedCompleted') : t('reminderAlert.skippedForToday')}
                         </Text>
                     </View>
                 ) : (
@@ -477,7 +483,7 @@ export default function ReminderAlertScreen() {
                             activeOpacity={0.88}
                         >
                             <Ionicons name="checkmark-circle" size={24} color="#FFFFFF" />
-                            <Text style={styles.takenText}>Done</Text>
+                            <Text style={styles.takenText}>{t('reminderAlert.done')}</Text>
                         </TouchableOpacity>
 
                         <TouchableOpacity
@@ -486,7 +492,7 @@ export default function ReminderAlertScreen() {
                             activeOpacity={0.8}
                         >
                             <Ionicons name="time-outline" size={20} color="#93C5FD" />
-                            <Text style={styles.laterText}>Remind Me Later</Text>
+                            <Text style={styles.laterText}>{t('reminderAlert.remindMeLater')}</Text>
                         </TouchableOpacity>
 
                         <TouchableOpacity
@@ -494,17 +500,17 @@ export default function ReminderAlertScreen() {
                             onPress={() => handleAction('skipped')}
                             activeOpacity={0.6}
                         >
-                            <Text style={styles.skipText}>Skip this reminder</Text>
+                            <Text style={styles.skipText}>{t('reminderAlert.skipThisReminder')}</Text>
                         </TouchableOpacity>
                     </>
                 )}
 
                 <Text style={styles.footerText}>
                     {todayStatus === 'taken' || todayStatus === 'skipped'
-                        ? 'Your organizer can see your response.'
+                        ? t('reminderAlert.footerResponded')
                         : isOverdue
-                        ? 'You can still respond — your organizer will see your update.'
-                        : 'Your organizer will see your response.'}
+                        ? t('reminderAlert.footerOverdue')
+                        : t('reminderAlert.footerDefault')}
                 </Text>
             </View>
         </View>

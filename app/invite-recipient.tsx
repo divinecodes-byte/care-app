@@ -15,7 +15,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { RADIUS, SHADOW, T, ThemeColors } from '@/constants/theme';
+import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
+import { useTranslation } from '@/lib/i18n/context';
 import { MAX_FREE_PARTICIPANTS } from '@/lib/limits';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
@@ -29,16 +30,16 @@ function generateInviteCode() {
     return code;
 }
 
-const HOW_IT_WORKS = [
-    'Your participant opens Tavora on their phone.',
-    'They choose "I\'m a Participant" as their role.',
-    'They enter this 6-character invite code.',
-    'Their reminders and responses become linked to your dashboard.',
-];
-
 export default function InviteRecipientScreen() {
     const C = useThemeColors();
+    const t = useTranslation();
     const styles = useMemo(() => createStyles(C), [C]);
+    const HOW_IT_WORKS = [
+        t('inviteParticipant.step1'),
+        t('inviteParticipant.step2'),
+        t('inviteParticipant.step3'),
+        t('inviteParticipant.step4'),
+    ];
     const [inviteCode, setInviteCode]       = useState('');
     const [loading, setLoading]             = useState(false);
     // null while loading; once resolved, the Free-plan limit gate uses this.
@@ -77,7 +78,7 @@ export default function InviteRecipientScreen() {
 
         if (userError || !user) {
             setLoading(false);
-            Alert.alert('Not signed in', 'Please sign in again.');
+            Alert.alert(t('inviteParticipant.notSignedInTitle'), t('inviteParticipant.notSignedInMessage'));
             return;
         }
 
@@ -109,8 +110,8 @@ export default function InviteRecipientScreen() {
 
         if (error) {
             Alert.alert(
-                'Could not save invite code',
-                'Please try again. If the problem continues, check your connection.'
+                t('inviteParticipant.saveErrorTitle'),
+                t('inviteParticipant.saveErrorMessage')
             );
             return;
         }
@@ -121,12 +122,12 @@ export default function InviteRecipientScreen() {
 
     async function shareInviteCode() {
         if (!inviteCode) {
-            Alert.alert('No invite code', 'Generate an invite code first.');
+            Alert.alert(t('inviteParticipant.noCodeTitle'), t('inviteParticipant.noCodeMessage'));
             return;
         }
 
         await Share.share({
-            message: `Use this invite code to connect with me on Tavora: ${inviteCode}`,
+            message: t('inviteParticipant.shareMessage', { code: inviteCode }),
         });
     }
 
@@ -146,36 +147,35 @@ export default function InviteRecipientScreen() {
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
                         <Ionicons name="chevron-back" size={22} color={C.primary} />
-                        <Text style={styles.backText}>Back</Text>
+                        <Text style={styles.backText}>{t('inviteParticipant.back')}</Text>
                     </TouchableOpacity>
 
                     {/* Upgrade placeholder — no real purchase flow yet */}
                     <View style={styles.upgradeIconWrap}>
                         <Ionicons name="sparkles" size={28} color={C.primary} />
                     </View>
-                    <Text style={styles.heading}>Tavora Plus</Text>
+                    <Text style={styles.heading}>{t('inviteParticipant.plusTitle')}</Text>
                     <Text style={styles.subheading}>
-                        The Free plan includes {MAX_FREE_PARTICIPANTS} participant. Upgrade to Tavora Plus
-                        to connect with more people and manage all their reminders from one dashboard.
+                        {t('inviteParticipant.plusSubtitle', { limit: MAX_FREE_PARTICIPANTS })}
                     </Text>
 
                     <View style={[styles.upgradeCard, SHADOW.sm]}>
                         <View style={styles.upgradeRow}>
                             <Ionicons name="people-outline" size={18} color={C.primary} />
-                            <Text style={styles.upgradeRowText}>Unlimited participants</Text>
+                            <Text style={styles.upgradeRowText}>{t('inviteParticipant.plusUnlimited')}</Text>
                         </View>
                         <View style={styles.upgradeRow}>
                             <Ionicons name="stats-chart-outline" size={18} color={C.primary} />
-                            <Text style={styles.upgradeRowText}>Per-participant analytics</Text>
+                            <Text style={styles.upgradeRowText}>{t('inviteParticipant.plusAnalytics')}</Text>
                         </View>
                         <View style={styles.upgradeRow}>
                             <Ionicons name="notifications-outline" size={18} color={C.primary} />
-                            <Text style={styles.upgradeRowText}>Priority reminder delivery</Text>
+                            <Text style={styles.upgradeRowText}>{t('inviteParticipant.plusPriority')}</Text>
                         </View>
                     </View>
 
                     <TouchableOpacity style={[styles.generateButton, styles.generateButtonPrimary, SHADOW.primary]} disabled>
-                        <Text style={styles.generateButtonTextPrimary}>Coming soon</Text>
+                        <Text style={styles.generateButtonTextPrimary}>{t('inviteParticipant.comingSoon')}</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
@@ -183,7 +183,7 @@ export default function InviteRecipientScreen() {
                         onPress={() => router.back()}
                         activeOpacity={0.7}
                     >
-                        <Text style={styles.doneButtonText}>Not now</Text>
+                        <Text style={styles.doneButtonText}>{t('inviteParticipant.notNow')}</Text>
                     </TouchableOpacity>
                 </ScrollView>
             </SafeAreaView>
@@ -204,28 +204,28 @@ export default function InviteRecipientScreen() {
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
                     <Ionicons name="chevron-back" size={22} color={C.primary} />
-                    <Text style={styles.backText}>Back</Text>
+                    <Text style={styles.backText}>{t('inviteParticipant.back')}</Text>
                 </TouchableOpacity>
 
                 {/* Header */}
                 <View style={styles.headerIcon}>
                     <Ionicons name="person-add" size={26} color={C.primary} />
                 </View>
-                <Text style={styles.heading}>Invite Participant</Text>
+                <Text style={styles.heading}>{t('inviteParticipant.heading')}</Text>
                 <Text style={styles.subheading}>
-                    Generate a code and share it so their account links to your dashboard.
+                    {t('inviteParticipant.subheading')}
                 </Text>
 
                 {/* Code card */}
                 <View style={[styles.codeCard, SHADOW.sm, hasCode && styles.codeCardActive]}>
-                    <Text style={styles.codeLabel}>Invite Code</Text>
+                    <Text style={styles.codeLabel}>{t('inviteParticipant.codeLabel')}</Text>
 
                     {hasCode ? (
                         <>
                             <Text style={styles.code}>{inviteCode}</Text>
                             <View style={styles.codeReadyBadge}>
                                 <Ionicons name="checkmark-circle" size={14} color={C.success} />
-                                <Text style={styles.codeReadyText}>Ready to share</Text>
+                                <Text style={styles.codeReadyText}>{t('inviteParticipant.readyToShare')}</Text>
                             </View>
                         </>
                     ) : (
@@ -235,7 +235,7 @@ export default function InviteRecipientScreen() {
                                     <View key={i} style={styles.codeDash} />
                                 ))}
                             </View>
-                            <Text style={styles.codeHint}>Tap "Generate" below to create a code.</Text>
+                            <Text style={styles.codeHint}>{t('inviteParticipant.codeHint')}</Text>
                         </>
                     )}
                 </View>
@@ -261,7 +261,7 @@ export default function InviteRecipientScreen() {
                                 color={hasCode ? C.primary : C.textInverse}
                             />
                             <Text style={hasCode ? styles.generateButtonTextSecondary : styles.generateButtonTextPrimary}>
-                                {hasCode ? 'Generate New Code' : 'Generate Invite Code'}
+                                {hasCode ? t('inviteParticipant.regenerate') : t('inviteParticipant.generate')}
                             </Text>
                         </>
                     )}
@@ -275,13 +275,13 @@ export default function InviteRecipientScreen() {
                         activeOpacity={0.88}
                     >
                         <Ionicons name="share-social" size={20} color={C.textInverse} />
-                        <Text style={styles.shareButtonText}>Share Code</Text>
+                        <Text style={styles.shareButtonText}>{t('inviteParticipant.share')}</Text>
                     </TouchableOpacity>
                 )}
 
                 {/* How it works */}
                 <View style={[styles.stepsCard, SHADOW.xs]}>
-                    <Text style={styles.stepsTitle}>How it works</Text>
+                    <Text style={styles.stepsTitle}>{t('inviteParticipant.howItWorksTitle')}</Text>
 
                     {HOW_IT_WORKS.map((step, index) => (
                         <View key={index} style={styles.stepRow}>
@@ -299,7 +299,7 @@ export default function InviteRecipientScreen() {
                     onPress={() => router.push('/caregiver-dashboard')}
                     activeOpacity={0.7}
                 >
-                    <Text style={styles.doneButtonText}>Done — go to dashboard</Text>
+                    <Text style={styles.doneButtonText}>{t('inviteParticipant.done')}</Text>
                 </TouchableOpacity>
             </ScrollView>
         </SafeAreaView>

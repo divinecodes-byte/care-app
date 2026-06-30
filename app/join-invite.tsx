@@ -17,11 +17,13 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
+import { useTranslation } from '@/lib/i18n/context';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 
 export default function JoinInviteScreen() {
     const C = useThemeColors();
+    const t = useTranslation();
     const styles = useMemo(() => createStyles(C), [C]);
     const [inviteCode, setInviteCode] = useState('');
     const [loading, setLoading]       = useState(false);
@@ -31,12 +33,12 @@ export default function JoinInviteScreen() {
         const normalizedCode = inviteCode.trim().toUpperCase();
 
         if (!normalizedCode) {
-            Alert.alert('Missing code', 'Please enter your invite code.');
+            Alert.alert(t('joinInvite.missingCodeTitle'), t('joinInvite.missingCodeMessage'));
             return;
         }
 
         if (normalizedCode.length < 6) {
-            Alert.alert('Invalid code', 'The code should be 6 characters.');
+            Alert.alert(t('joinInvite.invalidCodeTitle'), t('joinInvite.invalidCodeLength'));
             return;
         }
 
@@ -47,7 +49,7 @@ export default function JoinInviteScreen() {
 
         if (userError || !user) {
             setLoading(false);
-            Alert.alert('Not signed in', 'Please sign in again.');
+            Alert.alert(t('joinInvite.notSignedInTitle'), t('joinInvite.notSignedInMessage'));
             return;
         }
 
@@ -60,21 +62,21 @@ export default function JoinInviteScreen() {
 
         if (statusError) {
             setLoading(false);
-            Alert.alert('Invite error', statusError.message);
+            Alert.alert(t('joinInvite.errorTitle'), statusError.message);
             return;
         }
 
         if (codeStatus === 'not_found') {
             setLoading(false);
-            Alert.alert('Invalid code', 'This invite code does not exist. Check it and try again.');
+            Alert.alert(t('joinInvite.invalidCodeTitle'), t('joinInvite.invalidCodeNotFound'));
             return;
         }
 
         if (codeStatus === 'accepted') {
             setLoading(false);
             Alert.alert(
-                'Invite already used',
-                'This invite has already been used. Ask your organizer for a new invite.'
+                t('joinInvite.alreadyUsedTitle'),
+                t('joinInvite.alreadyUsedMessage')
             );
             return;
         }
@@ -95,15 +97,15 @@ export default function JoinInviteScreen() {
         setLoading(false);
 
         if (error) {
-            Alert.alert('Invite error', error.message);
+            Alert.alert(t('joinInvite.errorTitle'), error.message);
             return;
         }
 
         if (!data) {
             // Someone else claimed it between the check above and this update.
             Alert.alert(
-                'Invite already used',
-                'This invite has already been used. Ask your organizer for a new invite.'
+                t('joinInvite.alreadyUsedTitle'),
+                t('joinInvite.alreadyUsedMessage')
             );
             return;
         }
@@ -130,25 +132,25 @@ export default function JoinInviteScreen() {
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
                         <Ionicons name="chevron-back" size={22} color={C.primary} />
-                        <Text style={styles.backText}>Back</Text>
+                        <Text style={styles.backText}>{t('joinInvite.back')}</Text>
                     </TouchableOpacity>
 
                     {/* Header */}
                     <View style={styles.headerIcon}>
                         <Ionicons name="link" size={26} color={C.success} />
                     </View>
-                    <Text style={styles.heading}>Join Care Circle</Text>
+                    <Text style={styles.heading}>{t('joinInvite.heading')}</Text>
                     <Text style={styles.subheading}>
-                        Enter the invite code your organizer shared with you to link accounts.
+                        {t('joinInvite.subheading')}
                     </Text>
 
                     {/* Code input card */}
                     <View style={[styles.inputCard, SHADOW.xs]}>
-                        <Text style={styles.label}>Invite Code</Text>
+                        <Text style={styles.label}>{t('joinInvite.codeLabel')}</Text>
 
                         <TextInput
                             style={[styles.input, focused && styles.inputFocused]}
-                            placeholder="ABC123"
+                            placeholder={t('joinInvite.codePlaceholder')}
                             placeholderTextColor={C.textMuted}
                             autoCapitalize="characters"
                             autoCorrect={false}
@@ -162,7 +164,7 @@ export default function JoinInviteScreen() {
                         />
 
                         <Text style={styles.helperText}>
-                            6 characters · letters and numbers · not case-sensitive
+                            {t('joinInvite.codeHelper')}
                         </Text>
                     </View>
 
@@ -170,7 +172,7 @@ export default function JoinInviteScreen() {
                     <View style={styles.trustNote}>
                         <Ionicons name="shield-checkmark-outline" size={16} color={C.success} />
                         <Text style={styles.trustText}>
-                            This code was given to you by your organizer. It's safe to enter.
+                            {t('joinInvite.trustNote')}
                         </Text>
                     </View>
 
@@ -188,7 +190,7 @@ export default function JoinInviteScreen() {
                             <ActivityIndicator color={C.textInverse} />
                         ) : (
                             <>
-                                <Text style={styles.buttonText}>Connect Account</Text>
+                                <Text style={styles.buttonText}>{t('joinInvite.submit')}</Text>
                                 <Ionicons name="arrow-forward" size={20} color={C.textInverse} />
                             </>
                         )}
@@ -201,7 +203,7 @@ export default function JoinInviteScreen() {
                         activeOpacity={0.7}
                     >
                         <Text style={styles.signInLinkText}>
-                            Already connected on another device? <Text style={styles.signInLinkTextBold}>Sign in</Text> instead.
+                            {t('joinInvite.signInPrompt')} <Text style={styles.signInLinkTextBold}>{t('joinInvite.signInAction')}</Text> {t('joinInvite.signInSuffix')}
                         </Text>
                     </TouchableOpacity>
                 </ScrollView>

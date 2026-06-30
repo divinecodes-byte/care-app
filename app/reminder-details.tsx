@@ -12,9 +12,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
+import { useLanguage, useStatusLabel } from '@/lib/i18n/context';
 import { useThemeColors } from '@/lib/theme';
 import { formatFrequency as formatFrequencyDays, isDueOnDate } from '@/lib/frequency';
-import { formatReminderStatus } from '@/lib/reminderStatus';
 import { supabase } from '@/lib/supabase';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -106,8 +106,8 @@ function formatFrequency(freq: Reminder['frequency'], daysOfWeek: number[]): str
     return formatFrequencyDays(freq, daysOfWeek);
 }
 
-function formatDateLabel(date: Date): string {
-    return date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+function formatDateLabel(date: Date, locale: string): string {
+    return date.toLocaleDateString(locale, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
 function getAnalyticsStartDate(
@@ -191,7 +191,8 @@ function buildDetailData(
     logs: ReminderLog[],
     weekDates: Date[],
     monthDates: Date[],
-    connectionAcceptedAt: string
+    connectionAcceptedAt: string,
+    locale: string
 ): { stats: DetailStats; history: HistoryEntry[] } {
     const todayString = getLocalDateString(new Date());
 
@@ -228,7 +229,7 @@ function buildDetailData(
 
         history.push({
             dateString,
-            dateLabel: formatDateLabel(date),
+            dateLabel: formatDateLabel(date, locale),
             status,
         });
     });
@@ -282,12 +283,21 @@ function statusBg(s: ReminderStatus, C: ThemeColors): string {
     return C.bgAlt;
 }
 
-const statusLabel = formatReminderStatus;
+const TYPE_LABEL_KEYS: Record<string, string> = {
+    medication:  'reminderForm.typeMedication',
+    hydration:   'reminderForm.typeHydration',
+    appointment: 'reminderForm.typeAppointment',
+    meal:        'reminderForm.typeMeal',
+    exercise:    'reminderForm.typeExercise',
+    other:       'reminderForm.typeOther',
+};
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function ReminderDetailsScreen() {
     const C = useThemeColors();
+    const { t, language } = useLanguage();
+    const statusLabel = useStatusLabel();
     const styles = useMemo(() => createStyles(C), [C]);
     const { reminderId } = useLocalSearchParams<{ reminderId: string }>();
 
@@ -300,7 +310,7 @@ export default function ReminderDetailsScreen() {
 
     useEffect(() => {
         if (!reminderId) {
-            setError('No reminder selected. Go back and tap "Details" on a reminder card.');
+            setError(t('reminderDetails.noReminderSelected'));
             setLoading(false);
             return;
         }
@@ -312,7 +322,7 @@ export default function ReminderDetailsScreen() {
         setError(null);
 
         const { data: { user } } = await supabase.auth.getUser();
-        if (!user) { setError('Not authenticated.'); setLoading(false); return; }
+        if (!user) { setError(t('reminderDetails.notAuthenticated')); setLoading(false); return; }
 
         const { data: rem, error: remErr } = await supabase
             .from('reminders')
@@ -323,7 +333,7 @@ export default function ReminderDetailsScreen() {
             .maybeSingle();
 
         if (remErr || !rem) {
-            setError('Reminder not found.');
+            setError(t('reminderDetails.reminderNotFound'));
             setLoading(false);
             return;
         }
@@ -335,7 +345,7 @@ export default function ReminderDetailsScreen() {
             .maybeSingle();
 
         if (connErr || !conn) {
-            setError('Connection not found.');
+            setError(t('reminderDetails.connectionNotFound'));
             setLoading(false);
             return;
         }
@@ -357,9 +367,10 @@ export default function ReminderDetailsScreen() {
         const logs         = (logsData || []) as ReminderLog[];
         const reminderData = rem as Reminder;
 
+        const locale = language === 'es' ? 'es-ES' : 'en-US';
         const startDate = getAnalyticsStartDate(acceptedAt, reminderData.created_at, reminderData.time_of_day);
         setAnalyticsStartLabel(
-            startDate.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })
+            startDate.toLocaleDateString(locale, { month: 'long', day: 'numeric', year: 'numeric' })
         );
 
         const { stats: computed, history: hist } = buildDetailData(
@@ -367,7 +378,8 @@ export default function ReminderDetailsScreen() {
             logs,
             weekDates,
             monthDates,
-            acceptedAt
+            acceptedAt,
+            locale
         );
 
         setReminder(reminderData);
@@ -388,9 +400,9 @@ export default function ReminderDetailsScreen() {
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
                     <Ionicons name="chevron-back" size={20} color={C.primary} />
-                    <Text style={styles.backText}>Dashboard</Text>
+                    <Text style={styles.backText}>{t('reminderDetails.dashboard')}</Text>
                 </TouchableOpacity>
-                <Text style={styles.navTitle}>Reminder Details</Text>
+                <Text style={styles.navTitle}>{t('reminderDetails.navTitle')}</Text>
                 {reminderId && (!reminder || reminder.is_active) ? (
                     <TouchableOpacity
                         style={styles.editNavBtn}
@@ -400,7 +412,7 @@ export default function ReminderDetailsScreen() {
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
                         <Ionicons name="pencil-outline" size={16} color={C.primary} />
-                        <Text style={styles.editNavText}>Edit</Text>
+                        <Text style={styles.editNavText}>{t('reminderDetails.edit')}</Text>
                     </TouchableOpacity>
                 ) : (
                     <View style={styles.navSpacer} />
@@ -410,17 +422,17 @@ export default function ReminderDetailsScreen() {
             {loading ? (
                 <View style={styles.centered}>
                     <ActivityIndicator color={C.primary} size="large" />
-                    <Text style={styles.loadingText}>Loading reminder…</Text>
+                    <Text style={styles.loadingText}>{t('reminderDetails.loadingReminder')}</Text>
                 </View>
             ) : error ? (
                 <View style={styles.centered}>
                     <View style={styles.errorIconWrap}>
                         <Ionicons name="alert-circle-outline" size={32} color={C.textMuted} />
                     </View>
-                    <Text style={styles.errorTitle}>Something went wrong</Text>
+                    <Text style={styles.errorTitle}>{t('reminderDetails.somethingWrong')}</Text>
                     <Text style={styles.errorText}>{error}</Text>
                     <TouchableOpacity style={styles.errorBack} onPress={() => router.back()}>
-                        <Text style={styles.errorBackText}>Go back</Text>
+                        <Text style={styles.errorBackText}>{t('reminderDetails.goBack')}</Text>
                     </TouchableOpacity>
                 </View>
             ) : reminder && stats ? (
@@ -432,14 +444,15 @@ export default function ReminderDetailsScreen() {
                     <View style={[styles.card, SHADOW.xs]}>
                         <View style={styles.typePill}>
                             <Text style={styles.typePillText}>
-                                {reminder.reminder_type}{!reminder.is_active ? ' · Deleted' : ''}
+                                {TYPE_LABEL_KEYS[reminder.reminder_type] ? t(TYPE_LABEL_KEYS[reminder.reminder_type]) : reminder.reminder_type}
+                                {!reminder.is_active ? t('reminderDetails.deletedSuffix') : ''}
                             </Text>
                         </View>
                         <Text style={styles.reminderTitle}>{reminder.title}</Text>
                         <Text style={styles.reminderMeta}>
                             {reminder.is_active
                                 ? `${formatTime(reminder.time_of_day)} · ${formatFrequency(reminder.frequency, reminder.days_of_week)}`
-                                : 'No longer scheduled — showing historical data'}
+                                : t('reminderDetails.noLongerScheduled')}
                         </Text>
 
                         {reminder.notes ? (
@@ -452,14 +465,14 @@ export default function ReminderDetailsScreen() {
                         <View style={styles.infoRow}>
                             <Ionicons name="notifications-outline" size={15} color={C.textMuted} style={styles.infoIcon} />
                             <Text style={styles.infoText}>
-                                Alert after {reminder.no_response_minutes} min with no response
+                                {t('reminderDetails.alertAfterMin', { n: reminder.no_response_minutes })}
                             </Text>
                         </View>
 
                         <View style={styles.infoRow}>
                             <Ionicons name="calendar-outline" size={14} color={C.textMuted} style={styles.infoIcon} />
                             <Text style={styles.infoText}>
-                                Analytics start: {analyticsStartLabel}
+                                {t('reminderDetails.analyticsStart', { date: analyticsStartLabel })}
                             </Text>
                         </View>
                     </View>
@@ -474,14 +487,14 @@ export default function ReminderDetailsScreen() {
                             activeOpacity={0.8}
                         >
                             <Ionicons name="pencil-outline" size={18} color={C.primary} />
-                            <Text style={styles.editButtonText}>Edit Reminder</Text>
+                            <Text style={styles.editButtonText}>{t('reminderDetails.editReminder')}</Text>
                             <Ionicons name="chevron-forward" size={16} color={C.primary} style={styles.editButtonChevron} />
                         </TouchableOpacity>
                     ) : (
                         <View style={styles.historicalNotice}>
                             <Ionicons name="time-outline" size={16} color={C.textMuted} />
                             <Text style={styles.historicalNoticeText}>
-                                Viewing historical data for a deleted reminder.
+                                {t('reminderDetails.historicalNotice')}
                             </Text>
                         </View>
                     )}
@@ -489,8 +502,8 @@ export default function ReminderDetailsScreen() {
                     {/* ── Adherence grid ── */}
                     <View style={styles.adherenceGrid}>
                         {[
-                            { label: 'This week',  pct: stats.weekAdherence },
-                            { label: 'This month', pct: stats.monthAdherence },
+                            { label: t('reminderDetails.thisWeek'),  pct: stats.weekAdherence },
+                            { label: t('reminderDetails.thisMonth'), pct: stats.monthAdherence },
                         ].map(({ label, pct }) => {
                             const color = getAdherenceColor(pct, C);
                             return (
@@ -510,7 +523,7 @@ export default function ReminderDetailsScreen() {
                                         </View>
                                     )}
                                     {pct === null && (
-                                        <Text style={styles.adherenceNoData}>No data yet</Text>
+                                        <Text style={styles.adherenceNoData}>{t('reminderDetails.noDataYet')}</Text>
                                     )}
                                 </View>
                             );
@@ -519,15 +532,15 @@ export default function ReminderDetailsScreen() {
 
                     {/* ── Month counts ── */}
                     <View style={[styles.card, SHADOW.xs]}>
-                        <Text style={styles.sectionTitle}>Month-to-date</Text>
+                        <Text style={styles.sectionTitle}>{t('reminderDetails.monthToDate')}</Text>
 
                         <View style={styles.countGrid}>
                             {[
-                                { label: 'Completed', value: stats.taken,   color: '#15803D', bg: '#DCFCE7' },
-                                { label: 'Missed',  value: stats.missed,  color: '#B91C1C', bg: '#FEE2E2' },
-                                { label: 'Skipped', value: stats.skipped, color: '#B45309', bg: '#FEF3C7' },
-                                { label: 'Snoozed', value: stats.snoozed, color: '#1D4ED8', bg: '#DBEAFE' },
-                                { label: 'Pending', value: stats.pending, color: C.textSecondary, bg: C.bgAlt },
+                                { label: statusLabel('taken'),   value: stats.taken,   color: '#15803D', bg: '#DCFCE7' },
+                                { label: statusLabel('missed'),  value: stats.missed,  color: '#B91C1C', bg: '#FEE2E2' },
+                                { label: statusLabel('skipped'), value: stats.skipped, color: '#B45309', bg: '#FEF3C7' },
+                                { label: statusLabel('snoozed'), value: stats.snoozed, color: '#1D4ED8', bg: '#DBEAFE' },
+                                { label: statusLabel('pending'), value: stats.pending, color: C.textSecondary, bg: C.bgAlt },
                             ].map(({ label, value, color, bg }) => (
                                 <View key={label} style={[styles.countChip, { backgroundColor: bg }]}>
                                     <Text style={[styles.countChipNum, { color }]}>{value}</Text>
@@ -540,7 +553,7 @@ export default function ReminderDetailsScreen() {
                             <View style={styles.avgRow}>
                                 <Ionicons name="timer-outline" size={15} color={C.textMuted} />
                                 <Text style={styles.avgText}>
-                                    Avg response time: {stats.avgResponseMinutes} min
+                                    {t('reminderDetails.avgResponseTime', { n: stats.avgResponseMinutes })}
                                 </Text>
                             </View>
                         )}
@@ -548,17 +561,17 @@ export default function ReminderDetailsScreen() {
 
                     {/* ── History ── */}
                     <View style={[styles.card, SHADOW.xs]}>
-                        <Text style={styles.sectionTitle}>Recent History</Text>
+                        <Text style={styles.sectionTitle}>{t('reminderDetails.recentHistory')}</Text>
                         <Text style={styles.sectionSub}>
-                            Month-to-date · before {analyticsStartLabel} not counted
+                            {t('reminderDetails.beforeNotCounted', { date: analyticsStartLabel })}
                         </Text>
 
                         {history.length === 0 ? (
                             <View style={styles.emptyHistory}>
                                 <Ionicons name="hourglass-outline" size={28} color={C.textMuted} />
-                                <Text style={styles.emptyHistoryTitle}>No history yet</Text>
+                                <Text style={styles.emptyHistoryTitle}>{t('reminderDetails.noHistoryYet')}</Text>
                                 <Text style={styles.emptyHistoryText}>
-                                    History will appear here once this reminder has had a few days to run.
+                                    {t('reminderDetails.historyWillAppear')}
                                 </Text>
                             </View>
                         ) : (
