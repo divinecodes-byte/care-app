@@ -186,6 +186,7 @@ export const en = {
         noLongerScheduled: 'No longer scheduled — showing historical data',
         alertAfterMin: 'Alert after {{n}} min with no response',
         analyticsStart: 'Analytics start: {{date}}',
+        timeSensitiveNote: 'If alerts stay quiet during Focus, enable Time Sensitive Notifications for this app in Settings.',
         editReminder: 'Edit Reminder',
         historicalNotice: 'Viewing historical data for a deleted reminder.',
         thisWeek: 'This week',

@@ -475,6 +475,15 @@ export default function ReminderDetailsScreen() {
                                 {t('reminderDetails.analyticsStart', { date: analyticsStartLabel })}
                             </Text>
                         </View>
+
+                        {reminder.is_active ? (
+                            <View style={styles.infoRow}>
+                                <Ionicons name="moon-outline" size={14} color={C.textMuted} style={styles.infoIcon} />
+                                <Text style={styles.infoText}>
+                                    {t('reminderDetails.timeSensitiveNote')}
+                                </Text>
+                            </View>
+                        ) : null}
                     </View>
 
                     {/* ── Edit button / historical notice ── */}

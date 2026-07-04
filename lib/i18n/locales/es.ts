@@ -188,6 +188,7 @@ export const es: typeof en = {
         noLongerScheduled: 'Ya no está programado — mostrando datos históricos',
         alertAfterMin: 'Alertar después de {{n}} min sin respuesta',
         analyticsStart: 'Inicio de analíticas: {{date}}',
+        timeSensitiveNote: 'Si las alertas se silencian durante el modo No molestar, activa las notificaciones urgentes para esta app en Ajustes.',
         editReminder: 'Editar recordatorio',
         historicalNotice: 'Viendo datos históricos de un recordatorio eliminado.',
         thisWeek: 'Esta semana',

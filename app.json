@@ -13,6 +13,9 @@
       "bundleIdentifier": "com.divinecodesbyte.careapp",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
+      },
+      "entitlements": {
+        "com.apple.developer.usernotifications.time-sensitive": true
       }
     },
     "android": {
