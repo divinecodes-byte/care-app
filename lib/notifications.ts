@@ -17,11 +17,12 @@ export type ReminderForScheduling = {
 
 type OccurrenceNotificationData = {
     reminderId: string;
+    recipientId: string;
     occurrenceDate: string;     // "YYYY-MM-DD"
     scheduledFor: string;       // ISO timestamp
     reminderType: string;
     title: string;
-    isSnooze?: boolean;
+    notificationType: 'reminder' | 'snooze';
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -42,6 +43,25 @@ function getLocalDateString(date: Date): string {
     const m = String(date.getMonth() + 1).padStart(2, '0');
     const d = String(date.getDate()).padStart(2, '0');
     return `${y}-${m}-${d}`;
+}
+
+/**
+ * True for any notification Tavora itself scheduled locally (identified by
+ * its identifier prefix and its content.data shape) — never matches a
+ * caregiver push notification or anything scheduled by another app feature.
+ * Both signals are checked so a partial match (e.g. identifier reused by
+ * mistake, or data present without the prefix) never gets treated as ours.
+ */
+function isTavoraNotification(
+    n: Notifications.NotificationRequest
+): n is Notifications.NotificationRequest & { content: { data: OccurrenceNotificationData } } {
+    const data = n.content.data as Partial<OccurrenceNotificationData> | undefined;
+    return (
+        typeof n.identifier === 'string' &&
+        n.identifier.startsWith('care-') &&
+        typeof data?.reminderId === 'string' &&
+        (data?.notificationType === 'reminder' || data?.notificationType === 'snooze')
+    );
 }
 
 // ─── Android channel ──────────────────────────────────────────────────────────
@@ -76,9 +96,11 @@ export async function requestNotificationPermissions(): Promise<boolean> {
 // ─── Schedule / cancel ────────────────────────────────────────────────────────
 
 /**
- * Cancel every scheduled notification, then schedule fresh one-shot
- * occurrence notifications for the supplied reminders across a rolling
- * window (see ROLLING_WINDOW_DAYS).
+ * Cancel every Tavora-scheduled notification on this device, then schedule
+ * fresh one-shot occurrence notifications for the supplied reminders across
+ * a rolling window (see ROLLING_WINDOW_DAYS). Not exported for direct use —
+ * call syncRecipientReminderNotifications() instead, which supplies
+ * `reminders`/`recipientId` from a fresh Supabase fetch every time.
  *
  * Each notification represents exactly one reminder occurrence on exactly
  * one date — never a recurring DAILY/WEEKLY trigger — so cancelling one
@@ -91,10 +113,23 @@ export async function requestNotificationPermissions(): Promise<boolean> {
  * because the entire valid window is rebuilt from current reminder state
  * every time, so it never produces duplicates.
  */
-export async function scheduleReminderNotifications(
-    reminders: ReminderForScheduling[]
+async function scheduleReminderNotifications(
+    reminders: ReminderForScheduling[],
+    recipientId: string
 ): Promise<void> {
-    await Notifications.cancelAllScheduledNotificationsAsync();
+    // Cancel only Tavora's own scheduled notifications — never anything else
+    // this app or another feature may have scheduled — then rebuild the
+    // entire rolling window from current reminder state. This is what makes
+    // the reschedule idempotent and stale-notification-safe: a reminder that
+    // was deleted, deactivated, transferred to another recipient, or has
+    // become ineligible simply won't be in `reminders` and so never gets
+    // rescheduled, and its previously-scheduled notification is gone.
+    const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+    await Promise.all(
+        scheduled
+            .filter(isTavoraNotification)
+            .map((n) => Notifications.cancelScheduledNotificationAsync(n.identifier))
+    );
 
     if (reminders.length === 0) return;
 
@@ -138,7 +173,7 @@ export async function scheduleReminderNotifications(
                 // re-alert at snoozed_until; every other terminal status
                 // (taken/skipped/missed, or an expired snooze) gets nothing.
                 if (log.status === 'snoozed' && log.snoozed_until) {
-                    await scheduleSnoozeNotification(reminder, occurrenceDate, log.snoozed_until);
+                    await scheduleSnoozeNotification(reminder, occurrenceDate, log.snoozed_until, recipientId);
                 }
                 continue;
             }
@@ -149,10 +184,12 @@ export async function scheduleReminderNotifications(
 
             const data: OccurrenceNotificationData = {
                 reminderId:   reminder.id,
+                recipientId,
                 occurrenceDate,
                 scheduledFor: scheduledFor.toISOString(),
                 reminderType: reminder.reminder_type,
                 title:        reminder.title,
+                notificationType: 'reminder',
             };
 
             await Notifications.scheduleNotificationAsync({
@@ -182,18 +219,20 @@ export async function scheduleReminderNotifications(
 export async function scheduleSnoozeNotification(
     reminder: { id: string; title: string; reminder_type: string },
     occurrenceDate: string,
-    snoozedUntilIso: string
+    snoozedUntilIso: string,
+    recipientId: string
 ): Promise<void> {
     const fireDate = new Date(snoozedUntilIso);
     if (fireDate.getTime() <= Date.now()) return;
 
     const data: OccurrenceNotificationData = {
         reminderId:   reminder.id,
+        recipientId,
         occurrenceDate,
         scheduledFor: fireDate.toISOString(),
         reminderType: reminder.reminder_type,
         title:        reminder.title,
-        isSnooze:     true,
+        notificationType: 'snooze',
     };
 
     await Notifications.scheduleNotificationAsync({
@@ -253,6 +292,62 @@ export async function cancelAllReminderNotifications(reminderId: string): Promis
     await Promise.all(
         toCancel.map((n) => Notifications.cancelScheduledNotificationAsync(n.identifier))
     );
+}
+
+// ─── Cross-device deletion sync ────────────────────────────────────────────────
+
+/**
+ * The single source of truth for reconciling this device's scheduled local
+ * notifications against the recipient's current server-side reminder state.
+ *
+ * Re-fetches the signed-in recipient's active reminders straight from
+ * Supabase, then rebuilds the entire local notification schedule from that
+ * fresh data via scheduleReminderNotifications — which cancels every
+ * Tavora-scheduled notification first, so anything for a reminder that was
+ * deleted, deactivated, transferred to another recipient, no longer
+ * eligible, or already answered simply never gets rescheduled. Safe to call
+ * as often as needed; it never produces duplicates.
+ *
+ * This can only cancel notifications already sitting in *this* device's
+ * local notification store — see the audit report for the platform
+ * limitation this implies when the caregiver deletes a reminder while the
+ * recipient's device is offline or Tavora isn't running.
+ */
+export async function syncRecipientReminderNotifications(): Promise<void> {
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    if (userError || !user) return; // signed out — nothing to reconcile
+
+    const { data: reminders, error } = await supabase
+        .from('reminders')
+        .select('id, title, reminder_type, time_of_day, days_of_week')
+        .eq('recipient_id', user.id)
+        .eq('is_active', true);
+
+    if (error) {
+        // Transient fetch failure — leave the existing local schedule as-is
+        // rather than risk cancelling valid notifications on bad data.
+        console.warn('[syncRecipientReminderNotifications] Failed to fetch reminders:', error.message);
+        return;
+    }
+
+    await scheduleReminderNotifications(reminders ?? [], user.id);
+}
+
+/**
+ * Lightweight liveness check for a single reminder, used where re-running
+ * the full sync would be overkill (foreground notification handler,
+ * notification-tap screen). Fails OPEN on a network error — a flaky
+ * connection must never suppress a legitimate care reminder.
+ */
+export async function isReminderCurrentlyActive(reminderId: string): Promise<boolean> {
+    const { data, error } = await supabase
+        .from('reminders')
+        .select('is_active')
+        .eq('id', reminderId)
+        .maybeSingle();
+
+    if (error) return true;
+    return !!data?.is_active;
 }
 
 // ─── Push token registration ──────────────────────────────────────────────────

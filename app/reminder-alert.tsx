@@ -17,7 +17,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { RADIUS, SHADOW, T } from '@/constants/theme';
 import { useTranslation, useStatusLabel } from '@/lib/i18n/context';
-import { cancelReminderOccurrenceNotification, scheduleSnoozeNotification } from '@/lib/notifications';
+import {
+    cancelAllReminderNotifications,
+    cancelReminderOccurrenceNotification,
+    scheduleSnoozeNotification,
+    syncRecipientReminderNotifications,
+} from '@/lib/notifications';
 import { getFirstEligibleDateString, isPastNoResponseWindow } from '@/lib/reminderStatus';
 import { supabase } from '@/lib/supabase';
 
@@ -167,18 +172,31 @@ export default function ReminderAlertScreen() {
         }
 
         if (!reminderData) {
+            // Reminder was hard to find at all — most likely this device is
+            // holding a stale scheduled notification for something already
+            // gone. Nothing else will clean this up, so do it here.
+            cancelAllReminderNotifications(reminderId).catch(console.warn);
             setError(t('reminderAlert.reminderNotFound'));
             setLoading(false);
             return;
         }
 
         if (reminderData.recipient_id !== user.id) {
+            // Doesn't belong to the signed-in account on this device (e.g. a
+            // leftover notification from a prior account on a shared phone).
+            // Never allow a response, and clear it so it can't fire again.
+            cancelAllReminderNotifications(reminderId).catch(console.warn);
             setError(t('reminderAlert.notYourAccount'));
             setLoading(false);
             return;
         }
 
         if (!reminderData.is_active) {
+            // Caregiver has deleted/deactivated this reminder. Cancel any
+            // remaining scheduled occurrences for it on this device — this is
+            // the notification-tap path, so the recipient has just proven
+            // Tavora is running and can perform the cancellation.
+            cancelAllReminderNotifications(reminderId).catch(console.warn);
             setInactive(true);
             setLoading(false);
             return;
@@ -286,9 +304,14 @@ export default function ReminderAlertScreen() {
             scheduleSnoozeNotification(
                 { id: reminder.id, title: reminder.title, reminder_type: reminder.reminder_type },
                 todayDate,
-                snoozedUntil
+                snoozedUntil,
+                reminder.recipient_id
             ).catch(console.warn);
         }
+
+        // Full reconcile as a catch-all, same as the dashboard's response
+        // handler — cheap and idempotent.
+        syncRecipientReminderNotifications().catch(console.warn);
 
         router.replace('/recipient-dashboard');
     }

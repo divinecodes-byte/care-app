@@ -1,10 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    AppState,
+    AppStateStatus,
     Platform,
     RefreshControl,
     ScrollView,
@@ -23,8 +25,8 @@ import { supabase } from '@/lib/supabase';
 import {
     cancelReminderOccurrenceNotification,
     requestNotificationPermissions,
-    scheduleReminderNotifications,
     scheduleSnoozeNotification,
+    syncRecipientReminderNotifications,
 } from '@/lib/notifications';
 import { isDueOnDate } from '@/lib/frequency';
 import { getFirstEligibleDateString, isPastNoResponseWindow } from '@/lib/reminderStatus';
@@ -175,6 +177,7 @@ export default function RecipientDashboard() {
     const [savingReminderId, setSavingReminderId] = useState<string | null>(null);
     const [settingsVisible, setSettingsVisible]   = useState(false);
     const [notifDenied, setNotifDenied]           = useState(false);
+    const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 
     async function loadReminders() {
         setLoading(true);
@@ -203,6 +206,14 @@ export default function RecipientDashboard() {
         const granted = await requestNotificationPermissions();
         setNotifDenied(!granted);
 
+        // Reconcile this device's scheduled local notifications against
+        // current server state on every load — this is what cancels a
+        // reminder's stale notification once the caregiver has deleted it
+        // and this device has synced. See lib/notifications.ts.
+        if (granted) {
+            syncRecipientReminderNotifications().catch(console.warn);
+        }
+
         const todayDate = getTodayDateString();
 
         // Exclude reminders not yet eligible today — a reminder created today
@@ -214,11 +225,6 @@ export default function RecipientDashboard() {
         );
 
         if (todaysReminders.length === 0) {
-            // Nothing is eligible today, so there's nothing to exclude — still
-            // schedule every active reminder's recurring trigger as before.
-            if (granted) {
-                scheduleReminderNotifications(data || []).catch(console.warn);
-            }
             setReminders([]);
             setLoading(false);
             return;
@@ -237,21 +243,6 @@ export default function RecipientDashboard() {
             setLoading(false);
             Alert.alert(t('participantDashboard.logsErrorTitle'), logsError.message);
             return;
-        }
-
-        // Schedule local notifications for ALL active reminders (not just today's
-        // eligible ones), except any that already have a real response logged for
-        // today — that occurrence has already been answered, so it must not pop a
-        // notification later. cancelAll + reschedule on every focus keeps the
-        // schedule in sync with any reminder edits the caregiver may have made.
-        if (granted) {
-            const answeredTodayIds = new Set(
-                (logs || [])
-                    .filter((l) => l.status && l.status !== 'pending')
-                    .map((l) => l.reminder_id)
-            );
-            const toSchedule = (data || []).filter((r) => !answeredTodayIds.has(r.id));
-            scheduleReminderNotifications(toSchedule).catch(console.warn);
         }
 
         const now = new Date();
@@ -316,6 +307,21 @@ export default function RecipientDashboard() {
 
     useFocusEffect(useCallback(() => { loadReminders(); }, []));
 
+    // Reconcile local notifications the moment the app comes back to the
+    // foreground — this is the path that catches a caregiver deletion that
+    // happened while this device was backgrounded, without waiting for the
+    // recipient to also re-focus the dashboard screen itself. Single
+    // listener for the component's lifetime; never re-subscribed.
+    useEffect(() => {
+        const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+            if (/inactive|background/.test(appStateRef.current) && nextState === 'active') {
+                syncRecipientReminderNotifications().catch(console.warn);
+            }
+            appStateRef.current = nextState;
+        });
+        return () => subscription.remove();
+    }, []);
+
     async function saveReminderAction(reminder: Reminder, status: ReminderStatus) {
         if (Platform.OS === 'ios') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         setSavingReminderId(reminder.id);
@@ -357,9 +363,15 @@ export default function RecipientDashboard() {
             scheduleSnoozeNotification(
                 { id: reminder.id, title: reminder.title, reminder_type: reminder.reminder_type },
                 todayDate,
-                snoozedUntil
+                snoozedUntil,
+                reminder.recipient_id
             ).catch(console.warn);
         }
+
+        // Full reconcile as a catch-all — cheap and idempotent, and covers
+        // any reminder deletions that landed on this device in the moments
+        // around this response.
+        syncRecipientReminderNotifications().catch(console.warn);
 
         setReminders((current) =>
             current.map((r) =>
