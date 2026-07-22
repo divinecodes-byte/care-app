@@ -20,6 +20,7 @@ import { useTranslation, useStatusLabel } from '@/lib/i18n/context';
 import {
     cancelAllReminderNotifications,
     cancelReminderOccurrenceNotification,
+    isRecipientServerPushEnabled,
     scheduleSnoozeNotification,
     syncRecipientReminderNotifications,
 } from '@/lib/notifications';
@@ -300,7 +301,10 @@ export default function ReminderAlertScreen() {
         // occurrence notification. Future occurrences are untouched.
         cancelReminderOccurrenceNotification(reminder.id, todayDate).catch(console.warn);
 
-        if (status === 'snoozed' && snoozedUntil) {
+        // Server-authoritative recipients get their snooze re-alert from
+        // claim_due_recipient_snooze_deliveries() instead — scheduling a
+        // local one too would risk a duplicate alert.
+        if (status === 'snoozed' && snoozedUntil && !(await isRecipientServerPushEnabled())) {
             scheduleSnoozeNotification(
                 { id: reminder.id, title: reminder.title, reminder_type: reminder.reminder_type },
                 todayDate,

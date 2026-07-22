@@ -19,7 +19,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RADIUS, ThemeColors } from '@/constants/theme';
 import { useLanguage } from '@/lib/i18n/context';
 import { LanguageMode } from '@/lib/i18n/storage';
-import { registerCaregiverPushToken } from '@/lib/notifications';
+import { registerPushToken } from '@/lib/notifications';
 import { supabase } from '@/lib/supabase';
 import { AppearanceMode, useThemeColors, useThemeMode } from '@/lib/theme';
 
@@ -144,11 +144,16 @@ export function SettingsSheet({ visible, onClose }: Props) {
             // Load notification prefs (awaited — content waits for prefs before showing)
             await loadNotifPrefs(user.id);
             // Register push token in background — don't block the sheet from opening
-            registerCaregiverPushToken(user.id).then(result => {
+            registerPushToken(user.id).then(result => {
                 if (!result.ok) setPushTokenMsg(result.message);
             });
 
         } else if (role === 'recipient') {
+            // Idempotent — safe alongside recipient-dashboard's own
+            // registration on mount, and covers a recipient who opens
+            // settings before the dashboard has had a chance to.
+            registerPushToken(user.id).catch(() => {});
+
             const { data: conn } = await supabase
                 .from('connections')
                 .select('caregiver_id')

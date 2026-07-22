@@ -17,6 +17,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
 import { SettingsSheet } from '@/components/settings-sheet';
 import { RADIUS, SHADOW, SPACING, ThemeColors } from '@/constants/theme';
 import { useLanguage, useStatusLabel } from '@/lib/i18n/context';
@@ -24,6 +26,8 @@ import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 import {
     cancelReminderOccurrenceNotification,
+    isRecipientServerPushEnabled,
+    registerPushToken,
     requestNotificationPermissions,
     scheduleSnoozeNotification,
     syncRecipientReminderNotifications,
@@ -86,6 +90,35 @@ function buildSnoozedUntilIso(minutes = 10) {
     const snoozedUntil = new Date();
     snoozedUntil.setMinutes(snoozedUntil.getMinutes() + minutes);
     return snoozedUntil.toISOString();
+}
+
+const TIMEZONE_CAPTURE_DONE_KEY = 'tavora.recipientTimezoneCaptured.v1';
+
+/**
+ * Writes this device's resolved IANA timezone to profiles.timezone once per
+ * install — the server-side reminder delivery pipeline needs a real
+ * per-recipient timezone rather than the migration's uniform
+ * America/New_York default. Gated by its own AsyncStorage flag (independent
+ * of the profile value itself) so it never re-runs just because a device's
+ * real zone happens to already match the default.
+ */
+async function captureDeviceTimezoneOnce(userId: string) {
+    const alreadyCaptured = await AsyncStorage.getItem(TIMEZONE_CAPTURE_DONE_KEY);
+    if (alreadyCaptured) return;
+
+    const deviceTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (deviceTimezone) {
+        const { error } = await supabase
+            .from('profiles')
+            .update({ timezone: deviceTimezone, updated_at: new Date().toISOString() })
+            .eq('id', userId);
+        if (error) {
+            console.warn('[RecipientDashboard] Failed to capture device timezone:', error.message);
+            return; // leave the flag unset so a later load can retry
+        }
+    }
+
+    await AsyncStorage.setItem(TIMEZONE_CAPTURE_DONE_KEY, '1');
 }
 
 function formatTime(time: string) {
@@ -178,6 +211,7 @@ export default function RecipientDashboard() {
     const [settingsVisible, setSettingsVisible]   = useState(false);
     const [notifDenied, setNotifDenied]           = useState(false);
     const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+    const pushRegistrationAttemptedRef = useRef(false);
 
     async function loadReminders() {
         setLoading(true);
@@ -188,6 +222,16 @@ export default function RecipientDashboard() {
             setLoading(false);
             router.replace('/signin');
             return;
+        }
+
+        if (!pushRegistrationAttemptedRef.current) {
+            pushRegistrationAttemptedRef.current = true;
+            registerPushToken(user.id)
+                .then((result) => {
+                    if (!result.ok) console.warn('[RecipientDashboard] push registration failed', result);
+                })
+                .catch(console.warn);
+            captureDeviceTimezoneOnce(user.id).catch(console.warn);
         }
 
         const { data, error } = await supabase
@@ -357,9 +401,12 @@ export default function RecipientDashboard() {
         // occurrence notification. Future occurrences are untouched.
         cancelReminderOccurrenceNotification(reminder.id, todayDate).catch(console.warn);
 
-        // Snoozing gets its own one-shot re-alert at the snooze deadline —
-        // it must not silently disappear until then.
-        if (status === 'snoozed' && snoozedUntil) {
+        // Snoozing gets its own one-shot re-alert at the snooze deadline.
+        // Server-authoritative recipients get this from
+        // claim_due_recipient_snooze_deliveries() instead (reminder_logs
+        // .snoozed_until is the only state that matters there) — scheduling
+        // a local one too would risk a duplicate alert.
+        if (status === 'snoozed' && snoozedUntil && !(await isRecipientServerPushEnabled())) {
             scheduleSnoozeNotification(
                 { id: reminder.id, title: reminder.title, reminder_type: reminder.reminder_type },
                 todayDate,

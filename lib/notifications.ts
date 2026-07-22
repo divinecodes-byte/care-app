@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
@@ -296,26 +297,93 @@ export async function cancelAllReminderNotifications(reminderId: string): Promis
 
 // ─── Cross-device deletion sync ────────────────────────────────────────────────
 
+const LEGACY_CLEANUP_DONE_KEY = 'tavora.legacyLocalReminderNotificationsCleanedUp.v1';
+
 /**
- * The single source of truth for reconciling this device's scheduled local
- * notifications against the recipient's current server-side reminder state.
+ * One-time cleanup for recipients migrating onto server-authoritative push:
+ * cancels any Tavora-identified local notifications left over from the old
+ * local-scheduling path, then never touches anything again (server push
+ * doesn't need this device to have scheduled anything). Gated by an
+ * AsyncStorage flag so it runs exactly once per install, not on every sync.
+ */
+async function runLegacyNotificationCleanupOnce(): Promise<void> {
+    const alreadyCleaned = await AsyncStorage.getItem(LEGACY_CLEANUP_DONE_KEY);
+    if (alreadyCleaned) return;
+
+    const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+    await Promise.all(
+        scheduled
+            .filter(isTavoraNotification)
+            .map((n) => Notifications.cancelScheduledNotificationAsync(n.identifier))
+    );
+
+    await AsyncStorage.setItem(LEGACY_CLEANUP_DONE_KEY, '1');
+}
+
+/**
+ * Whether the signed-in recipient has been migrated to server-authoritative
+ * reminder push (profiles.server_push_enabled). Always re-checked live —
+ * never cached for the session — so a mid-session flag flip can never leave
+ * the client and server pipelines disagreeing about who owns delivery.
+ * Defaults to false (the proven legacy local-scheduling path) on any fetch
+ * failure or when signed out.
+ */
+export async function isRecipientServerPushEnabled(): Promise<boolean> {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return false;
+
+    const { data, error } = await supabase
+        .from('profiles')
+        .select('server_push_enabled')
+        .eq('id', user.id)
+        .maybeSingle();
+
+    if (error || !data) return false;
+    return !!data.server_push_enabled;
+}
+
+/**
+ * The single source of truth for reconciling this device's local
+ * notification state against the recipient's current server-side state.
  *
- * Re-fetches the signed-in recipient's active reminders straight from
- * Supabase, then rebuilds the entire local notification schedule from that
- * fresh data via scheduleReminderNotifications — which cancels every
- * Tavora-scheduled notification first, so anything for a reminder that was
- * deleted, deactivated, transferred to another recipient, no longer
- * eligible, or already answered simply never gets rescheduled. Safe to call
- * as often as needed; it never produces duplicates.
+ * Branches once on profiles.server_push_enabled:
+ *  - true  → server-authoritative. This device must never pre-schedule a
+ *    recurring reminder or snooze; the only remaining local-notification
+ *    responsibility is the one-time legacy cleanup above.
+ *  - false → unchanged legacy behavior: re-fetches the recipient's active
+ *    reminders and rebuilds the entire local notification schedule via
+ *    scheduleReminderNotifications, which cancels every Tavora-scheduled
+ *    notification first, so anything for a reminder that was deleted,
+ *    deactivated, transferred to another recipient, no longer eligible, or
+ *    already answered simply never gets rescheduled.
  *
- * This can only cancel notifications already sitting in *this* device's
- * local notification store — see the audit report for the platform
- * limitation this implies when the caregiver deletes a reminder while the
- * recipient's device is offline or Tavora isn't running.
+ * Safe to call as often as needed in either branch; never produces
+ * duplicates. On the legacy path, this can only cancel notifications
+ * already sitting in *this* device's local notification store — see the
+ * audit report for the platform limitation this implies when the caregiver
+ * deletes a reminder while the recipient's device is offline or Tavora
+ * isn't running. That limitation does not apply once server_push_enabled
+ * is true.
  */
 export async function syncRecipientReminderNotifications(): Promise<void> {
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) return; // signed out — nothing to reconcile
+
+    const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('server_push_enabled')
+        .eq('id', user.id)
+        .maybeSingle();
+
+    if (profileError) {
+        console.warn('[syncRecipientReminderNotifications] Failed to fetch profile:', profileError.message);
+        return;
+    }
+
+    if (profile?.server_push_enabled) {
+        await runLegacyNotificationCleanupOnce();
+        return;
+    }
 
     const { data: reminders, error } = await supabase
         .from('reminders')
@@ -357,11 +425,13 @@ export type PushTokenResult =
     | { ok: false; reason: 'no-permission' | 'project_id_missing' | 'expo-go' | 'error'; message: string };
 
 /**
- * Request permission, fetch the Expo push token, and upsert it into push_tokens.
- * Safe to call on every caregiver dashboard focus — idempotent via upsert.
+ * Request permission, fetch the Expo push token, and upsert it into
+ * push_tokens for the given user — caregiver or recipient, the table and
+ * its RLS are role-agnostic (scoped only to user_id = auth.uid()).
+ * Safe to call on every dashboard focus — idempotent via upsert.
  * Handles Expo Go gracefully: returns ok:false with a clear message instead of crashing.
  */
-export async function registerCaregiverPushToken(caregiverId: string): Promise<PushTokenResult> {
+export async function registerPushToken(userId: string): Promise<PushTokenResult> {
     const { status: existing } = await Notifications.getPermissionsAsync();
     let finalStatus = existing;
     if (existing !== 'granted') {
@@ -393,7 +463,7 @@ export async function registerCaregiverPushToken(caregiverId: string): Promise<P
 
         await supabase.from('push_tokens').upsert(
             {
-                user_id:         caregiverId,
+                user_id:         userId,
                 expo_push_token: token,
                 platform:        Platform.OS,
                 is_active:       true,
@@ -407,7 +477,7 @@ export async function registerCaregiverPushToken(caregiverId: string): Promise<P
         await supabase
             .from('push_tokens')
             .update({ is_active: false })
-            .eq('user_id', caregiverId)
+            .eq('user_id', userId)
             .neq('expo_push_token', token);
 
         return { ok: true };

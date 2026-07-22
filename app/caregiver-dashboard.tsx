@@ -19,7 +19,7 @@ import { RADIUS, SHADOW, SPACING, ThemeColors } from '@/constants/theme';
 import { formatFrequency as formatFrequencyDays, isDueOnDate } from '@/lib/frequency';
 import { useStatusLabel, useTranslation } from '@/lib/i18n/context';
 import { MAX_FREE_PARTICIPANTS } from '@/lib/limits';
-import { registerCaregiverPushToken } from '@/lib/notifications';
+import { registerPushToken } from '@/lib/notifications';
 import { getStoredSelectedConnectionId, setStoredSelectedConnectionId } from '@/lib/selected-participant';
 import { supabase } from '@/lib/supabase';
 import { useThemeColors } from '@/lib/theme';
@@ -647,7 +647,7 @@ export default function CaregiverDashboard() {
 
         if (!pushRegistrationAttemptedRef.current) {
             pushRegistrationAttemptedRef.current = true;
-            registerCaregiverPushToken(user.id)
+            registerPushToken(user.id)
                 .then((result) => {
                     if (!result.ok) {
                         console.warn('[caregiver-dashboard] push registration failed', result);
