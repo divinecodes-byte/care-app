@@ -18,13 +18,66 @@ export type ReminderForScheduling = {
 
 type OccurrenceNotificationData = {
     reminderId: string;
-    recipientId: string;
     occurrenceDate: string;     // "YYYY-MM-DD"
     scheduledFor: string;       // ISO timestamp
-    reminderType: string;
-    title: string;
     notificationType: 'reminder' | 'snooze';
 };
+
+export type NotificationPreviewMode = 'private' | 'detailed';
+
+// ── Notification-preview privacy ────────────────────────────────────────────
+// Mirrors the server-side content rules in send-due-recipient-reminders —
+// kept in sync deliberately so a recipient sees identical banner text
+// whether a given occurrence happened to be delivered by the legacy local
+// path or the server-authoritative one. private is the default and what any
+// fetch failure resolves to; only an explicit 'detailed' row unlocks the
+// reminder's own title.
+const DEFAULT_REMINDER_TITLE = 'Reminder';
+const PRIVATE_REMINDER_TITLE = 'Tavora reminder';
+const PRIVATE_REMINDER_BODY = 'You have a reminder waiting.';
+const PRIVATE_SNOOZE_BODY = 'Your snoozed reminder is ready.';
+const DETAILED_REMINDER_BODY = 'Time to respond to this reminder.';
+const DETAILED_SNOOZE_BODY = 'Snoozed reminder — time to respond.';
+
+function buildNotificationContent(
+    mode: NotificationPreviewMode,
+    kind: 'reminder' | 'snooze',
+    reminderTitle: string
+): { title: string; body: string } {
+    if (mode !== 'detailed') {
+        return {
+            title: PRIVATE_REMINDER_TITLE,
+            body: kind === 'snooze' ? PRIVATE_SNOOZE_BODY : PRIVATE_REMINDER_BODY,
+        };
+    }
+    return {
+        title: reminderTitle.trim() || DEFAULT_REMINDER_TITLE,
+        body: kind === 'snooze' ? DETAILED_SNOOZE_BODY : DETAILED_REMINDER_BODY,
+    };
+}
+
+/**
+ * Fetches the signed-in user's current notification preview mode. Fails
+ * toward 'private' on any error, missing row, or signed-out state — never
+ * silently resolves to 'detailed'.
+ */
+export async function getNotificationPreviewMode(): Promise<NotificationPreviewMode> {
+    try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return 'private';
+
+        const { data, error } = await supabase
+            .from('profiles')
+            .select('notification_preview_mode')
+            .eq('id', user.id)
+            .maybeSingle();
+
+        if (error || !data) return 'private';
+        return data.notification_preview_mode === 'detailed' ? 'detailed' : 'private';
+    } catch {
+        return 'private';
+    }
+}
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -116,7 +169,7 @@ export async function requestNotificationPermissions(): Promise<boolean> {
  */
 async function scheduleReminderNotifications(
     reminders: ReminderForScheduling[],
-    recipientId: string
+    mode: NotificationPreviewMode
 ): Promise<void> {
     // Cancel only Tavora's own scheduled notifications — never anything else
     // this app or another feature may have scheduled — then rebuild the
@@ -174,7 +227,7 @@ async function scheduleReminderNotifications(
                 // re-alert at snoozed_until; every other terminal status
                 // (taken/skipped/missed, or an expired snooze) gets nothing.
                 if (log.status === 'snoozed' && log.snoozed_until) {
-                    await scheduleSnoozeNotification(reminder, occurrenceDate, log.snoozed_until, recipientId);
+                    await scheduleSnoozeNotification(reminder, occurrenceDate, log.snoozed_until, mode);
                 }
                 continue;
             }
@@ -185,19 +238,17 @@ async function scheduleReminderNotifications(
 
             const data: OccurrenceNotificationData = {
                 reminderId:   reminder.id,
-                recipientId,
                 occurrenceDate,
                 scheduledFor: scheduledFor.toISOString(),
-                reminderType: reminder.reminder_type,
-                title:        reminder.title,
                 notificationType: 'reminder',
             };
+            const { title, body } = buildNotificationContent(mode, 'reminder', reminder.title);
 
             await Notifications.scheduleNotificationAsync({
                 identifier: occurrenceIdentifier(reminder.id, occurrenceDate),
                 content: {
-                    title: reminder.title,
-                    body:  'Time to respond to this reminder.',
+                    title,
+                    body,
                     data,
                     sound: 'default',
                     // Urgent, time-bound care event — eligible to break through
@@ -221,26 +272,24 @@ export async function scheduleSnoozeNotification(
     reminder: { id: string; title: string; reminder_type: string },
     occurrenceDate: string,
     snoozedUntilIso: string,
-    recipientId: string
+    mode: NotificationPreviewMode
 ): Promise<void> {
     const fireDate = new Date(snoozedUntilIso);
     if (fireDate.getTime() <= Date.now()) return;
 
     const data: OccurrenceNotificationData = {
         reminderId:   reminder.id,
-        recipientId,
         occurrenceDate,
         scheduledFor: fireDate.toISOString(),
-        reminderType: reminder.reminder_type,
-        title:        reminder.title,
         notificationType: 'snooze',
     };
+    const { title, body } = buildNotificationContent(mode, 'snooze', reminder.title);
 
     await Notifications.scheduleNotificationAsync({
         identifier: `${occurrenceIdentifier(reminder.id, occurrenceDate)}-snooze`,
         content: {
-            title: reminder.title,
-            body:  'Snoozed reminder — time to respond.',
+            title,
+            body,
             data,
             sound: 'default',
             // Same urgency as the original occurrence it's re-alerting for.
@@ -386,7 +435,7 @@ export async function syncRecipientReminderNotifications(): Promise<void> {
 
     const { data: profile, error: profileError } = await supabase
         .from('profiles')
-        .select('server_push_enabled')
+        .select('server_push_enabled, notification_preview_mode')
         .eq('id', user.id)
         .maybeSingle();
 
@@ -399,6 +448,10 @@ export async function syncRecipientReminderNotifications(): Promise<void> {
         await runLegacyNotificationCleanupOnce();
         return;
     }
+
+    // Fails toward 'private' on a missing/unreadable value — same rule as
+    // the server-side pipeline, never silently upgrades to 'detailed'.
+    const mode: NotificationPreviewMode = profile?.notification_preview_mode === 'detailed' ? 'detailed' : 'private';
 
     const { data: reminders, error } = await supabase
         .from('reminders')
@@ -413,7 +466,7 @@ export async function syncRecipientReminderNotifications(): Promise<void> {
         return;
     }
 
-    await scheduleReminderNotifications(reminders ?? [], user.id);
+    await scheduleReminderNotifications(reminders ?? [], mode);
 }
 
 /**

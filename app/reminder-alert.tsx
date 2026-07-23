@@ -20,6 +20,7 @@ import { useTranslation, useStatusLabel } from '@/lib/i18n/context';
 import {
     cancelAllReminderNotifications,
     cancelReminderOccurrenceNotification,
+    getNotificationPreviewMode,
     isRecipientServerPushEnabled,
     scheduleSnoozeNotification,
     syncRecipientReminderNotifications,
@@ -305,11 +306,12 @@ export default function ReminderAlertScreen() {
         // claim_due_recipient_snooze_deliveries() instead — scheduling a
         // local one too would risk a duplicate alert.
         if (status === 'snoozed' && snoozedUntil && !(await isRecipientServerPushEnabled())) {
+            const mode = await getNotificationPreviewMode();
             scheduleSnoozeNotification(
                 { id: reminder.id, title: reminder.title, reminder_type: reminder.reminder_type },
                 todayDate,
                 snoozedUntil,
-                reminder.recipient_id
+                mode
             ).catch(console.warn);
         }
 

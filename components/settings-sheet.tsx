@@ -63,6 +63,13 @@ type NotifPrefs = {
     notify_taken:   boolean;
 };
 
+type PreviewMode = 'private' | 'detailed';
+
+const PREVIEW_MODE_OPTIONS: { value: PreviewMode; icon: string; labelKey: string; captionKey: string }[] = [
+    { value: 'private',  icon: 'eye-off-outline', labelKey: 'settings.previewPrivateLabel',  captionKey: 'settings.previewPrivateCaption' },
+    { value: 'detailed', icon: 'eye-outline',      labelKey: 'settings.previewDetailedLabel', captionKey: 'settings.previewDetailedCaption' },
+];
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function SettingsSheet({ visible, onClose }: Props) {
@@ -83,6 +90,11 @@ export function SettingsSheet({ visible, onClose }: Props) {
     const [notifPrefs,   setNotifPrefs]   = useState<NotifPrefs | null>(null);
     const [pushTokenMsg, setPushTokenMsg] = useState<string | null>(null);
 
+    // Notification preview mode (both roles) — defaults to 'private' until the
+    // profile row loads, matching the server-side default so there's never a
+    // flash of a state that implies detailed content might already be on.
+    const [previewMode, setPreviewMode] = useState<PreviewMode>('private');
+
     useEffect(() => {
         if (visible) fetchProfile();
     }, [visible]);
@@ -96,13 +108,16 @@ export function SettingsSheet({ visible, onClose }: Props) {
 
         const { data: profileRow } = await supabase
             .from('profiles')
-            .select('full_name, role')
+            .select('full_name, role, notification_preview_mode')
             .eq('id', user.id)
             .maybeSingle();
 
         const role = profileRow?.role ?? '';
         let connectionStatus = t('settings.noConnection');
         let connectionOk     = false;
+
+        setUserId(user.id);
+        setPreviewMode(profileRow?.notification_preview_mode === 'detailed' ? 'detailed' : 'private');
 
         if (role === 'caregiver') {
             const { data: accepted } = await supabase
@@ -141,7 +156,6 @@ export function SettingsSheet({ visible, onClose }: Props) {
                     : t('settings.noParticipantConnected');
             }
 
-            setUserId(user.id);
             // Load notification prefs (awaited — content waits for prefs before showing)
             await loadNotifPrefs(user.id);
             // Register push token in background — don't block the sheet from opening
@@ -243,6 +257,26 @@ export function SettingsSheet({ visible, onClose }: Props) {
         }
     }
 
+    async function updatePreviewMode(mode: PreviewMode) {
+        if (!userId || mode === previewMode) return;
+
+        // Optimistic update, rolled back on failure — profiles RLS
+        // (auth.uid() = id) guarantees this can only ever touch the
+        // signed-in user's own row.
+        const previous = previewMode;
+        setPreviewMode(mode);
+
+        const { error } = await supabase
+            .from('profiles')
+            .update({ notification_preview_mode: mode, updated_at: new Date().toISOString() })
+            .eq('id', userId);
+
+        if (error) {
+            console.error('[PreviewMode] update error:', error.message);
+            setPreviewMode(previous);
+        }
+    }
+
     async function handleSignOut() {
         setSigningOut(true);
         await supabase.auth.signOut();
@@ -324,6 +358,37 @@ export function SettingsSheet({ visible, onClose }: Props) {
                     <Text style={styles.rowCaption}>{caption}</Text>
                 </View>
                 <Ionicons name="chevron-forward" size={16} color={C.textMuted} />
+            </TouchableOpacity>
+        );
+    }
+
+    function SelectRow({
+        icon,
+        label,
+        caption,
+        selected,
+        onPress,
+    }: { icon: string; label: string; caption: string; selected: boolean; onPress: () => void }) {
+        return (
+            <TouchableOpacity
+                style={styles.row}
+                onPress={onPress}
+                activeOpacity={0.6}
+                accessibilityRole="radio"
+                accessibilityState={{ selected }}
+                accessibilityLabel={label}
+                accessibilityHint={caption}
+            >
+                <Ionicons name={icon as any} size={17} color={C.textMuted} style={styles.rowIcon} />
+                <View style={styles.rowBody}>
+                    <Text style={styles.rowLabel}>{label}</Text>
+                    <Text style={styles.rowCaption}>{caption}</Text>
+                </View>
+                <Ionicons
+                    name={selected ? 'radio-button-on' : 'radio-button-off'}
+                    size={20}
+                    color={selected ? C.primary : C.textMuted}
+                />
             </TouchableOpacity>
         );
     }
@@ -491,6 +556,33 @@ export function SettingsSheet({ visible, onClose }: Props) {
                                     </Card>
                                 </>
                             ) : null}
+
+                            {/* ── Notification previews (both roles) ──────────── */}
+                            <SectionLabel text={t('settings.sectionPreviewMode')} />
+                            <Card>
+                                {PREVIEW_MODE_OPTIONS.map((option, i) => (
+                                    <View key={option.value}>
+                                        {i > 0 ? <Sep /> : null}
+                                        <SelectRow
+                                            icon={option.icon}
+                                            label={t(option.labelKey)}
+                                            caption={t(option.captionKey)}
+                                            selected={previewMode === option.value}
+                                            onPress={() => updatePreviewMode(option.value)}
+                                        />
+                                    </View>
+                                ))}
+                                <Sep />
+                                <View style={styles.pushBanner}>
+                                    <Ionicons
+                                        name="information-circle-outline"
+                                        size={14}
+                                        color={C.textMuted}
+                                        style={styles.pushBannerIcon}
+                                    />
+                                    <Text style={styles.pushBannerText}>{t('settings.previewModeNote')}</Text>
+                                </View>
+                            </Card>
 
                             {/* ── Appearance ─────────────────────────────────── */}
                             <SectionLabel text={t('settings.sectionAppearance')} />

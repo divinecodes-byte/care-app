@@ -12,6 +12,38 @@ const EXPO_BATCH_SIZE = 100;
 const MAX_ATTEMPTS = 5;
 const RETRY_COOLDOWN_SECONDS = 30;
 
+// ── Notification-preview privacy (ops-hardening task #5) ────────────────────
+// private (default): generic banner text, no reminder title anywhere in the
+// payload. detailed: the recipient explicitly opted in via Settings, so the
+// banner (not content.data — that stays minimal either way) may show the
+// reminder's own title. A preference that can't be read for any reason
+// always resolves to 'private' — never silently upgrades to detailed.
+type PreviewMode = 'private' | 'detailed';
+const DEFAULT_REMINDER_TITLE = 'Reminder';
+
+const PRIVATE_REMINDER_TITLE = 'Tavora reminder';
+const PRIVATE_REMINDER_BODY = 'You have a reminder waiting.';
+const PRIVATE_SNOOZE_BODY = 'Your snoozed reminder is ready.';
+const DETAILED_REMINDER_BODY = 'Time to respond to this reminder.';
+const DETAILED_SNOOZE_BODY = 'Snoozed reminder — time to respond.';
+
+function buildNotificationContent(
+  mode: PreviewMode,
+  deliveryType: 'reminder' | 'snooze',
+  reminderTitle: string
+): { title: string; body: string } {
+  if (mode !== 'detailed') {
+    return {
+      title: PRIVATE_REMINDER_TITLE,
+      body: deliveryType === 'snooze' ? PRIVATE_SNOOZE_BODY : PRIVATE_REMINDER_BODY,
+    };
+  }
+  return {
+    title: reminderTitle.trim() || DEFAULT_REMINDER_TITLE,
+    body: deliveryType === 'snooze' ? DETAILED_SNOOZE_BODY : DETAILED_REMINDER_BODY,
+  };
+}
+
 type DeliveryRow = {
   id: string;
   reminder_id: string;
@@ -181,6 +213,28 @@ Deno.serve(async (req) => {
     }
   }
 
+  // Unlike getReminder/getLogStatus, a failed lookup here must never block or
+  // retry a send — it fails toward the safe default (private) and the
+  // notification still goes out, just with generic content. This is the
+  // literal "fail private, do not default to detailed" requirement.
+  const previewModeCache = new Map<string, PreviewMode>();
+  async function getPreviewMode(recipientId: string): Promise<PreviewMode> {
+    if (previewModeCache.has(recipientId)) return previewModeCache.get(recipientId)!;
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('notification_preview_mode')
+        .eq('id', recipientId)
+        .maybeSingle();
+      const mode: PreviewMode = !error && data?.notification_preview_mode === 'detailed' ? 'detailed' : 'private';
+      previewModeCache.set(recipientId, mode);
+      return mode;
+    } catch {
+      previewModeCache.set(recipientId, 'private');
+      return 'private';
+    }
+  }
+
   const tokenCache = new Map<string, { id: string; expo_push_token: string }[]>();
   async function getActiveTokens(recipientId: string): Promise<{ id: string; expo_push_token: string }[]> {
     if (tokenCache.has(recipientId)) return tokenCache.get(recipientId)!;
@@ -292,23 +346,28 @@ Deno.serve(async (req) => {
       continue;
     }
 
+    const mode = await getPreviewMode(row.recipient_id);
+    const { title, body } = buildNotificationContent(mode, row.delivery_type, reminder.title);
+
     for (const token of tokens) {
       messages.push({
         rowId: row.id,
         tokenId: token.id,
         to: token.expo_push_token,
-        title: reminder.title,
-        body:
-          row.delivery_type === 'snooze'
-            ? 'Snoozed reminder — time to respond.'
-            : 'Time to respond to this reminder.',
+        title,
+        body,
+        // Minimal routing/state payload only — reminderId is required to
+        // fetch current state after tap; occurrenceDate/scheduledFor/
+        // notificationType are the delivery's own identity. recipientId and
+        // reminderType were never read by any client code (confirmed by
+        // audit) and reminder title never belongs in data, private or
+        // detailed — the tap flow always re-fetches from Supabase before
+        // showing anything (reminder-alert.tsx), so nothing here needs to
+        // carry content, only enough to know what to fetch.
         data: {
           reminderId: row.reminder_id,
-          recipientId: row.recipient_id,
           occurrenceDate: row.occurrence_date,
           scheduledFor: row.scheduled_for,
-          reminderType: reminder.reminder_type,
-          title: reminder.title,
           notificationType: row.delivery_type,
         },
       });

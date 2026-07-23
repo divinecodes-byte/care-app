@@ -24,6 +24,7 @@ import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 import {
     cancelReminderOccurrenceNotification,
+    getNotificationPreviewMode,
     isRecipientServerPushEnabled,
     registerPushToken,
     requestNotificationPermissions,
@@ -392,11 +393,12 @@ export default function RecipientDashboard() {
         // .snoozed_until is the only state that matters there) — scheduling
         // a local one too would risk a duplicate alert.
         if (status === 'snoozed' && snoozedUntil && !(await isRecipientServerPushEnabled())) {
+            const mode = await getNotificationPreviewMode();
             scheduleSnoozeNotification(
                 { id: reminder.id, title: reminder.title, reminder_type: reminder.reminder_type },
                 todayDate,
                 snoozedUntil,
-                reminder.recipient_id
+                mode
             ).catch(console.warn);
         }
 
