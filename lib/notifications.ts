@@ -295,6 +295,21 @@ export async function cancelAllReminderNotifications(reminderId: string): Promis
     );
 }
 
+/**
+ * Cancel every Tavora-identified local notification on this device,
+ * unconditionally — used after account deletion, where there is no longer
+ * any reminder/account state left to scope a cancellation to. Unlike the
+ * legacy-migration cleanup below, this always runs (no AsyncStorage gate).
+ */
+export async function cancelAllTavoraNotifications(): Promise<void> {
+    const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+    await Promise.all(
+        scheduled
+            .filter(isTavoraNotification)
+            .map((n) => Notifications.cancelScheduledNotificationAsync(n.identifier))
+    );
+}
+
 // ─── Cross-device deletion sync ────────────────────────────────────────────────
 
 const LEGACY_CLEANUP_DONE_KEY = 'tavora.legacyLocalReminderNotificationsCleanedUp.v1';

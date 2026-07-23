@@ -564,6 +564,20 @@ export function SettingsSheet({ visible, onClose }: Props) {
                                 />
                             </Card>
 
+                            {/* ── Account ────────────────────────────────────── */}
+                            <SectionLabel text={t('settings.sectionAccount')} />
+                            <Card>
+                                <LinkRow
+                                    icon="trash-outline"
+                                    label={t('settings.deleteAccountLabel')}
+                                    caption={t('settings.deleteAccountCaption')}
+                                    onPress={() => {
+                                        onClose();
+                                        router.push('/delete-account');
+                                    }}
+                                />
+                            </Card>
+
                             {/* ── Sign out ───────────────────────────────────── */}
                             <TouchableOpacity
                                 style={[styles.signOutBtn, signingOut && styles.signOutDisabled]}
