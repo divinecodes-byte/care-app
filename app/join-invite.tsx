@@ -53,27 +53,27 @@ export default function JoinInviteScreen() {
             return;
         }
 
-        // RLS hides other people's connection rows, so an already-accepted
-        // invite is invisible to a plain SELECT/UPDATE from this account —
-        // this RPC only returns a status string (no row data) so we can give
-        // a clear, specific message instead of a generic "invalid code".
-        const { data: codeStatus, error: statusError } = await supabase
-            .rpc('check_invite_code', { p_code: normalizedCode });
+        // Validates and accepts atomically, server-side — self-connection,
+        // expiration, and a concurrent acceptance race are all enforced
+        // inside the function itself, not by a raw client UPDATE. Returns a
+        // status string only (no row data), so a guessed code can't be used
+        // to learn anything about who owns it.
+        const { data: result, error: acceptError } = await supabase
+            .rpc('accept_invite_code', { p_code: normalizedCode });
 
-        if (statusError) {
-            setLoading(false);
-            Alert.alert(t('joinInvite.errorTitle'), statusError.message);
+        setLoading(false);
+
+        if (acceptError) {
+            Alert.alert(t('joinInvite.errorTitle'), acceptError.message);
             return;
         }
 
-        if (codeStatus === 'not_found') {
-            setLoading(false);
+        if (result === 'not_found') {
             Alert.alert(t('joinInvite.invalidCodeTitle'), t('joinInvite.invalidCodeNotFound'));
             return;
         }
 
-        if (codeStatus === 'accepted') {
-            setLoading(false);
+        if (result === 'already_accepted') {
             Alert.alert(
                 t('joinInvite.alreadyUsedTitle'),
                 t('joinInvite.alreadyUsedMessage')
@@ -81,32 +81,13 @@ export default function JoinInviteScreen() {
             return;
         }
 
-        const { data, error } = await supabase
-            .from('connections')
-            .update({
-                recipient_id: user.id,
-                status:       'accepted',
-                accepted_at:  new Date().toISOString(),
-            })
-            .eq('invite_code', normalizedCode)
-            .eq('status', 'pending')
-            .is('recipient_id', null)
-            .select()
-            .maybeSingle();
-
-        setLoading(false);
-
-        if (error) {
-            Alert.alert(t('joinInvite.errorTitle'), error.message);
+        if (result === 'expired') {
+            Alert.alert(t('joinInvite.invalidCodeTitle'), t('joinInvite.expiredCodeMessage'));
             return;
         }
 
-        if (!data) {
-            // Someone else claimed it between the check above and this update.
-            Alert.alert(
-                t('joinInvite.alreadyUsedTitle'),
-                t('joinInvite.alreadyUsedMessage')
-            );
+        if (result === 'self') {
+            Alert.alert(t('joinInvite.invalidCodeTitle'), t('joinInvite.selfConnectMessage'));
             return;
         }
 

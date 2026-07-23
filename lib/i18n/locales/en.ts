@@ -99,6 +99,8 @@ export const en = {
         errorTitle: 'Invite error',
         alreadyUsedTitle: 'Invite already used',
         alreadyUsedMessage: 'This invite has already been used. Ask your organizer for a new invite.',
+        expiredCodeMessage: 'This invite code has expired. Ask your organizer for a new one.',
+        selfConnectMessage: 'You can’t use your own invite code.',
     },
 
     status: {

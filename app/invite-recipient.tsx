@@ -21,15 +21,6 @@ import { MAX_FREE_PARTICIPANTS } from '@/lib/limits';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 
-function generateInviteCode() {
-    const characters = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    let code = '';
-    for (let i = 0; i < 6; i++) {
-        code += characters.charAt(Math.floor(Math.random() * characters.length));
-    }
-    return code;
-}
-
 export default function InviteRecipientScreen() {
     const C = useThemeColors();
     const t = useTranslation();
@@ -82,33 +73,19 @@ export default function InviteRecipientScreen() {
             return;
         }
 
-        const code = generateInviteCode();
-
-        // Only regenerate in place if we already created a pending row earlier
-        // in *this* screen visit (e.g. tapping "Generate New Code" again before
-        // sharing). Otherwise always insert a brand new row — each Add
-        // Participant action is a separate invite for a separate participant,
-        // never a reuse of an older pending invite.
-        const { data: inserted, error } = draftConnectionId
-            ? await supabase
-                  .from('connections')
-                  .update({ invite_code: code })
-                  .eq('id', draftConnectionId)
-                  .select('id')
-                  .maybeSingle()
-            : await supabase
-                  .from('connections')
-                  .insert({
-                      caregiver_id: user.id,
-                      invite_code:  code,
-                      status:       'pending',
-                  })
-                  .select('id')
-                  .maybeSingle();
+        // Server-generates a cryptographically secure code and a 7-day
+        // expiration — passing draftConnectionId regenerates that same
+        // pending row in place (e.g. tapping "Generate New Code" again
+        // before sharing); omitting it creates a fresh invite. Each "Add
+        // Participant" action is a separate invite for a separate
+        // participant, never a reuse of an older pending invite.
+        const { data: result, error } = await supabase
+            .rpc('create_invite_code', { p_existing_connection_id: draftConnectionId })
+            .maybeSingle() as { data: { id: string; invite_code: string; expires_at: string } | null; error: { message: string } | null };
 
         setLoading(false);
 
-        if (error) {
+        if (error || !result) {
             Alert.alert(
                 t('inviteParticipant.saveErrorTitle'),
                 t('inviteParticipant.saveErrorMessage')
@@ -116,8 +93,8 @@ export default function InviteRecipientScreen() {
             return;
         }
 
-        if (inserted?.id) setDraftConnectionId(inserted.id);
-        setInviteCode(code);
+        setDraftConnectionId(result.id);
+        setInviteCode(result.invite_code);
     }
 
     async function shareInviteCode() {

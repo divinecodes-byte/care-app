@@ -101,6 +101,8 @@ export const es: typeof en = {
         errorTitle: 'Error de invitación',
         alreadyUsedTitle: 'Invitación ya utilizada',
         alreadyUsedMessage: 'Esta invitación ya fue utilizada. Pídele a tu organizador un nuevo código.',
+        expiredCodeMessage: 'Este código de invitación ha caducado. Pídele a tu organizador uno nuevo.',
+        selfConnectMessage: 'No puedes usar tu propio código de invitación.',
     },
 
     status: {
