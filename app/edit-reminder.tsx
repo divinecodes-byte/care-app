@@ -21,6 +21,12 @@ import { useTranslation } from '@/lib/i18n/context';
 import { useThemeColors } from '@/lib/theme';
 import { buildTimeString, parseTimeString, TimePickerField } from '@/components/TimePickerField';
 import { DAY_OPTIONS, daysForFrequency, Frequency, frequencyForDays } from '@/lib/frequency';
+import {
+    assertValidNoResponseMinutes,
+    DEFAULT_NO_RESPONSE_MINUTES,
+    isSelectableNoResponseMinutes,
+    NO_RESPONSE_OPTIONS,
+} from '@/lib/reminderOptions';
 import { supabase } from '@/lib/supabase';
 
 // ─── Types & constants ────────────────────────────────────────────────────────
@@ -55,8 +61,6 @@ const FREQUENCY_LABEL_KEYS: Record<Frequency, string> = {
     custom:   'reminderForm.freqCustom',
 };
 
-const NO_RESPONSE_OPTIONS = [1, 5, 10, 15, 30, 60];
-
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function EditReminderScreen() {
@@ -86,7 +90,7 @@ export default function EditReminderScreen() {
     });
     const [frequency,         setFrequency]         = useState<Frequency>('daily');
     const [selectedDays,      setSelectedDays]      = useState<number[]>([]);
-    const [noResponseMinutes, setNoResponseMinutes] = useState(15);
+    const [noResponseMinutes, setNoResponseMinutes] = useState(DEFAULT_NO_RESPONSE_MINUTES);
     const [participantName,   setParticipantName]   = useState<string | null>(null);
     const [connectionId,      setConnectionId]      = useState<string | null>(null);
 
@@ -142,8 +146,17 @@ export default function EditReminderScreen() {
         // it matches rather than trusting the stored frequency text.
         setFrequency(frequencyForDays(rem.days_of_week));
         setSelectedDays(rem.days_of_week);
+        // A reminder stored with a value no longer offered as a chip option
+        // (e.g. the legacy 1-minute window, removed for response-time safety)
+        // loads safely here rather than crashing or silently keeping 1 —
+        // the form falls back to displaying the current default. Saving the
+        // form then requires an explicit chip selection, which can only ever
+        // be one of NO_RESPONSE_OPTIONS, so a 1-minute reminder can't be
+        // re-saved as 1 by leaving this field untouched.
         setNoResponseMinutes(
-            NO_RESPONSE_OPTIONS.includes(rem.no_response_minutes) ? rem.no_response_minutes : 15
+            isSelectableNoResponseMinutes(rem.no_response_minutes)
+                ? rem.no_response_minutes
+                : DEFAULT_NO_RESPONSE_MINUTES
         );
         setPageLoading(false);
     }
@@ -158,6 +171,13 @@ export default function EditReminderScreen() {
             Alert.alert(t('reminderForm.selectDayTitle'), t('reminderForm.selectDayMessage'));
             return;
         }
+
+        // Defense-in-depth: the chip UI can only ever set one of
+        // NO_RESPONSE_OPTIONS, but never let a 0/negative/NaN/unsupported
+        // value reach the database regardless — this is also what stops an
+        // untouched legacy 1-minute reminder from being re-saved as 1, since
+        // loadReminder() already remapped it to a real chip selection above.
+        assertValidNoResponseMinutes(noResponseMinutes);
 
         if (Platform.OS === 'ios') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         setSaving(true);
@@ -350,6 +370,7 @@ export default function EditReminderScreen() {
 
                             <Text style={styles.label}>{t('reminderForm.timeOfDayLabel')}</Text>
                             <TimePickerField value={timeValue} onChange={setTimeValue} />
+                            <Text style={styles.helperText}>{t('reminderForm.timezoneFollowsParticipant')}</Text>
 
                             <Text style={[styles.label, { marginTop: 18 }]}>{t('reminderForm.frequencyLabel')}</Text>
                             <View style={styles.frequencyRow}>

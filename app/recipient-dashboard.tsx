@@ -17,8 +17,6 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
 import { SettingsSheet } from '@/components/settings-sheet';
 import { RADIUS, SHADOW, SPACING, ThemeColors } from '@/constants/theme';
 import { useLanguage, useStatusLabel } from '@/lib/i18n/context';
@@ -32,6 +30,7 @@ import {
     scheduleSnoozeNotification,
     syncRecipientReminderNotifications,
 } from '@/lib/notifications';
+import { syncCurrentUserTimezone } from '@/lib/timezone';
 import { isDueOnDate } from '@/lib/frequency';
 import { getFirstEligibleDateString, isPastNoResponseWindow } from '@/lib/reminderStatus';
 
@@ -90,35 +89,6 @@ function buildSnoozedUntilIso(minutes = 10) {
     const snoozedUntil = new Date();
     snoozedUntil.setMinutes(snoozedUntil.getMinutes() + minutes);
     return snoozedUntil.toISOString();
-}
-
-const TIMEZONE_CAPTURE_DONE_KEY = 'tavora.recipientTimezoneCaptured.v1';
-
-/**
- * Writes this device's resolved IANA timezone to profiles.timezone once per
- * install — the server-side reminder delivery pipeline needs a real
- * per-recipient timezone rather than the migration's uniform
- * America/New_York default. Gated by its own AsyncStorage flag (independent
- * of the profile value itself) so it never re-runs just because a device's
- * real zone happens to already match the default.
- */
-async function captureDeviceTimezoneOnce(userId: string) {
-    const alreadyCaptured = await AsyncStorage.getItem(TIMEZONE_CAPTURE_DONE_KEY);
-    if (alreadyCaptured) return;
-
-    const deviceTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    if (deviceTimezone) {
-        const { error } = await supabase
-            .from('profiles')
-            .update({ timezone: deviceTimezone, updated_at: new Date().toISOString() })
-            .eq('id', userId);
-        if (error) {
-            console.warn('[RecipientDashboard] Failed to capture device timezone:', error.message);
-            return; // leave the flag unset so a later load can retry
-        }
-    }
-
-    await AsyncStorage.setItem(TIMEZONE_CAPTURE_DONE_KEY, '1');
 }
 
 function formatTime(time: string) {
@@ -224,6 +194,16 @@ export default function RecipientDashboard() {
             return;
         }
 
+        // Reconcile this device's timezone every load (not just once) — a
+        // recipient who travels needs their stored profiles.timezone to
+        // follow their current device, since that's what the server-side
+        // delivery/missed-detection functions resolve reminder times
+        // against. Cheap no-op when unchanged; fire-and-forget so a slow or
+        // unavailable network never blocks the dashboard from rendering.
+        // Runs before push (re)registration, matching this device's own
+        // current identity being established first.
+        syncCurrentUserTimezone().catch(console.warn);
+
         if (!pushRegistrationAttemptedRef.current) {
             pushRegistrationAttemptedRef.current = true;
             registerPushToken(user.id)
@@ -231,7 +211,6 @@ export default function RecipientDashboard() {
                     if (!result.ok) console.warn('[RecipientDashboard] push registration failed', result);
                 })
                 .catch(console.warn);
-            captureDeviceTimezoneOnce(user.id).catch(console.warn);
         }
 
         const { data, error } = await supabase
@@ -359,7 +338,13 @@ export default function RecipientDashboard() {
     useEffect(() => {
         const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
             if (/inactive|background/.test(appStateRef.current) && nextState === 'active') {
-                syncRecipientReminderNotifications().catch(console.warn);
+                // Timezone first (e.g. the recipient landed after a flight),
+                // then reconcile notifications against current server state.
+                syncCurrentUserTimezone()
+                    .catch(console.warn)
+                    .finally(() => {
+                        syncRecipientReminderNotifications().catch(console.warn);
+                    });
             }
             appStateRef.current = nextState;
         });

@@ -21,6 +21,7 @@ import { useLanguage } from '@/lib/i18n/context';
 import { LanguageMode } from '@/lib/i18n/storage';
 import { registerPushToken } from '@/lib/notifications';
 import { supabase } from '@/lib/supabase';
+import { syncCurrentUserTimezone } from '@/lib/timezone';
 import { AppearanceMode, useThemeColors, useThemeMode } from '@/lib/theme';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -152,6 +153,7 @@ export function SettingsSheet({ visible, onClose }: Props) {
             // Idempotent — safe alongside recipient-dashboard's own
             // registration on mount, and covers a recipient who opens
             // settings before the dashboard has had a chance to.
+            syncCurrentUserTimezone().catch(() => {});
             registerPushToken(user.id).catch(() => {});
 
             const { data: conn } = await supabase

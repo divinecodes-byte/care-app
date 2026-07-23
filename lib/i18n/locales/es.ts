@@ -299,6 +299,7 @@ export const es: typeof en = {
         typeOther: 'Otro',
         sectionWhen: 'Cuándo',
         timeOfDayLabel: 'Hora del día',
+        timezoneFollowsParticipant: 'Los horarios de los recordatorios siguen la zona horaria actual del participante.',
         frequencyLabel: 'Frecuencia',
         freqDaily: 'Todos los días',
         freqWeekdays: 'Lun–Vie',

@@ -19,6 +19,7 @@ import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
 import { useTranslation } from '@/lib/i18n/context';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
+import { syncCurrentUserTimezone } from '@/lib/timezone';
 
 export default function SigninScreen() {
     const C = useThemeColors();
@@ -76,6 +77,10 @@ export default function SigninScreen() {
         }
 
         if (profile?.role === 'recipient') {
+            // Fire-and-forget — the recipient's own device is the only
+            // source of truth for their timezone, reconciled here right
+            // after login rather than waiting for the dashboard to mount.
+            syncCurrentUserTimezone().catch(() => {});
             router.replace('/recipient-dashboard');
             return;
         }

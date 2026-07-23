@@ -297,6 +297,7 @@ export const en = {
         typeOther: 'Other',
         sectionWhen: 'When',
         timeOfDayLabel: 'Time of day',
+        timezoneFollowsParticipant: 'Reminder times follow the participant’s current timezone.',
         frequencyLabel: 'Frequency',
         freqDaily: 'Every day',
         freqWeekdays: 'Mon–Fri',

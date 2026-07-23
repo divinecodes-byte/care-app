@@ -21,6 +21,7 @@ import { useTranslation } from '@/lib/i18n/context';
 import { useThemeColors } from '@/lib/theme';
 import { buildTimeString, TimePickerField } from '@/components/TimePickerField';
 import { DAY_OPTIONS, daysForFrequency, Frequency } from '@/lib/frequency';
+import { assertValidNoResponseMinutes, DEFAULT_NO_RESPONSE_MINUTES, NO_RESPONSE_OPTIONS } from '@/lib/reminderOptions';
 import { supabase } from '@/lib/supabase';
 
 type ReminderType = 'medication' | 'hydration' | 'appointment' | 'meal' | 'exercise' | 'other';
@@ -59,8 +60,6 @@ const FREQUENCY_LABEL_KEYS: Record<Frequency, string> = {
     custom:   'reminderForm.freqCustom',
 };
 
-const NO_RESPONSE_OPTIONS = [1, 5, 10, 15, 30, 60];
-
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function CreateReminderScreen() {
@@ -87,7 +86,7 @@ export default function CreateReminderScreen() {
     });
     const [frequency, setFrequency]                 = useState<Frequency>('daily');
     const [selectedDays, setSelectedDays]           = useState<number[]>([]);
-    const [noResponseMinutes, setNoResponseMinutes] = useState(15);
+    const [noResponseMinutes, setNoResponseMinutes] = useState(DEFAULT_NO_RESPONSE_MINUTES);
     const [loading, setLoading]                     = useState(false);
     const [focused, setFocused]                     = useState<string | null>(null);
 
@@ -159,6 +158,11 @@ export default function CreateReminderScreen() {
             Alert.alert(t('reminderForm.selectDayTitle'), t('reminderForm.selectDayMessage'));
             return;
         }
+
+        // Defense-in-depth: the chip UI can only ever set one of
+        // NO_RESPONSE_OPTIONS, but never let a 0/negative/NaN/unsupported
+        // value reach the database regardless.
+        assertValidNoResponseMinutes(noResponseMinutes);
 
         if (Platform.OS === 'ios') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         setLoading(true);
@@ -363,6 +367,7 @@ export default function CreateReminderScreen() {
 
                         <Text style={styles.label}>{t('reminderForm.timeOfDayLabel')}</Text>
                         <TimePickerField value={timeValue} onChange={setTimeValue} />
+                        <Text style={styles.helperText}>{t('reminderForm.timezoneFollowsParticipant')}</Text>
 
                         <Text style={[styles.label, { marginTop: 18 }]}>{t('reminderForm.frequencyLabel')}</Text>
                         <View style={styles.frequencyRow}>

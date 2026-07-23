@@ -9,6 +9,7 @@ import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
 import { useLanguage } from '@/lib/i18n/context';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
+import { syncCurrentUserTimezone } from '@/lib/timezone';
 
 export default function HomeScreen() {
     const C = useThemeColors();
@@ -33,8 +34,15 @@ export default function HomeScreen() {
                 .select('role')
                 .eq('id', session.user.id)
                 .maybeSingle();
-            if (data?.role === 'caregiver') router.replace('/caregiver-dashboard');
-            else if (data?.role === 'recipient') router.replace('/recipient-dashboard');
+            if (data?.role === 'caregiver') {
+                router.replace('/caregiver-dashboard');
+            } else if (data?.role === 'recipient') {
+                // Fire-and-forget — reconciles this device's timezone right
+                // after session restoration on cold start, same as the
+                // signin flow, before the dashboard even mounts.
+                syncCurrentUserTimezone().catch(() => {});
+                router.replace('/recipient-dashboard');
+            }
         });
     }, [ready, hasChosenLanguage]);
 
