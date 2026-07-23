@@ -1,6 +1,6 @@
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -16,6 +16,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
+import { AUTH_ERROR_TRANSLATION_KEYS, classifyAuthError } from '@/lib/authErrors';
+import { useAuthSession } from '@/lib/authSession';
 import { useTranslation } from '@/lib/i18n/context';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
@@ -25,10 +27,26 @@ export default function SigninScreen() {
     const C = useThemeColors();
     const t = useTranslation();
     const styles = useMemo(() => createStyles(C), [C]);
+    const { deauthReason, clearDeauthReason } = useAuthSession();
     const [email, setEmail]       = useState('');
     const [password, setPassword] = useState('');
     const [loading, setLoading]   = useState(false);
     const [focused, setFocused]   = useState<string | null>(null);
+
+    // A one-time neutral banner for a session that ended because the
+    // account was tombstoned or the session was no longer valid — read
+    // once, then cleared, so it never reappears on a later, unrelated
+    // visit to this screen.
+    const banner = deauthReason === 'account_deleted'
+        ? t('authErrors.accountDeleted')
+        : deauthReason === 'expired_session'
+        ? t('authErrors.expiredSession')
+        : null;
+
+    useEffect(() => {
+        return () => clearDeauthReason();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     async function handleSignin() {
         if (!email || !password) {
@@ -38,6 +56,7 @@ export default function SigninScreen() {
 
         if (Platform.OS === 'ios') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         setLoading(true);
+        clearDeauthReason();
 
         const { data, error } = await supabase.auth.signInWithPassword({
             email: email.trim(),
@@ -46,7 +65,9 @@ export default function SigninScreen() {
 
         if (error) {
             setLoading(false);
-            Alert.alert(t('signin.failedTitle'), error.message);
+            console.warn('[signin] signInWithPassword failed:', error.message);
+            const kind = classifyAuthError(error);
+            Alert.alert(t('signin.failedTitle'), t(AUTH_ERROR_TRANSLATION_KEYS[kind]));
             return;
         }
 
@@ -58,16 +79,34 @@ export default function SigninScreen() {
             return;
         }
 
+        // maybeSingle(), not single() — a signed-in user with no profiles
+        // row yet (e.g. a legacy pre-trigger account, see the auth-
+        // hardening migration) must land on the recovery path below, not
+        // hit a raw "no rows" error and get stuck on this screen forever.
         const { data: profile, error: profileError } = await supabase
             .from('profiles')
-            .select('role')
+            .select('role, account_status')
             .eq('id', userId)
-            .single();
+            .maybeSingle();
 
         setLoading(false);
 
         if (profileError) {
-            Alert.alert(t('signin.profileErrorTitle'), profileError.message);
+            console.warn('[signin] profile fetch failed:', profileError.message);
+            const kind = classifyAuthError(profileError);
+            Alert.alert(t('signin.profileErrorTitle'), t(AUTH_ERROR_TRANSLATION_KEYS[kind]));
+            return;
+        }
+
+        if (profile?.account_status === 'deleted') {
+            // A tombstoned account can still hold a technically-valid
+            // session for a moment (e.g. Auth deletion partially failed
+            // upstream) — never let it proceed past this point. The
+            // central auth controller will also independently catch and
+            // sign this out; this is the immediate, synchronous check on
+            // the explicit sign-in action itself.
+            await supabase.auth.signOut().catch(() => {});
+            Alert.alert(t('signin.failedTitle'), t('authErrors.accountDeleted'));
             return;
         }
 
@@ -111,6 +150,12 @@ export default function SigninScreen() {
                         {t('signin.subheading')}
                     </Text>
 
+                    {banner ? (
+                        <View style={styles.banner}>
+                            <Text style={styles.bannerText}>{banner}</Text>
+                        </View>
+                    ) : null}
+
                     {/* Form */}
                     <View style={styles.form}>
                         <View style={styles.formGroup}>
@@ -145,6 +190,13 @@ export default function SigninScreen() {
                                 onSubmitEditing={handleSignin}
                             />
                         </View>
+
+                        <TouchableOpacity
+                            style={styles.forgotPasswordLink}
+                            onPress={() => router.push('/forgot-password')}
+                        >
+                            <Text style={styles.forgotPasswordText}>{t('signin.forgotPassword')}</Text>
+                        </TouchableOpacity>
                     </View>
 
                     {/* Spacer */}
@@ -216,6 +268,29 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
     },
     formGroup: {
         marginBottom: 18,
+    },
+    forgotPasswordLink: {
+        alignSelf: 'flex-end',
+        paddingVertical: 4,
+    },
+    forgotPasswordText: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: C.primary,
+    },
+    banner: {
+        backgroundColor: C.bgAlt,
+        borderRadius: RADIUS.lg,
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        marginBottom: 20,
+        borderWidth: 1,
+        borderColor: C.border,
+    },
+    bannerText: {
+        fontSize: 14,
+        color: C.textSecondary,
+        lineHeight: 20,
     },
     label: {
         fontSize: 14,

@@ -53,6 +53,36 @@ export const en = {
         issueTitle: 'Signin issue',
         issueMessage: 'No user account was returned.',
         profileErrorTitle: 'Profile error',
+        forgotPassword: 'Forgot password?',
+    },
+
+    forgotPassword: {
+        heading: 'Reset your password',
+        subheading: "Enter the email on your account and we'll send you a link to reset your password.",
+        submit: 'Send reset link',
+        sentMessage: "If an account exists for that email, we've sent instructions to reset your password.",
+        backToSignin: 'Back to sign in',
+    },
+
+    resetPassword: {
+        heading: 'Choose a new password',
+        subheading: 'Enter a new password for your account.',
+        newPasswordLabel: 'New password',
+        confirmPasswordLabel: 'Confirm new password',
+        submit: 'Update password',
+        invalidLink: 'This reset link is no longer valid. Request a new one to continue.',
+        requestNewLink: 'Request new link',
+        successMessage: "Your password has been updated. Please sign in with your new password.",
+    },
+
+    authErrors: {
+        invalidCredentials: 'Email or password is incorrect.',
+        emailInUse: 'An account with this email already exists.',
+        weakPassword: 'Password must be at least 6 characters.',
+        network: "We couldn't connect. Check your connection and try again.",
+        expiredSession: 'Your session expired. Please sign in again.',
+        accountDeleted: 'This Tavora account is no longer active.',
+        unexpected: 'Something went wrong. Please try again.',
     },
 
     signup: {

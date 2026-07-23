@@ -55,6 +55,36 @@ export const es: typeof en = {
         issueTitle: 'Problema al iniciar sesión',
         issueMessage: 'No se devolvió ninguna cuenta de usuario.',
         profileErrorTitle: 'Error de perfil',
+        forgotPassword: '¿Olvidaste tu contraseña?',
+    },
+
+    forgotPassword: {
+        heading: 'Restablece tu contraseña',
+        subheading: 'Ingresa el correo de tu cuenta y te enviaremos un enlace para restablecer tu contraseña.',
+        submit: 'Enviar enlace',
+        sentMessage: 'Si existe una cuenta con ese correo, te hemos enviado instrucciones para restablecer tu contraseña.',
+        backToSignin: 'Volver a iniciar sesión',
+    },
+
+    resetPassword: {
+        heading: 'Elige una nueva contraseña',
+        subheading: 'Ingresa una nueva contraseña para tu cuenta.',
+        newPasswordLabel: 'Nueva contraseña',
+        confirmPasswordLabel: 'Confirmar nueva contraseña',
+        submit: 'Actualizar contraseña',
+        invalidLink: 'Este enlace ya no es válido. Solicita uno nuevo para continuar.',
+        requestNewLink: 'Solicitar nuevo enlace',
+        successMessage: 'Tu contraseña se actualizó. Inicia sesión con tu nueva contraseña.',
+    },
+
+    authErrors: {
+        invalidCredentials: 'El correo o la contraseña son incorrectos.',
+        emailInUse: 'Ya existe una cuenta con este correo.',
+        weakPassword: 'La contraseña debe tener al menos 6 caracteres.',
+        network: 'No pudimos conectar. Verifica tu conexión e inténtalo de nuevo.',
+        expiredSession: 'Tu sesión expiró. Inicia sesión de nuevo.',
+        accountDeleted: 'Esta cuenta de Tavora ya no está activa.',
+        unexpected: 'Algo salió mal. Inténtalo de nuevo.',
     },
 
     signup: {

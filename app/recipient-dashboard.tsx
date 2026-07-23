@@ -195,6 +195,24 @@ export default function RecipientDashboard() {
             return;
         }
 
+        // A tombstoned account must never reach reminder data, even if a
+        // technically-valid session slipped through (e.g. Auth deletion
+        // partially failed upstream but the profile tombstone is already
+        // in place). No timezone sync, no push registration, no
+        // notification sync — this returns before any of that runs.
+        const { data: statusRow } = await supabase
+            .from('profiles')
+            .select('account_status')
+            .eq('id', user.id)
+            .maybeSingle();
+
+        if (statusRow?.account_status === 'deleted') {
+            setLoading(false);
+            await supabase.auth.signOut().catch(() => {});
+            router.replace('/signin');
+            return;
+        }
+
         // Reconcile this device's timezone every load (not just once) — a
         // recipient who travels needs their stored profiles.timezone to
         // follow their current device, since that's what the server-side

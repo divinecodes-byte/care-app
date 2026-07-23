@@ -16,6 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
+import { AUTH_ERROR_TRANSLATION_KEYS, classifyAuthError } from '@/lib/authErrors';
 import { useTranslation } from '@/lib/i18n/context';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
@@ -44,34 +45,29 @@ export default function SignupScreen() {
         if (Platform.OS === 'ios') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         setLoading(true);
 
+        // full_name travels in the signup call itself (raw_user_meta_data)
+        // rather than a separate .insert() afterward — a server-side
+        // trigger (handle_new_user, see the auth-hardening migration)
+        // creates the profiles row atomically with the auth.users row in
+        // the same transaction, so there is no window where an account can
+        // exist in Auth but have no usable profile.
         const { data, error } = await supabase.auth.signUp({
             email: email.trim(),
             password,
-        });
-
-        if (error) {
-            setLoading(false);
-            Alert.alert(t('signup.failedTitle'), error.message);
-            return;
-        }
-
-        const userId = data.user?.id;
-
-        if (!userId) {
-            setLoading(false);
-            Alert.alert(t('signup.issueTitle'), t('signup.issueMessage'));
-            return;
-        }
-
-        const { error: profileError } = await supabase.from('profiles').insert({
-            id: userId,
-            full_name: fullName.trim(),
+            options: { data: { full_name: fullName.trim() } },
         });
 
         setLoading(false);
 
-        if (profileError) {
-            Alert.alert(t('signup.profileErrorTitle'), profileError.message);
+        if (error) {
+            console.warn('[signup] signUp failed:', error.message);
+            const kind = classifyAuthError(error);
+            Alert.alert(t('signup.failedTitle'), t(AUTH_ERROR_TRANSLATION_KEYS[kind]));
+            return;
+        }
+
+        if (!data.user?.id) {
+            Alert.alert(t('signup.issueTitle'), t('signup.issueMessage'));
             return;
         }
 

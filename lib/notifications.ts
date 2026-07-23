@@ -493,13 +493,25 @@ export type PushTokenResult =
     | { ok: false; reason: 'no-permission' | 'project_id_missing' | 'expo-go' | 'error'; message: string };
 
 /**
- * Request permission, fetch the Expo push token, and upsert it into
- * push_tokens for the given user — caregiver or recipient, the table and
- * its RLS are role-agnostic (scoped only to user_id = auth.uid()).
- * Safe to call on every dashboard focus — idempotent via upsert.
+ * Request permission, fetch the Expo push token, and register it via the
+ * register_push_token RPC — caregiver or recipient, role-agnostic.
+ *
+ * `userId` is accepted for caller convenience (every call site already has
+ * it on hand) but is never sent to the server: the RPC is SECURITY DEFINER
+ * and scopes exclusively to auth.uid() from the caller's own JWT, so a
+ * stale or mismatched `userId` argument can't register a token under the
+ * wrong account. A plain client-side upsert can't do this reassignment
+ * safely — push_tokens.expo_push_token is UNIQUE per physical device, and
+ * this device's row may currently belong to a *different* Tavora account
+ * that was previously signed in here; RLS correctly refuses to let this
+ * user's client update a row it doesn't yet own, so only a
+ * SECURITY DEFINER function (which can act on the caller's behalf without
+ * needing pre-existing row ownership) can safely reassign it.
+ *
+ * Safe to call on every dashboard focus — idempotent.
  * Handles Expo Go gracefully: returns ok:false with a clear message instead of crashing.
  */
-export async function registerPushToken(userId: string): Promise<PushTokenResult> {
+export async function registerPushToken(_userId: string): Promise<PushTokenResult> {
     const { status: existing } = await Notifications.getPermissionsAsync();
     let finalStatus = existing;
     if (existing !== 'granted') {
@@ -529,24 +541,13 @@ export async function registerPushToken(userId: string): Promise<PushTokenResult
     try {
         const { data: token } = await Notifications.getExpoPushTokenAsync({ projectId });
 
-        await supabase.from('push_tokens').upsert(
-            {
-                user_id:         userId,
-                expo_push_token: token,
-                platform:        Platform.OS,
-                is_active:       true,
-                updated_at:      new Date().toISOString(),
-            },
-            { onConflict: 'expo_push_token' }
-        );
-
-        // A user can re-register from a new device/install and end up with
-        // multiple tokens. Only the one we just upserted should stay active.
-        await supabase
-            .from('push_tokens')
-            .update({ is_active: false })
-            .eq('user_id', userId)
-            .neq('expo_push_token', token);
+        const { error } = await supabase.rpc('register_push_token', {
+            p_expo_push_token: token,
+            p_platform: Platform.OS,
+        });
+        if (error) {
+            return { ok: false, reason: 'error', message: 'Could not register for push notifications. Preferences are saved.' };
+        }
 
         return { ok: true };
     } catch (err: any) {
@@ -564,5 +565,27 @@ export async function registerPushToken(userId: string): Promise<PushTokenResult
                 ? 'Push alerts require a development build. Preferences are saved and will activate when you upgrade.'
                 : 'Could not register for push notifications. Preferences are saved.',
         };
+    }
+}
+
+/**
+ * Deactivates every push token owned by the currently signed-in user —
+ * called during logout, before supabase.auth.signOut(), while the client
+ * still holds a valid session (RLS on push_tokens requires
+ * user_id = auth.uid(), so this can only ever touch the caller's own
+ * rows). Must run before signOut(): once the session is cleared there is
+ * no authenticated context left to authorize this update at all.
+ *
+ * Best-effort — a network failure here must never block the rest of
+ * logout. Returns whether it succeeded so the caller can decide whether
+ * remote cleanup needs to be reconciled later (see
+ * lib/accountCleanup.ts's retry-on-next-launch behavior).
+ */
+export async function deactivateCurrentUserPushTokens(): Promise<boolean> {
+    try {
+        const { error } = await supabase.rpc('deactivate_own_push_tokens');
+        return !error;
+    } catch {
+        return false;
     }
 }

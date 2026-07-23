@@ -643,6 +643,24 @@ export default function CaregiverDashboard() {
             return;
         }
 
+        // A tombstoned account must never reach connection/reminder data,
+        // even if a technically-valid session slipped through (e.g. Auth
+        // deletion partially failed upstream but the profile tombstone is
+        // already in place).
+        const { data: statusRow } = await supabase
+            .from('profiles')
+            .select('account_status')
+            .eq('id', user.id)
+            .maybeSingle();
+
+        if (statusRow?.account_status === 'deleted') {
+            setConnectionLoading(false);
+            setDashboardLoading(false);
+            await supabase.auth.signOut().catch(() => {});
+            router.replace('/signin');
+            return;
+        }
+
         caregiverIdRef.current = user.id;
 
         if (!pushRegistrationAttemptedRef.current) {

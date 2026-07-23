@@ -91,7 +91,11 @@ export async function signUpTestUser(emailPrefix: string, rand: string, password
     const email = `tavora.secaudit.${emailPrefix}.${rand}@example.com`;
     const { data, error } = await client.auth.signUp({ email, password });
     if (error || !data.user) throw new Error(`signup failed for ${email}: ${error?.message}`);
-    const { error: profErr } = await client.from('profiles').insert({ id: data.user.id, full_name: fullName });
-    if (profErr) throw new Error(`profile insert failed for ${email}: ${profErr.message}`);
+    // The handle_new_user trigger (Week 1 task #6) already created a bare
+    // profiles row atomically with the auth.users insert above — upsert
+    // rather than insert so this helper works the same whether that row
+    // already exists (sets full_name on it) or, in principle, doesn't.
+    const { error: profErr } = await client.from('profiles').upsert({ id: data.user.id, full_name: fullName }, { onConflict: 'id' });
+    if (profErr) throw new Error(`profile upsert failed for ${email}: ${profErr.message}`);
     return { id: data.user.id, email, client };
 }

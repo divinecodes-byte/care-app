@@ -17,6 +17,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { RADIUS, ThemeColors } from '@/constants/theme';
+import { logout } from '@/lib/accountCleanup';
 import { useLanguage } from '@/lib/i18n/context';
 import { LanguageMode } from '@/lib/i18n/storage';
 import { registerPushToken } from '@/lib/notifications';
@@ -279,7 +280,11 @@ export function SettingsSheet({ visible, onClose }: Props) {
 
     async function handleSignOut() {
         setSigningOut(true);
-        await supabase.auth.signOut();
+        // Deactivates this device's push token, cancels any locally-
+        // scheduled notifications, clears account-scoped local state, and
+        // signs out — in that order, so a network failure partway through
+        // never traps the user in the account (see lib/accountCleanup.ts).
+        await logout();
         setSigningOut(false);
         onClose();
         router.replace('/signin');
