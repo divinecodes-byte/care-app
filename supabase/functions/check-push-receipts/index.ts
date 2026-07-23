@@ -58,13 +58,18 @@ Deno.serve(async (req) => {
   // among them needs the periodic ticket-time DeviceNotRegistered check
   // (handled in send-due-recipient-reminders) to catch it precisely instead.
   const ticketToRecipient = new Map<string, string>();
+  const ticketToDeliveryId = new Map<string, string>();
   for (const row of rows) {
-    if (row.expo_ticket_id) ticketToRecipient.set(row.expo_ticket_id, row.recipient_id);
+    if (row.expo_ticket_id) {
+      ticketToRecipient.set(row.expo_ticket_id, row.recipient_id);
+      ticketToDeliveryId.set(row.expo_ticket_id, row.id);
+    }
   }
 
   let checked = 0;
   let deactivated = 0;
   const recipientsToDeactivate = new Set<string>();
+  const checkedDeliveryIds: string[] = [];
 
   for (const batch of chunk(rows.map((r) => r.expo_ticket_id!), RECEIPT_BATCH_SIZE)) {
     try {
@@ -79,17 +84,33 @@ Deno.serve(async (req) => {
       for (const ticketId of batch) {
         const receipt = receipts[ticketId];
         checked++;
+        // Recorded regardless of outcome — "checked" means we got a
+        // response from Expo for this ticket, ok or not, which is what
+        // receipt_checked_at/"receipt overdue" monitoring needs to know.
+        const deliveryId = ticketToDeliveryId.get(ticketId);
+        if (deliveryId) checkedDeliveryIds.push(deliveryId);
+
         if (receipt?.status === 'error' && receipt.details?.error === 'DeviceNotRegistered') {
           const recipientId = ticketToRecipient.get(ticketId);
           if (recipientId) recipientsToDeactivate.add(recipientId);
         }
       }
     } catch (err) {
+      // The batch fetch itself failed — nothing in this batch was actually
+      // checked, so their receipt_checked_at deliberately stays null and
+      // they'll be picked up again on the next run.
       log('expo_receipts_batch_error', {
         error: err instanceof Error ? err.message : String(err),
         batchSize: batch.length,
       });
     }
+  }
+
+  if (checkedDeliveryIds.length > 0) {
+    await supabase
+      .from('reminder_notification_deliveries')
+      .update({ receipt_checked_at: new Date().toISOString() })
+      .in('id', checkedDeliveryIds);
   }
 
   if (recipientsToDeactivate.size > 0) {

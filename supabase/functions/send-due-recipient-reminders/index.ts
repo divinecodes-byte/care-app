@@ -35,6 +35,40 @@ type ExpoTicket =
   | { status: 'ok'; id: string }
   | { status: 'error'; message: string; details?: { error?: string } };
 
+// ── Error normalization (ops-hardening) ─────────────────────────────────────
+// A raw Expo ticket message can embed the full push token (e.g. `"Exponent
+// PushToken[xxx]" is not a valid Expo push token`) — always redact before
+// persisting. error_code is the small, fixed, queryable vocabulary; the
+// (redacted, truncated) message is for human debugging only.
+const TOKEN_PATTERN = /ExponentPushToken\[[^\]]*\]/g;
+
+function sanitizeMessage(raw: string): string {
+  return raw.replace(TOKEN_PATTERN, 'ExponentPushToken[REDACTED]').slice(0, 300);
+}
+
+function normalizeSkipReason(reason: string): { code: string; message: string } {
+  if (reason === 'reminder_not_found') return { code: 'reminder_not_found', message: reason };
+  if (reason === 'reminder_inactive') return { code: 'reminder_inactive', message: reason };
+  if (reason === 'reminder_reassigned') return { code: 'reminder_reassigned', message: reason };
+  if (reason.startsWith('snooze_no_longer_pending:') || reason.startsWith('already_answered:')) {
+    return { code: 'occurrence_answered', message: reason };
+  }
+  return { code: 'internal_error', message: sanitizeMessage(reason) };
+}
+
+function normalizeSendError(lastError: string | undefined, lastErrorDetail: string | undefined): { code: string; message: string } {
+  if (lastErrorDetail === 'DeviceNotRegistered') {
+    return { code: 'device_not_registered', message: sanitizeMessage(lastError ?? lastErrorDetail) };
+  }
+  if (lastError === 'no_active_push_token') return { code: 'no_active_push_token', message: lastError };
+  if (lastError === 'expo_request_failed') return { code: 'internal_error', message: lastError };
+  if (lastError === 'no_ticket_returned') return { code: 'expo_ticket_error', message: lastError };
+  if (lastError && lastError.toLowerCase().includes('batch')) {
+    return { code: 'expo_batch_error', message: sanitizeMessage(lastError) };
+  }
+  return { code: 'expo_ticket_error', message: sanitizeMessage(lastError ?? 'unknown_error') };
+}
+
 Deno.serve(async (req) => {
   const unauthorized = assertCronRequest(req);
   if (unauthorized) return unauthorized;
@@ -46,6 +80,18 @@ Deno.serve(async (req) => {
   const log = (event: string, data?: Record<string, unknown>) => jsonLog(FN_NAME, event, data);
   log('start');
 
+  // Defensive top-level catch: anything unexpected here must still return a
+  // clean, logged response rather than an opaque runtime crash — and,
+  // combined with the per-row isolation above, means a single bad row can
+  // no longer take an entire tick's batch down with it.
+  try {
+  return await handleTick();
+  } catch (err) {
+    log('fatal_error', { error: err instanceof Error ? err.message : String(err) });
+    return Response.json({ error: 'internal_error' }, { status: 500 });
+  }
+
+  async function handleTick(): Promise<Response> {
   const [reminderClaim, snoozeClaim] = await Promise.all([
     supabase.rpc('claim_due_recipient_reminder_deliveries'),
     supabase.rpc('claim_due_recipient_snooze_deliveries'),
@@ -79,98 +125,150 @@ Deno.serve(async (req) => {
     return Response.json({ scanned: 0, sent: 0, failed: 0, skipped: 0 });
   }
 
+  // Lookup helpers distinguish "confirmed not found / null" (a real skip
+  // reason) from "the lookup itself failed" (a transient error that must be
+  // retried, never silently treated as if the row didn't exist — this is
+  // the fix for a crashed/erroring lookup being able to leave a delivery
+  // stuck: previously an unhandled exception here aborted the entire
+  // invocation, and every row in the batch — not just the one that failed —
+  // would have been left completely unprocessed with no attempt_count
+  // increment, indefinitely).
+  type Lookup<T> = { ok: true; value: T } | { ok: false };
+
   const reminderCache = new Map<string, ReminderInfo | null>();
-  async function getReminder(reminderId: string): Promise<ReminderInfo | null> {
-    if (reminderCache.has(reminderId)) return reminderCache.get(reminderId)!;
-    const { data, error } = await supabase
-      .from('reminders')
-      .select('id, title, reminder_type, recipient_id, is_active')
-      .eq('id', reminderId)
-      .maybeSingle();
-    if (error) log('get_reminder_error', { reminderId, error: error.message });
-    reminderCache.set(reminderId, (data as ReminderInfo | null) ?? null);
-    return (data as ReminderInfo | null) ?? null;
+  async function getReminder(reminderId: string): Promise<Lookup<ReminderInfo | null>> {
+    if (reminderCache.has(reminderId)) return { ok: true, value: reminderCache.get(reminderId)! };
+    try {
+      const { data, error } = await supabase
+        .from('reminders')
+        .select('id, title, reminder_type, recipient_id, is_active')
+        .eq('id', reminderId)
+        .maybeSingle();
+      if (error) {
+        log('get_reminder_error', { reminderId, error: error.message });
+        return { ok: false };
+      }
+      const value = (data as ReminderInfo | null) ?? null;
+      reminderCache.set(reminderId, value);
+      return { ok: true, value };
+    } catch (err) {
+      log('get_reminder_exception', { reminderId, error: err instanceof Error ? err.message : String(err) });
+      return { ok: false };
+    }
   }
 
   const logCache = new Map<string, string | null>();
-  async function getLogStatus(reminderId: string, occurrenceDate: string): Promise<string | null> {
+  async function getLogStatus(reminderId: string, occurrenceDate: string): Promise<Lookup<string | null>> {
     const key = `${reminderId}|${occurrenceDate}`;
-    if (logCache.has(key)) return logCache.get(key)!;
-    const { data, error } = await supabase
-      .from('reminder_logs')
-      .select('status')
-      .eq('reminder_id', reminderId)
-      .eq('occurrence_date', occurrenceDate)
-      .maybeSingle();
-    if (error) log('get_log_status_error', { reminderId, occurrenceDate, error: error.message });
-    const status = data?.status ?? null;
-    logCache.set(key, status);
-    return status;
+    if (logCache.has(key)) return { ok: true, value: logCache.get(key)! };
+    try {
+      const { data, error } = await supabase
+        .from('reminder_logs')
+        .select('status')
+        .eq('reminder_id', reminderId)
+        .eq('occurrence_date', occurrenceDate)
+        .maybeSingle();
+      if (error) {
+        log('get_log_status_error', { reminderId, occurrenceDate, error: error.message });
+        return { ok: false };
+      }
+      const status = data?.status ?? null;
+      logCache.set(key, status);
+      return { ok: true, value: status };
+    } catch (err) {
+      log('get_log_status_exception', { reminderId, occurrenceDate, error: err instanceof Error ? err.message : String(err) });
+      return { ok: false };
+    }
   }
 
   const tokenCache = new Map<string, { id: string; expo_push_token: string }[]>();
-  async function getActiveTokens(recipientId: string) {
+  async function getActiveTokens(recipientId: string): Promise<{ id: string; expo_push_token: string }[]> {
     if (tokenCache.has(recipientId)) return tokenCache.get(recipientId)!;
-    const { data, error } = await supabase
-      .from('push_tokens')
-      .select('id, expo_push_token')
-      .eq('user_id', recipientId)
-      .eq('is_active', true);
-    if (error) log('get_active_tokens_error', { recipientId, error: error.message });
-    const tokens = data ?? [];
-    tokenCache.set(recipientId, tokens);
-    return tokens;
+    try {
+      const { data, error } = await supabase
+        .from('push_tokens')
+        .select('id, expo_push_token')
+        .eq('user_id', recipientId)
+        .eq('is_active', true);
+      if (error) log('get_active_tokens_error', { recipientId, error: error.message });
+      const tokens = data ?? [];
+      tokenCache.set(recipientId, tokens);
+      return tokens;
+    } catch (err) {
+      log('get_active_tokens_exception', { recipientId, error: err instanceof Error ? err.message : String(err) });
+      return [];
+    }
   }
 
   // ── Phase 1: re-validate live state right before sending ──────────────────
   const skipReasons = new Map<string, string>();
+  const lookupFailedRows: DeliveryRow[] = [];
   const attemptRows: DeliveryRow[] = [];
 
   for (const row of toProcess) {
-    const reminder = await getReminder(row.reminder_id);
-    if (!reminder) {
-      skipReasons.set(row.id, 'reminder_not_found');
-      continue;
-    }
-    if (!reminder.is_active) {
-      skipReasons.set(row.id, 'reminder_inactive');
-      continue;
-    }
-    if (reminder.recipient_id !== row.recipient_id) {
-      skipReasons.set(row.id, 'reminder_reassigned');
-      continue;
-    }
-
-    const logStatus = await getLogStatus(row.reminder_id, row.occurrence_date);
-    if (row.delivery_type === 'snooze') {
-      // Taken/Skipped/re-snoozed-elsewhere since the claim — don't send a
-      // stale snooze re-alert.
-      if (logStatus !== 'snoozed') {
-        skipReasons.set(row.id, `snooze_no_longer_pending:${logStatus ?? 'none'}`);
+    try {
+      const reminderLookup = await getReminder(row.reminder_id);
+      if (!reminderLookup.ok) {
+        lookupFailedRows.push(row);
         continue;
       }
-    } else if (logStatus !== null && logStatus !== 'pending') {
-      // Answered (taken/skipped/snoozed/missed) since the claim.
-      skipReasons.set(row.id, `already_answered:${logStatus}`);
-      continue;
-    }
+      const reminder = reminderLookup.value;
+      if (!reminder) {
+        skipReasons.set(row.id, 'reminder_not_found');
+        continue;
+      }
+      if (!reminder.is_active) {
+        skipReasons.set(row.id, 'reminder_inactive');
+        continue;
+      }
+      if (reminder.recipient_id !== row.recipient_id) {
+        skipReasons.set(row.id, 'reminder_reassigned');
+        continue;
+      }
 
-    attemptRows.push(row);
+      const logLookup = await getLogStatus(row.reminder_id, row.occurrence_date);
+      if (!logLookup.ok) {
+        lookupFailedRows.push(row);
+        continue;
+      }
+      const logStatus = logLookup.value;
+
+      if (row.delivery_type === 'snooze') {
+        // Taken/Skipped/re-snoozed-elsewhere since the claim — don't send a
+        // stale snooze re-alert.
+        if (logStatus !== 'snoozed') {
+          skipReasons.set(row.id, `snooze_no_longer_pending:${logStatus ?? 'none'}`);
+          continue;
+        }
+      } else if (logStatus !== null && logStatus !== 'pending') {
+        // Answered (taken/skipped/snoozed/missed) since the claim.
+        skipReasons.set(row.id, `already_answered:${logStatus}`);
+        continue;
+      }
+
+      attemptRows.push(row);
+    } catch (err) {
+      // Defensive catch-all: whatever went wrong for this one row must
+      // never abort processing of the rest of the batch.
+      log('validate_row_exception', { deliveryId: row.id, error: err instanceof Error ? err.message : String(err) });
+      lookupFailedRows.push(row);
+    }
   }
 
   if (skipReasons.size > 0) {
     const skippedNow = new Date().toISOString();
     await Promise.all(
-      [...skipReasons.entries()].map(([id, reason]) =>
-        supabase
+      [...skipReasons.entries()].map(([id, reason]) => {
+        const normalized = normalizeSkipReason(reason);
+        return supabase
           .from('reminder_notification_deliveries')
-          .update({ status: 'skipped', error_message: reason, updated_at: skippedNow })
-          .eq('id', id)
-      )
+          .update({ status: 'skipped', error_code: normalized.code, error_message: normalized.message, updated_at: skippedNow })
+          .eq('id', id);
+      })
     );
   }
 
-  log('validated', { skipped: skipReasons.size, toAttempt: attemptRows.length });
+  log('validated', { skipped: skipReasons.size, lookupFailed: lookupFailedRows.length, toAttempt: attemptRows.length });
 
   // ── Phase 2: build Expo messages ───────────────────────────────────────────
   type PendingMessage = {
@@ -183,7 +281,7 @@ Deno.serve(async (req) => {
   };
 
   const messages: PendingMessage[] = [];
-  const rowOutcome = new Map<string, { anyOk: boolean; ticketId?: string; lastError?: string }>();
+  const rowOutcome = new Map<string, { anyOk: boolean; ticketId?: string; lastError?: string; lastErrorDetail?: string }>();
 
   for (const row of attemptRows) {
     const reminder = reminderCache.get(row.reminder_id)!;
@@ -269,6 +367,7 @@ Deno.serve(async (req) => {
           existing.ticketId = ticket.id;
         } else {
           existing.lastError = ticket.message;
+          existing.lastErrorDetail = ticket.details?.error;
           if (ticket.details?.error === 'DeviceNotRegistered') {
             tokensToDeactivate.add(m.tokenId);
           }
@@ -304,6 +403,7 @@ Deno.serve(async (req) => {
           sent_at: nowIso,
           updated_at: nowIso,
           expo_ticket_id: outcome.ticketId ?? null,
+          error_code: null,
           error_message: null,
         })
         .eq('id', row.id);
@@ -312,13 +412,34 @@ Deno.serve(async (req) => {
 
     if (outcome.lastError === 'no_active_push_token') missingToken++;
     failed++;
+    const normalized = normalizeSendError(outcome.lastError, outcome.lastErrorDetail);
     const nextAttempt = row.attempt_count + 1;
     await supabase
       .from('reminder_notification_deliveries')
       .update({
         status: nextAttempt >= MAX_ATTEMPTS ? 'skipped' : 'failed',
         attempt_count: nextAttempt,
-        error_message: outcome.lastError ?? 'unknown_error',
+        error_code: normalized.code,
+        error_message: normalized.message,
+        updated_at: nowIso,
+      })
+      .eq('id', row.id);
+  }
+
+  // Rows whose live-state lookup itself failed (transient DB/network error,
+  // not a real skip reason) are retried exactly like a failed send attempt —
+  // this is what guarantees they can never sit unprocessed with
+  // attempt_count stuck at its old value indefinitely.
+  for (const row of lookupFailedRows) {
+    failed++;
+    const nextAttempt = row.attempt_count + 1;
+    await supabase
+      .from('reminder_notification_deliveries')
+      .update({
+        status: nextAttempt >= MAX_ATTEMPTS ? 'skipped' : 'failed',
+        attempt_count: nextAttempt,
+        error_code: 'internal_error',
+        error_message: 'live-state lookup failed, will retry',
         updated_at: nowIso,
       })
       .eq('id', row.id);
@@ -335,6 +456,7 @@ Deno.serve(async (req) => {
     sent,
     failed,
     skipped: skipReasons.size,
+    lookupFailed: lookupFailedRows.length,
     missingToken,
     tokensDeactivated: tokensToDeactivate.size,
   });
@@ -344,6 +466,8 @@ Deno.serve(async (req) => {
     sent,
     failed,
     skipped: skipReasons.size,
+    lookupFailed: lookupFailedRows.length,
     missingToken,
   });
+  }
 });
