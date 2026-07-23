@@ -85,6 +85,16 @@ export const en = {
         unexpected: 'Something went wrong. Please try again.',
     },
 
+    reminderErrors: {
+        alreadyAnswered: 'This reminder has already been updated.',
+        reminderInactive: 'This reminder is no longer active.',
+        connectionInactive: 'This connection is no longer active.',
+        notEligible: "This reminder isn't available yet.",
+        notAuthorized: 'Something went wrong. Please try again.',
+        network: "We couldn't save your response. Check your connection and try again.",
+        unexpected: 'Something went wrong. Please try again.',
+    },
+
     signup: {
         heading: 'Create your account',
         subheading: 'Start sharing reminders and tracking progress together.',

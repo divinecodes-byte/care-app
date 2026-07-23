@@ -25,6 +25,8 @@ import {
     scheduleSnoozeNotification,
     syncRecipientReminderNotifications,
 } from '@/lib/notifications';
+import { REMINDER_ERROR_TRANSLATION_KEYS } from '@/lib/reminderErrors';
+import { respondToReminderOccurrence } from '@/lib/reminderLifecycle';
 import { getFirstEligibleDateString, isPastNoResponseWindow } from '@/lib/reminderStatus';
 import { supabase } from '@/lib/supabase';
 
@@ -54,18 +56,6 @@ function getTodayDateString(): string {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-function buildScheduledForIso(time: string): string {
-    const [h, m] = time.split(':');
-    const d = new Date();
-    d.setHours(Number(h), Number(m), 0, 0);
-    return d.toISOString();
-}
-
-function buildSnoozedUntilIso(minutes = 10): string {
-    const d = new Date();
-    d.setMinutes(d.getMinutes() + minutes);
-    return d.toISOString();
-}
 
 function formatTime(time: string): string {
     const [h, m] = time.split(':');
@@ -235,32 +225,11 @@ export default function ReminderAlertScreen() {
             setTodayStatus(existingStatus);
         } else if (overdue) {
             // No log yet, or still pending, and the window has passed.
+            // This is a client-computed DISPLAY status only — the server
+            // cron (sync_missed_reminders_db) is the sole authority that
+            // persists a missed transition; this screen no longer writes
+            // it. See docs/reminder-state-model.md.
             setTodayStatus('missed');
-
-            // Write the missed row immediately so the caregiver dashboard
-            // reflects it without the recipient needing to tap anything.
-            // onConflict ensures a pending row is updated, not duplicated.
-            const { error: missedErr } = await supabase
-                .from('reminder_logs')
-                .upsert(
-                    {
-                        reminder_id:     reminderData.id,
-                        connection_id:   reminderData.connection_id,
-                        caregiver_id:    reminderData.caregiver_id,
-                        recipient_id:    reminderData.recipient_id,
-                        occurrence_date: todayDate,
-                        scheduled_for:   buildScheduledForIso(reminderData.time_of_day),
-                        status:          'missed' as const,
-                        completed_at:    null,
-                        snoozed_until:   null,
-                        updated_at:      new Date().toISOString(),
-                    },
-                    { onConflict: 'reminder_id,occurrence_date' }
-                );
-
-            if (missedErr) {
-                console.error('[ReminderAlert] Failed to write missed log:', missedErr.message);
-            }
         }
 
         setLoading(false);
@@ -271,32 +240,23 @@ export default function ReminderAlertScreen() {
         if (Platform.OS === 'ios') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
         setSaving(true);
 
-        const todayDate    = getTodayDateString();
-        const snoozedUntil = status === 'snoozed' ? buildSnoozedUntilIso(10) : null;
+        const todayDate = getTodayDateString();
 
-        const logPayload = {
-            reminder_id:     reminder.id,
-            connection_id:   reminder.connection_id,
-            caregiver_id:    reminder.caregiver_id,
-            recipient_id:    reminder.recipient_id,
-            occurrence_date: todayDate,
-            scheduled_for:   buildScheduledForIso(reminder.time_of_day),
-            status,
-            completed_at:    status === 'taken'   ? new Date().toISOString() : null,
-            snoozed_until:   snoozedUntil,
-            updated_at:      new Date().toISOString(),
-        };
-
-        const { error: saveError } = await supabase
-            .from('reminder_logs')
-            .upsert(logPayload, { onConflict: 'reminder_id,occurrence_date' });
+        // The server (respond_to_reminder_occurrence) validates ownership,
+        // reminder.is_active, connection.status, occurrence eligibility,
+        // and legal state transitions, and computes occurrence_date/
+        // scheduled_for/snoozed_until itself from the recipient's own
+        // stored timezone. See lib/reminderLifecycle.ts.
+        const result = await respondToReminderOccurrence(reminder.id, status);
 
         setSaving(false);
 
-        if (saveError) {
-            Alert.alert(t('reminderAlert.saveErrorTitle'), saveError.message);
+        if (!result.ok) {
+            Alert.alert(t('reminderAlert.saveErrorTitle'), t(REMINDER_ERROR_TRANSLATION_KEYS[result.kind]));
             return;
         }
+
+        const snoozedUntil = result.log.snoozed_until;
 
         // A real response now exists for today — cancel only today's
         // occurrence notification. Future occurrences are untouched.

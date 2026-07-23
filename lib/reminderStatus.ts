@@ -1,9 +1,37 @@
+import { isDueOnDate } from '@/lib/frequency';
+
 // ─── Shared missed-reminder helpers ──────────────────────────────────────────
-// Used by recipient-dashboard and reminder-alert.
-// caregiver-dashboard and reminder-details have equivalent inline helpers for
-// historical dates — do not consolidate those without verifying them first.
+// Used by recipient-dashboard, reminder-alert, caregiver-dashboard, and
+// reminder-details — the historical-date eligibility/status helpers below
+// were previously duplicated (with a real divergence) across
+// caregiver-dashboard.tsx and reminder-details.tsx; consolidated here as of
+// the Week 1 task #7 reminder-lifecycle hardening. See
+// isReminderEligibleOnDate's comment for the specific bug this fixed.
+//
+// Every function here computes from the DEVICE's local clock, same as
+// before consolidation — this is a client-side *display* computation only.
+// The persisted, authoritative status (what actually lands in
+// reminder_logs) is always written server-side, in the recipient's own
+// stored timezone (respond_to_reminder_occurrence / sync_missed_reminders_db
+// — see docs/reminder-state-model.md). A recipient whose device timezone
+// drifts from their stored profile timezone can see a display briefly
+// disagree with the eventual persisted value; this is a documented,
+// accepted residual risk, not something this consolidation attempts to fix.
 
 export type DisplayReminderStatus = 'pending' | 'taken' | 'snoozed' | 'skipped' | 'missed';
+
+/** Minimal shape these helpers need — satisfied structurally by each screen's own richer Reminder type. */
+export type ReminderScheduleLike = {
+    days_of_week: number[];
+    time_of_day: string;
+    created_at: string;
+    is_active: boolean;
+    no_response_minutes: number;
+};
+
+export type ReminderLogLike = {
+    status: DisplayReminderStatus;
+};
 
 /**
  * User-facing label for a reminder status. The internal/DB value stays
@@ -68,8 +96,8 @@ export function getFirstEligibleDateString(createdAt: string, timeOfDay: string)
  * Returns true when the scheduled time + no-response window has already
  * expired for today's occurrence, using the current local clock.
  *
- * Only meaningful for today — use caregiver-dashboard's getComputedStatus
- * for historical date calculations.
+ * Only meaningful for today — use getComputedStatus below for historical
+ * date calculations.
  */
 export function isPastNoResponseWindow(
     timeOfDay: string,
@@ -82,4 +110,100 @@ export function isPastNoResponseWindow(
     );
     const missedAt = new Date(scheduled.getTime() + noResponseMinutes * 60 * 1000);
     return Date.now() >= missedAt.getTime();
+}
+
+/**
+ * The calendar date (local time) a reminder/connection pairing first
+ * becomes analytics-eligible — the later of the reminder's creation and
+ * the connection's acceptance, bumped to the next day if that moment fell
+ * after that day's own scheduled time (mirrors getFirstEligibleDateString's
+ * same-day-cutoff rule, generalized to accept either boundary).
+ */
+export function getAnalyticsStartDate(
+    connectionAcceptedAt: string,
+    reminderCreatedAt: string,
+    timeOfDay: string
+): Date {
+    const connDate = new Date(connectionAcceptedAt);
+    const remDate  = new Date(reminderCreatedAt);
+    const later    = connDate > remDate ? connDate : remDate;
+
+    const [h, m] = timeOfDay.split(':').map(Number);
+    const scheduledOnLaterDate = new Date(
+        later.getFullYear(), later.getMonth(), later.getDate(), h, m, 0, 0
+    );
+    const laterDateStart = new Date(later.getFullYear(), later.getMonth(), later.getDate(), 0, 0, 0, 0);
+    return later > scheduledOnLaterDate ? addDaysLocal(laterDateStart, 1) : laterDateStart;
+}
+
+function addDaysLocal(date: Date, days: number): Date {
+    const d = new Date(date);
+    d.setDate(d.getDate() + days);
+    return d;
+}
+
+/**
+ * Whether a reminder counts toward analytics/history display on a given
+ * calendar date — combines the day-of-week schedule, the analytics start
+ * boundary (max(created_at, accepted_at)), and inactive-reminder handling.
+ *
+ * For an inactive (soft-deleted) reminder, eligibility is decided by
+ * `hasLogOnDate` — whether a real reminder_logs row already exists for
+ * that date — never by comparing the date against the reminder's
+ * `updated_at`/deactivation timestamp. This is the fix for a real
+ * divergence found during the Week 1 task #7 audit: an earlier
+ * `updated_at`-based version (previously only in reminder-details.tsx)
+ * could both hide a genuine same-day log recorded shortly before
+ * deactivation, and — more importantly — could still show a *computed*
+ * missed/pending status for the deactivation day itself when no log
+ * existed, contradicting the documented intended rule that a deactivated
+ * reminder must never surface any virtual (non-logged) status, not even
+ * on the day it was deactivated. The `hasLogOnDate` rule (already correct
+ * in caregiver-dashboard.tsx) satisfies both: a real historical log always
+ * still shows regardless of when it landed relative to deactivation, and
+ * an inactive reminder with no log on a given date is never eligible.
+ */
+export function isReminderEligibleOnDate(
+    reminder: ReminderScheduleLike,
+    date: Date,
+    connectionAcceptedAt: string,
+    hasLogOnDate: boolean
+): boolean {
+    if (!isDueOnDate(reminder.days_of_week, date)) return false;
+
+    const start     = getAnalyticsStartDate(connectionAcceptedAt, reminder.created_at, reminder.time_of_day);
+    const dateStart = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
+    if (dateStart < start) return false;
+
+    if (!reminder.is_active) return hasLogOnDate;
+
+    return true;
+}
+
+/** Local midnight-anchored Date for a "YYYY-MM-DD" + "HH:MM" pair. */
+export function buildScheduledDateTime(dateString: string, timeOfDay: string): Date {
+    const [yr, mo, dy] = dateString.split('-').map(Number);
+    const [hr, mn]     = timeOfDay.split(':').map(Number);
+    return new Date(yr, mo - 1, dy, hr, mn, 0, 0);
+}
+
+/**
+ * The status to display for a given reminder occurrence: the persisted log
+ * status if one exists, otherwise a computed value — 'pending' for a
+ * future date or one still inside its response window, 'missed' once the
+ * window has passed with no log. Never itself writes anything; see this
+ * file's header comment on the client/server split.
+ */
+export function getComputedStatus(
+    reminder: ReminderScheduleLike,
+    dateString: string,
+    todayString: string,
+    log?: ReminderLogLike
+): DisplayReminderStatus {
+    if (log?.status) return log.status;
+    if (dateString > todayString) return 'pending';
+    const scheduledFor = buildScheduledDateTime(dateString, reminder.time_of_day);
+    const missedAt = new Date(scheduledFor.getTime() + reminder.no_response_minutes * 60 * 1000);
+    if (new Date() < missedAt) return 'pending';
+    return 'missed';
 }

@@ -12,9 +12,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
+import { formatFrequency as formatFrequencyDays } from '@/lib/frequency';
 import { useLanguage, useStatusLabel } from '@/lib/i18n/context';
+import { getAnalyticsStartDate, getComputedStatus, isReminderEligibleOnDate } from '@/lib/reminderStatus';
 import { useThemeColors } from '@/lib/theme';
-import { formatFrequency as formatFrequencyDays, isDueOnDate } from '@/lib/frequency';
 import { supabase } from '@/lib/supabase';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -110,72 +111,15 @@ function formatDateLabel(date: Date, locale: string): string {
     return date.toLocaleDateString(locale, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
-function getAnalyticsStartDate(
-    connectionAcceptedAt: string,
-    reminderCreatedAt: string,
-    timeOfDay: string
-): Date {
-    const connDate = new Date(connectionAcceptedAt);
-    const remDate  = new Date(reminderCreatedAt);
-    const later    = connDate > remDate ? connDate : remDate;
-
-    // If the reminder/connection only became eligible after today's
-    // scheduled window had already passed, the first occurrence is the
-    // next calendar day — today must never be backfilled as missed.
-    const [h, m] = timeOfDay.split(':').map(Number);
-    const scheduledOnLaterDate = new Date(
-        later.getFullYear(), later.getMonth(), later.getDate(), h, m, 0, 0
-    );
-    const laterDateStart = new Date(later.getFullYear(), later.getMonth(), later.getDate(), 0, 0, 0, 0);
-    return later > scheduledOnLaterDate ? addDays(laterDateStart, 1) : laterDateStart;
-}
-
-function shouldShowOnDate(daysOfWeek: number[], date: Date): boolean {
-    return isDueOnDate(daysOfWeek, date);
-}
-
-function isReminderEligibleOnDate(
-    reminder: Reminder,
-    date: Date,
-    connectionAcceptedAt: string
-): boolean {
-    if (!shouldShowOnDate(reminder.days_of_week, date)) return false;
-    const start     = getAnalyticsStartDate(connectionAcceptedAt, reminder.created_at, reminder.time_of_day);
-    const dateStart = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
-    if (dateStart < start) return false;
-
-    // Soft-deleted reminders keep their past logs/history, but aren't
-    // eligible for any date after they were deactivated.
-    if (!reminder.is_active) {
-        const deactivatedAt = new Date(reminder.updated_at);
-        const deactivatedDateStart = new Date(
-            deactivatedAt.getFullYear(), deactivatedAt.getMonth(), deactivatedAt.getDate(), 0, 0, 0, 0
-        );
-        if (dateStart > deactivatedDateStart) return false;
-    }
-
-    return true;
-}
-
-function buildScheduledDateTime(dateString: string, timeOfDay: string): Date {
-    const [yr, mo, dy] = dateString.split('-').map(Number);
-    const [hr, mn]     = timeOfDay.split(':').map(Number);
-    return new Date(yr, mo - 1, dy, hr, mn, 0, 0);
-}
-
-function getComputedStatus(
-    reminder: Reminder,
-    dateString: string,
-    todayString: string,
-    log?: ReminderLog
-): ReminderStatus {
-    if (log?.status) return log.status;
-    if (dateString > todayString) return 'pending';
-    const scheduledFor = buildScheduledDateTime(dateString, reminder.time_of_day);
-    const missedAt     = new Date(scheduledFor.getTime() + reminder.no_response_minutes * 60 * 1000);
-    if (new Date() < missedAt) return 'pending';
-    return 'missed';
-}
+// getAnalyticsStartDate / isReminderEligibleOnDate / getComputedStatus /
+// buildScheduledDateTime now live in lib/reminderStatus.ts, shared with
+// caregiver-dashboard.tsx. This file previously had its own
+// isReminderEligibleOnDate that excluded dates after a deactivated
+// reminder's updated_at — that could both hide a genuine same-day log and
+// still show a computed missed/pending status on the deactivation day
+// itself, contradicting the documented intended rule (see
+// lib/reminderStatus.ts's isReminderEligibleOnDate doc comment). Fixed by
+// this consolidation onto the hasLogOnDate-based rule.
 
 function getAdherenceColor(pct: number | null, C: ThemeColors): string {
     if (pct === null) return C.textMuted;
@@ -205,9 +149,9 @@ function buildDetailData(
     monthDates.forEach((date) => {
         const dateString = getLocalDateString(date);
         if (dateString > todayString) return;
-        if (!isReminderEligibleOnDate(reminder, date, connectionAcceptedAt)) return;
+        const log = logs.find((l) => l.occurrence_date === dateString);
+        if (!isReminderEligibleOnDate(reminder, date, connectionAcceptedAt, !!log)) return;
 
-        const log    = logs.find((l) => l.occurrence_date === dateString);
         const status = getComputedStatus(reminder, dateString, todayString, log);
 
         if (status === 'pending') {
@@ -237,8 +181,8 @@ function buildDetailData(
     weekDates.forEach((date) => {
         const dateString = getLocalDateString(date);
         if (dateString > todayString) return;
-        if (!isReminderEligibleOnDate(reminder, date, connectionAcceptedAt)) return;
-        const log    = logs.find((l) => l.occurrence_date === dateString);
+        const log = logs.find((l) => l.occurrence_date === dateString);
+        if (!isReminderEligibleOnDate(reminder, date, connectionAcceptedAt, !!log)) return;
         const status = getComputedStatus(reminder, dateString, todayString, log);
         if (status === 'pending') return;
         weekCountable += 1;

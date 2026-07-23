@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -21,6 +21,7 @@ import { useTranslation } from '@/lib/i18n/context';
 import { useThemeColors } from '@/lib/theme';
 import { buildTimeString, parseTimeString, TimePickerField } from '@/components/TimePickerField';
 import { DAY_OPTIONS, daysForFrequency, Frequency, frequencyForDays } from '@/lib/frequency';
+import { clearStaleReminderDeliveries } from '@/lib/reminderLifecycle';
 import {
     assertValidNoResponseMinutes,
     DEFAULT_NO_RESPONSE_MINUTES,
@@ -94,6 +95,14 @@ export default function EditReminderScreen() {
     const [participantName,   setParticipantName]   = useState<string | null>(null);
     const [connectionId,      setConnectionId]      = useState<string | null>(null);
 
+    // Snapshot of the schedule-affecting fields as loaded, so saveChanges()
+    // can tell whether this save actually changes when/how often the
+    // reminder fires — only then is it worth asking the server to clear a
+    // stale, already-claimed-but-unsent delivery for today (see
+    // clear_stale_reminder_deliveries in the Week 1 task #7 migration).
+    // A title/notes/type-only edit never touches delivery timing at all.
+    const originalScheduleRef = useRef<{ timeOfDay: string; daysOfWeek: number[]; noResponseMinutes: number } | null>(null);
+
     function toggleDay(iso: number) {
         setSelectedDays((prev) =>
             prev.includes(iso) ? prev.filter((d) => d !== iso) : [...prev, iso]
@@ -158,6 +167,19 @@ export default function EditReminderScreen() {
                 ? rem.no_response_minutes
                 : DEFAULT_NO_RESPONSE_MINUTES
         );
+
+        // Stores the RAW as-persisted value, not the remapped display
+        // value above — a legacy reminder stored at the no-longer-offered
+        // 1-minute window gets silently normalized to the current default
+        // on any save (existing, intended behavior), and that IS a real
+        // schedule change worth cleaning a stale delivery for, even if the
+        // user only touched the title.
+        originalScheduleRef.current = {
+            timeOfDay: rem.time_of_day,
+            daysOfWeek: rem.days_of_week,
+            noResponseMinutes: rem.no_response_minutes,
+        };
+
         setPageLoading(false);
     }
 
@@ -182,15 +204,26 @@ export default function EditReminderScreen() {
         if (Platform.OS === 'ios') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         setSaving(true);
 
+        const newTimeOfDay  = buildTimeString(timeValue);
+        const newDaysOfWeek = daysForFrequency(frequency, selectedDays);
+        const original = originalScheduleRef.current;
+        const scheduleChanged =
+            !!original && (
+                original.timeOfDay !== newTimeOfDay ||
+                original.noResponseMinutes !== noResponseMinutes ||
+                original.daysOfWeek.length !== newDaysOfWeek.length ||
+                !original.daysOfWeek.every((d) => newDaysOfWeek.includes(d))
+            );
+
         const { error: updateError } = await supabase
             .from('reminders')
             .update({
                 title:               title.trim(),
                 reminder_type:       reminderType,
                 notes:               notes.trim() || null,
-                time_of_day:         buildTimeString(timeValue),
+                time_of_day:         newTimeOfDay,
                 frequency,
-                days_of_week:        daysForFrequency(frequency, selectedDays),
+                days_of_week:        newDaysOfWeek,
                 no_response_minutes: noResponseMinutes,
                 updated_at:          new Date().toISOString(),
             })
@@ -201,6 +234,15 @@ export default function EditReminderScreen() {
         if (updateError) {
             Alert.alert(t('reminderForm.saveErrorTitle'), updateError.message);
             return;
+        }
+
+        // A schedule-affecting change may leave an already-claimed-but-
+        // unsent delivery for today reflecting the pre-edit time — clear
+        // it so the corrected schedule can be freshly claimed instead.
+        // Best-effort: never blocks the save itself from completing (the
+        // save above already succeeded).
+        if (scheduleChanged && reminderId) {
+            clearStaleReminderDeliveries(reminderId).catch(() => {});
         }
 
         router.replace(

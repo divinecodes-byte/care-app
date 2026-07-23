@@ -33,6 +33,8 @@ import {
 } from '@/lib/notifications';
 import { syncCurrentUserTimezone } from '@/lib/timezone';
 import { isDueOnDate } from '@/lib/frequency';
+import { REMINDER_ERROR_TRANSLATION_KEYS } from '@/lib/reminderErrors';
+import { respondToReminderOccurrence } from '@/lib/reminderLifecycle';
 import { getFirstEligibleDateString, isPastNoResponseWindow } from '@/lib/reminderStatus';
 
 type ReminderStatus = 'pending' | 'taken' | 'snoozed' | 'skipped' | 'missed';
@@ -77,19 +79,6 @@ const TYPE_LABEL_KEYS: Record<string, string> = {
 function getTodayDateString() {
     const today = new Date();
     return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-}
-
-function buildScheduledForIso(time: string) {
-    const [hourString, minuteString] = time.split(':');
-    const scheduled = new Date();
-    scheduled.setHours(Number(hourString), Number(minuteString), 0, 0);
-    return scheduled.toISOString();
-}
-
-function buildSnoozedUntilIso(minutes = 10) {
-    const snoozedUntil = new Date();
-    snoozedUntil.setMinutes(snoozedUntil.getMinutes() + minutes);
-    return snoozedUntil.toISOString();
 }
 
 function formatTime(time: string) {
@@ -287,8 +276,6 @@ export default function RecipientDashboard() {
             return;
         }
 
-        const now = new Date();
-
         const remindersWithStatus = todaysReminders.map((reminder) => {
             const matchingLog  = logs?.find((log) => log.reminder_id === reminder.id);
             const logStatus    = matchingLog?.status as ReminderStatus | undefined;
@@ -311,40 +298,18 @@ export default function RecipientDashboard() {
         setReminders(remindersWithStatus);
         setLoading(false);
 
-        // Write missed logs to the DB so the caregiver dashboard reflects them.
-        // Fire-and-forget: the recipient UI already shows the correct computed
-        // status without waiting for the DB write.
-        // Upsert on (reminder_id, occurrence_date) — never creates duplicates.
-        const missedToSync = remindersWithStatus.filter((r) => {
-            if (r.today_status !== 'missed') return false;
-            const existing = logs?.find((l) => l.reminder_id === r.id);
-            // Only upsert when there is no log yet or the existing row is still pending.
-            return !existing || existing.status === 'pending';
-        });
-
-        if (missedToSync.length > 0) {
-            const nowIso = now.toISOString();
-            supabase
-                .from('reminder_logs')
-                .upsert(
-                    missedToSync.map((r) => ({
-                        reminder_id:     r.id,
-                        connection_id:   r.connection_id,
-                        caregiver_id:    r.caregiver_id,
-                        recipient_id:    r.recipient_id,
-                        occurrence_date: todayDate,
-                        scheduled_for:   buildScheduledForIso(r.time_of_day),
-                        status:          'missed' as const,
-                        completed_at:    null,
-                        snoozed_until:   null,
-                        updated_at:      nowIso,
-                    })),
-                    { onConflict: 'reminder_id,occurrence_date' }
-                )
-                .then(({ error: syncErr }) => {
-                    if (syncErr) console.error('[RecipientDashboard] Missed log sync failed:', syncErr.message);
-                });
-        }
+        // 'missed' above is a client-computed DISPLAY status only — this
+        // dashboard no longer writes it to reminder_logs itself. The
+        // server cron (sync_missed_reminders_db, every 5 minutes) is now
+        // the sole authority that persists a missed transition, atomically
+        // and race-safe against a concurrent response
+        // (respond_to_reminder_occurrence). The previous client-side write
+        // here used a read-then-write check that wasn't atomic with the
+        // actual upsert, which could in principle race a genuine response
+        // arriving at nearly the same moment; removing it doesn't change
+        // what the recipient sees (still computed instantly, same as
+        // before), only who is allowed to persist it. See
+        // docs/reminder-state-model.md.
     }
 
     useFocusEffect(useCallback(() => { loadReminders(); }, []));
@@ -370,36 +335,29 @@ export default function RecipientDashboard() {
         return () => subscription.remove();
     }, []);
 
-    async function saveReminderAction(reminder: Reminder, status: ReminderStatus) {
+    async function saveReminderAction(reminder: Reminder, status: 'taken' | 'skipped' | 'snoozed') {
         if (Platform.OS === 'ios') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         setSavingReminderId(reminder.id);
 
-        const todayDate     = getTodayDateString();
-        const snoozedUntil  = status === 'snoozed' ? buildSnoozedUntilIso(10) : null;
+        const todayDate = getTodayDateString();
 
-        const logPayload = {
-            reminder_id:     reminder.id,
-            connection_id:   reminder.connection_id,
-            caregiver_id:    reminder.caregiver_id,
-            recipient_id:    reminder.recipient_id,
-            occurrence_date: todayDate,
-            scheduled_for:   buildScheduledForIso(reminder.time_of_day),
-            status,
-            completed_at:    status === 'taken' ? new Date().toISOString() : null,
-            snoozed_until:   snoozedUntil,
-            updated_at:      new Date().toISOString(),
-        };
-
-        const { error } = await supabase
-            .from('reminder_logs')
-            .upsert(logPayload, { onConflict: 'reminder_id,occurrence_date' });
+        // The server (respond_to_reminder_occurrence) is the sole author
+        // of the persisted log — it validates ownership, reminder.is_active,
+        // connection.status, occurrence eligibility, and legal state
+        // transitions, and computes occurrence_date/scheduled_for/
+        // snoozed_until itself from the recipient's own stored timezone
+        // rather than trusting anything the client sends. See
+        // lib/reminderLifecycle.ts and docs/reminder-state-model.md.
+        const result = await respondToReminderOccurrence(reminder.id, status);
 
         setSavingReminderId(null);
 
-        if (error) {
-            Alert.alert(t('participantDashboard.saveErrorTitle'), error.message);
+        if (!result.ok) {
+            Alert.alert(t('participantDashboard.saveErrorTitle'), t(REMINDER_ERROR_TRANSLATION_KEYS[result.kind]));
             return;
         }
+
+        const snoozedUntil = result.log.snoozed_until;
 
         // A real response now exists for today — cancel only today's
         // occurrence notification. Future occurrences are untouched.
@@ -427,7 +385,7 @@ export default function RecipientDashboard() {
 
         setReminders((current) =>
             current.map((r) =>
-                r.id === reminder.id ? { ...r, today_status: status } : r
+                r.id === reminder.id ? { ...r, today_status: result.log.status } : r
             )
         );
     }

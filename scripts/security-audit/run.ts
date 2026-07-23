@@ -150,22 +150,20 @@ async function main() {
         const reassignBlocked = !!reassignErr || (reassignData ?? []).length === 0;
         record('J', 'caregiver cannot reassign their own reminder to an unconnected recipient', reassignBlocked, reassignErr?.message ?? `rows affected: ${(reassignData ?? []).length}`);
 
-        // A real reminder_log row (recipientA responding to their own reminder).
-        const { data: log, error: logInsertErr } = await recipientA.client
-            .from('reminder_logs')
-            .insert({
-                reminder_id: reminder.id,
-                connection_id: connId,
-                caregiver_id: caregiverA.id,
-                recipient_id: recipientA.id,
-                occurrence_date: new Date().toISOString().slice(0, 10),
-                scheduled_for: new Date().toISOString(),
-                status: 'taken',
-                completed_at: new Date().toISOString(),
-            })
-            .select('id')
-            .maybeSingle();
-        if (logInsertErr || !log) throw new Error(`setup: log insert failed: ${logInsertErr?.message}`);
+        // A real reminder_log row, seeded directly via the CLI (not through
+        // respond_to_reminder_occurrence -- that RPC now enforces strict
+        // occurrence-eligibility windows that this fixed-schedule reminder
+        // may or may not currently satisfy, and this fixture only needs a
+        // row to exist for the L/L2 attack tests below, not to exercise
+        // the response RPC itself). Direct client inserts are no longer
+        // possible at all as of the Week 1 task #7 RLS hardening -- see L2.
+        const logRows = dbQuery(`
+          insert into public.reminder_logs (reminder_id, connection_id, caregiver_id, recipient_id, occurrence_date, scheduled_for, status, completed_at)
+          values ('${reminder.id}', '${connId}', '${caregiverA.id}', '${recipientA.id}', current_date, now(), 'taken', now())
+          returning id;
+        `);
+        const log = logRows[0] as { id: string } | undefined;
+        if (!log) throw new Error('setup: log seed failed');
 
         // ── L: forged reminder_logs (redirect to a different reminder) ──────────
         const { data: redirectData, error: redirectErr } = await recipientA.client

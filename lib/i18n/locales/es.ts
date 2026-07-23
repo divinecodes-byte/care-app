@@ -87,6 +87,16 @@ export const es: typeof en = {
         unexpected: 'Algo salió mal. Inténtalo de nuevo.',
     },
 
+    reminderErrors: {
+        alreadyAnswered: 'Este recordatorio ya se actualizó.',
+        reminderInactive: 'Este recordatorio ya no está activo.',
+        connectionInactive: 'Esta conexión ya no está activa.',
+        notEligible: 'Este recordatorio todavía no está disponible.',
+        notAuthorized: 'Algo salió mal. Inténtalo de nuevo.',
+        network: 'No pudimos guardar tu respuesta. Verifica tu conexión e inténtalo de nuevo.',
+        unexpected: 'Algo salió mal. Inténtalo de nuevo.',
+    },
+
     signup: {
         heading: 'Crea tu cuenta',
         subheading: 'Comienza a compartir recordatorios y a seguir el progreso juntos.',

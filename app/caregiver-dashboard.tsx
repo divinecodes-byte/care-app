@@ -20,6 +20,7 @@ import { formatFrequency as formatFrequencyDays, isDueOnDate } from '@/lib/frequ
 import { useStatusLabel, useTranslation } from '@/lib/i18n/context';
 import { MAX_FREE_PARTICIPANTS } from '@/lib/limits';
 import { registerPushToken } from '@/lib/notifications';
+import { getComputedStatus, isReminderEligibleOnDate } from '@/lib/reminderStatus';
 import { getStoredSelectedConnectionId, setStoredSelectedConnectionId } from '@/lib/selected-participant';
 import { supabase } from '@/lib/supabase';
 import { useThemeColors } from '@/lib/theme';
@@ -167,67 +168,11 @@ function shouldShowOnDate(daysOfWeek: number[], date: Date): boolean {
     return isDueOnDate(daysOfWeek, date);
 }
 
-function buildScheduledDateTime(dateString: string, timeOfDay: string): Date {
-    const [yr, mo, dy] = dateString.split('-').map(Number);
-    const [hr, mn] = timeOfDay.split(':').map(Number);
-    return new Date(yr, mo - 1, dy, hr, mn, 0, 0);
-}
-
 // ─── Analytics helpers ────────────────────────────────────────────────────────
-
-function getAnalyticsStartDate(
-    connectionAcceptedAt: string,
-    reminderCreatedAt: string,
-    timeOfDay: string
-): Date {
-    const connDate = new Date(connectionAcceptedAt);
-    const remDate  = new Date(reminderCreatedAt);
-    const later    = connDate > remDate ? connDate : remDate;
-
-    // If the reminder/connection only became eligible after today's
-    // scheduled window had already passed, the first occurrence is the
-    // next calendar day — today must never be backfilled as missed.
-    const [h, m] = timeOfDay.split(':').map(Number);
-    const scheduledOnLaterDate = new Date(
-        later.getFullYear(), later.getMonth(), later.getDate(), h, m, 0, 0
-    );
-    const laterDateStart = new Date(later.getFullYear(), later.getMonth(), later.getDate(), 0, 0, 0, 0);
-    return later > scheduledOnLaterDate ? addDays(laterDateStart, 1) : laterDateStart;
-}
-
-function isReminderEligibleOnDate(
-    reminder: Reminder,
-    date: Date,
-    connectionAcceptedAt: string,
-    hasLogOnDate: boolean
-): boolean {
-    if (!shouldShowOnDate(reminder.days_of_week, date)) return false;
-    const start     = getAnalyticsStartDate(connectionAcceptedAt, reminder.created_at, reminder.time_of_day);
-    const dateStart = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
-    if (dateStart < start) return false;
-
-    // Soft-deleted reminders keep their real past logs/history, but must
-    // never surface via virtual scheduled/pending/missed computation — not
-    // even on the day they were deactivated. Without an actual log there is
-    // nothing to show for an inactive reminder on a given date.
-    if (!reminder.is_active) return hasLogOnDate;
-
-    return true;
-}
-
-function getComputedStatus(
-    reminder: Reminder,
-    dateString: string,
-    todayString: string,
-    log?: ReminderLog
-): ReminderStatus {
-    if (log?.status) return log.status;
-    if (dateString > todayString) return 'pending';
-    const scheduledFor = buildScheduledDateTime(dateString, reminder.time_of_day);
-    const missedAt     = new Date(scheduledFor.getTime() + reminder.no_response_minutes * 60 * 1000);
-    if (new Date() < missedAt) return 'pending';
-    return 'missed';
-}
+// getAnalyticsStartDate / isReminderEligibleOnDate / getComputedStatus /
+// buildScheduledDateTime now live in lib/reminderStatus.ts, shared with
+// reminder-details.tsx — see that file's header comment for the real
+// divergence this consolidation fixed.
 
 function buildDayData(
     date: Date,
