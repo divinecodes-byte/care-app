@@ -1004,12 +1004,32 @@ export default function CaregiverDashboard() {
                                 <Text style={[styles.helperText, { marginBottom: 12 }]}>
                                     {t('organizerDashboard.noRemindersCreatedYet')}
                                 </Text>
-                                <View style={styles.inlineEmpty}>
-                                    <Ionicons name="add-circle-outline" size={20} color={C.textMuted} />
-                                    <Text style={styles.inlineEmptyText}>
-                                        {t('organizerDashboard.createFirstReminder')}
-                                    </Text>
-                                </View>
+                                {connectionSummary.status === 'accepted' ? (
+                                    <TouchableOpacity
+                                        style={styles.firstReminderButton}
+                                        onPress={handleCreateReminder}
+                                        activeOpacity={0.88}
+                                        accessibilityRole="button"
+                                        accessibilityLabel={t('firstReminder.emptyCtaTitle')}
+                                        accessibilityHint={
+                                            connectionSummary.recipientName
+                                                ? t('firstReminder.emptyCtaSubtitle', { name: connectionSummary.recipientName })
+                                                : t('firstReminder.emptyCtaSubtitleGeneric')
+                                        }
+                                    >
+                                        <Ionicons name="add-circle" size={20} color={C.textInverse} />
+                                        <Text style={styles.firstReminderButtonText}>
+                                            {t('firstReminder.emptyCtaTitle')}
+                                        </Text>
+                                    </TouchableOpacity>
+                                ) : (
+                                    <View style={styles.inlineEmpty}>
+                                        <Ionicons name="add-circle-outline" size={20} color={C.textMuted} />
+                                        <Text style={styles.inlineEmptyText}>
+                                            {t('organizerDashboard.createFirstReminder')}
+                                        </Text>
+                                    </View>
+                                )}
                             </>
                         ) : !todayData || todayData.eligibleCount === 0 ? (
                             <View style={styles.inlineEmpty}>
@@ -1675,6 +1695,22 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
         color: C.textMuted,
         fontWeight: '500',
         flex: 1,
+    },
+    firstReminderButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        backgroundColor: C.primary,
+        borderRadius: RADIUS.lg,
+        paddingVertical: 14,
+        marginTop: 4,
+        minHeight: 44,
+    },
+    firstReminderButtonText: {
+        color: C.textInverse,
+        fontSize: 15,
+        fontWeight: '700',
     },
 
     // ── Bar chart ─────────────────────────────────────────────────────────────

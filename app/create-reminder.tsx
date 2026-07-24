@@ -21,6 +21,7 @@ import { useTranslation } from '@/lib/i18n/context';
 import { useThemeColors } from '@/lib/theme';
 import { buildTimeString, TimePickerField } from '@/components/TimePickerField';
 import { DAY_OPTIONS, daysForFrequency, Frequency } from '@/lib/frequency';
+import { getExampleReminderTitleKey, isUseCase, logOnboardingEvent, UseCase } from '@/lib/onboarding';
 import { assertValidNoResponseMinutes, DEFAULT_NO_RESPONSE_MINUTES, NO_RESPONSE_OPTIONS } from '@/lib/reminderOptions';
 import { supabase } from '@/lib/supabase';
 
@@ -89,6 +90,18 @@ export default function CreateReminderScreen() {
     const [noResponseMinutes, setNoResponseMinutes] = useState(DEFAULT_NO_RESPONSE_MINUTES);
     const [loading, setLoading]                     = useState(false);
     const [focused, setFocused]                     = useState<string | null>(null);
+    const [useCase, setUseCase]                     = useState<UseCase | null>(null);
+    // Set only after a successful save — replaces the form with an in-page
+    // confirmation instead of an Alert + immediate redirect, per the
+    // "first reminder created" experience.
+    const [savedSummary, setSavedSummary] = useState<{
+        title: string;
+        timeOfDay: string;
+        recipientName: string;
+        nextOccurrenceLabel: string;
+        reminderId: string;
+        connectionId: string;
+    } | null>(null);
 
     useEffect(() => {
         (async () => {
@@ -96,6 +109,13 @@ export default function CreateReminderScreen() {
 
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) { setParticipantsLoading(false); return; }
+
+            const { data: ownProfile } = await supabase
+                .from('profiles')
+                .select('use_case')
+                .eq('id', user.id)
+                .maybeSingle();
+            if (ownProfile?.use_case && isUseCase(ownProfile.use_case)) setUseCase(ownProfile.use_case);
 
             const { data: connections } = await supabase
                 .from('connections')
@@ -142,6 +162,29 @@ export default function CreateReminderScreen() {
         );
     }
 
+    // Display-only label for the confirmation card — walks forward from
+    // today (device-local calendar) to the first day matching days_of_week.
+    // Never used for actual delivery timing, which stays entirely
+    // server-authoritative and recipient-timezone-based (see
+    // docs/reminder-state-model.md) — this is purely "what to show the
+    // caregiver right after saving," computed the same way the rest of
+    // this form already reasons about days locally.
+    function nextOccurrenceLabel(daysOfWeek: number[], timeString: string): string {
+        const timeLabel = timeValue.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+        const today = new Date();
+        for (let offset = 0; offset < 7; offset++) {
+            const candidate = new Date(today.getFullYear(), today.getMonth(), today.getDate() + offset);
+            const isoDow = candidate.getDay() === 0 ? 7 : candidate.getDay();
+            if (daysOfWeek.includes(isoDow)) {
+                const dayLabel = offset === 0
+                    ? candidate.toLocaleDateString(undefined, { weekday: 'long' })
+                    : candidate.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+                return `${dayLabel} · ${timeLabel}`;
+            }
+        }
+        return timeLabel;
+    }
+
     async function saveReminder() {
         const selected = participants.find((p) => p.connectionId === selectedConnectionId);
         if (!selected) {
@@ -175,35 +218,101 @@ export default function CreateReminderScreen() {
             return;
         }
 
-        const { error } = await supabase.from('reminders').insert({
+        const resolvedDays = daysForFrequency(frequency, selectedDays);
+        const resolvedTime = buildTimeString(timeValue);
+
+        const { data: inserted, error } = await supabase.from('reminders').insert({
             connection_id:       selected.connectionId,
             caregiver_id:        user.id,
             recipient_id:        selected.recipientId,
             title:               title.trim(),
             reminder_type:       reminderType,
             notes:               notes.trim() || null,
-            time_of_day:         buildTimeString(timeValue),
+            time_of_day:         resolvedTime,
             frequency,
-            days_of_week:        daysForFrequency(frequency, selectedDays),
+            days_of_week:        resolvedDays,
             no_response_minutes: noResponseMinutes,
             is_active:           true,
-        });
+        }).select('id').single();
 
         setLoading(false);
 
-        if (error) {
-            Alert.alert(t('reminderForm.errorTitle'), error.message);
+        if (error || !inserted) {
+            Alert.alert(t('reminderForm.errorTitle'), error?.message ?? t('reminderForm.errorTitle'));
             return;
         }
 
-        Alert.alert(t('reminderForm.savedTitle'), t('reminderForm.savedMessage', { name: selected.recipientName }));
-        router.replace({ pathname: '/caregiver-dashboard', params: { connectionId: selected.connectionId } });
+        logOnboardingEvent('first_reminder_created');
+
+        setSavedSummary({
+            title: title.trim(),
+            timeOfDay: resolvedTime,
+            recipientName: selected.recipientName,
+            nextOccurrenceLabel: nextOccurrenceLabel(resolvedDays, resolvedTime),
+            reminderId: inserted.id,
+            connectionId: selected.connectionId,
+        });
     }
 
     const inputStyle = (field: string) => [
         styles.input,
         focused === field && styles.inputFocused,
     ];
+
+    if (savedSummary) {
+        return (
+            <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+                <View style={styles.confirmContent}>
+                    <View style={styles.confirmIconWrap}>
+                        <Ionicons name="checkmark-circle" size={48} color={C.success} />
+                    </View>
+                    <Text style={styles.heading} accessibilityRole="header">{t('firstReminder.confirmTitle')}</Text>
+                    <Text style={styles.subheading}>
+                        {t('firstReminder.confirmSubtitle', { name: savedSummary.recipientName })}
+                    </Text>
+
+                    <View style={[styles.confirmCard, SHADOW.xs]}>
+                        <View style={styles.confirmRow}>
+                            <Ionicons name="create-outline" size={16} color={C.textMuted} />
+                            <Text style={styles.confirmValue} numberOfLines={2}>{savedSummary.title}</Text>
+                        </View>
+                        <View style={styles.confirmRow}>
+                            <Ionicons name="person-outline" size={16} color={C.textMuted} />
+                            <Text style={styles.confirmLabel}>{t('firstReminder.confirmParticipantLabel')}</Text>
+                            <Text style={styles.confirmValue}>{savedSummary.recipientName}</Text>
+                        </View>
+                        <View style={styles.confirmRow}>
+                            <Ionicons name="time-outline" size={16} color={C.textMuted} />
+                            <Text style={styles.confirmLabel}>{t('firstReminder.confirmNextLabel')}</Text>
+                            <Text style={styles.confirmValue}>{savedSummary.nextOccurrenceLabel}</Text>
+                        </View>
+                    </View>
+
+                    <View style={styles.spacer} />
+
+                    <TouchableOpacity
+                        style={[styles.button, SHADOW.primary]}
+                        onPress={() => router.replace({ pathname: '/reminder-details', params: { reminderId: savedSummary.reminderId, connectionId: savedSummary.connectionId } })}
+                        activeOpacity={0.88}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('firstReminder.viewReminder')}
+                    >
+                        <Text style={styles.buttonText}>{t('firstReminder.viewReminder')}</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                        style={styles.secondaryButton}
+                        onPress={() => router.replace({ pathname: '/caregiver-dashboard', params: { connectionId: savedSummary.connectionId } })}
+                        activeOpacity={0.7}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('firstReminder.backToDashboard')}
+                    >
+                        <Text style={styles.secondaryButtonText}>{t('firstReminder.backToDashboard')}</Text>
+                    </TouchableOpacity>
+                </View>
+            </SafeAreaView>
+        );
+    }
 
     return (
         <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
@@ -304,6 +413,13 @@ export default function CreateReminderScreen() {
                                 ))}
                             </View>
                         )}
+                        <Text style={styles.recipientNote}>
+                            {selectedConnectionId
+                                ? t('reminderForm.participantWillReceive', {
+                                    name: participants.find((p) => p.connectionId === selectedConnectionId)?.recipientName ?? '',
+                                })
+                                : t('reminderForm.participantWillReceiveGeneric')}
+                        </Text>
                     </View>
 
                     {/* ── Section 1: What ─────────────────────────────────── */}
@@ -318,12 +434,14 @@ export default function CreateReminderScreen() {
                         <Text style={styles.label}>{t('reminderForm.nameLabel')}</Text>
                         <TextInput
                             style={inputStyle('title')}
+                            placeholder={t('reminderForm.namePlaceholderPrefix') + t(getExampleReminderTitleKey(useCase))}
                             placeholderTextColor={C.textMuted}
                             value={title}
                             onChangeText={setTitle}
                             onFocus={() => setFocused('title')}
                             onBlur={() => setFocused(null)}
                             returnKeyType="next"
+                            accessibilityLabel={t('reminderForm.nameLabel')}
                         />
 
                         <Text style={[styles.label, { marginTop: 18 }]}>{t('reminderForm.typeLabel')}</Text>
@@ -520,6 +638,12 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
         fontWeight: '600',
         color: C.primary,
         marginLeft: 2,
+    },
+
+    recipientNote: {
+        fontSize: 12,
+        color: C.textMuted,
+        marginTop: 12,
     },
 
     // ── Header ────────────────────────────────────────────────────────
@@ -798,5 +922,70 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
         fontSize: 17,
         fontWeight: '700',
         letterSpacing: -0.2,
+    },
+
+    // ── First-reminder confirmation ─────────────────────────────────────
+    confirmContent: {
+        flex: 1,
+        paddingHorizontal: 28,
+        paddingTop: 40,
+        paddingBottom: 24,
+    },
+    confirmIconWrap: {
+        marginBottom: 20,
+    },
+    confirmCard: {
+        backgroundColor: C.bgSurface,
+        borderRadius: RADIUS.xl,
+        padding: 18,
+        marginTop: 8,
+        gap: 14,
+    },
+    confirmRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+    },
+    confirmLabel: {
+        fontSize: 13,
+        color: C.textMuted,
+        fontWeight: '600',
+        minWidth: 76,
+    },
+    confirmValue: {
+        flex: 1,
+        fontSize: 15,
+        color: C.textPrimary,
+        fontWeight: '600',
+    },
+    spacer: {
+        flex: 1,
+        minHeight: 24,
+    },
+    button: {
+        backgroundColor: C.primary,
+        paddingVertical: 18,
+        borderRadius: RADIUS.xl,
+        alignItems: 'center',
+        marginBottom: 12,
+        minHeight: 44,
+        justifyContent: 'center',
+    },
+    buttonText: {
+        color: C.textInverse,
+        fontSize: 17,
+        fontWeight: '700',
+        letterSpacing: -0.2,
+    },
+    secondaryButton: {
+        paddingVertical: 14,
+        alignItems: 'center',
+        minHeight: 44,
+        justifyContent: 'center',
+    },
+    secondaryButtonText: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: C.textMuted,
     },
 });

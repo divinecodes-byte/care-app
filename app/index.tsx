@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
 import { useLanguage } from '@/lib/i18n/context';
+import { isUseCase, recipientHasAcceptedConnection, resolveProfileRoute } from '@/lib/onboarding';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 import { syncCurrentUserTimezone } from '@/lib/timezone';
@@ -31,18 +32,23 @@ export default function HomeScreen() {
             if (!session?.user) return;
             const { data } = await supabase
                 .from('profiles')
-                .select('role')
+                .select('role, use_case')
                 .eq('id', session.user.id)
                 .maybeSingle();
-            if (data?.role === 'caregiver') {
-                router.replace('/caregiver-dashboard');
-            } else if (data?.role === 'recipient') {
+            if (!data) return; // profile_missing is handled by _layout.tsx's global effect
+
+            const role = data.role === 'caregiver' || data.role === 'recipient' ? data.role : null;
+            const useCase = isUseCase(data.use_case) ? data.use_case : null;
+            const hasConnection = role === 'recipient' ? await recipientHasAcceptedConnection(session.user.id) : false;
+            const route = resolveProfileRoute({ role, useCase }, hasConnection);
+
+            if (route === '/recipient-dashboard') {
                 // Fire-and-forget — reconciles this device's timezone right
                 // after session restoration on cold start, same as the
                 // signin flow, before the dashboard even mounts.
                 syncCurrentUserTimezone().catch(() => {});
-                router.replace('/recipient-dashboard');
             }
+            router.replace(route);
         });
     }, [ready, hasChosenLanguage]);
 

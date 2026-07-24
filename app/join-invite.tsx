@@ -18,6 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
 import { useTranslation } from '@/lib/i18n/context';
+import { logOnboardingEvent } from '@/lib/onboarding';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 
@@ -28,6 +29,11 @@ export default function JoinInviteScreen() {
     const [inviteCode, setInviteCode] = useState('');
     const [loading, setLoading]       = useState(false);
     const [focused, setFocused]       = useState(false);
+    // Set only after a real 'accepted' result — the connected-caregiver's
+    // name is looked up AFTER server validation succeeds (never guessed or
+    // fetched pre-emptively from the raw code), per the task's own
+    // requirement not to reveal who a code belongs to before acceptance.
+    const [connectedName, setConnectedName] = useState<string | null>(null);
 
     async function joinInvite() {
         const normalizedCode = inviteCode.trim().toUpperCase();
@@ -64,7 +70,10 @@ export default function JoinInviteScreen() {
         setLoading(false);
 
         if (acceptError) {
-            Alert.alert(t('joinInvite.errorTitle'), acceptError.message);
+            // Never surface a raw Supabase error string here — every other
+            // failure branch in this screen uses translated copy, and a
+            // network/unexpected failure should read the same way.
+            Alert.alert(t('joinInvite.errorTitle'), t('authErrors.unexpected'));
             return;
         }
 
@@ -91,7 +100,65 @@ export default function JoinInviteScreen() {
             return;
         }
 
-        router.replace('/recipient-dashboard');
+        logOnboardingEvent('invite_accepted');
+
+        // Look up the connected caregiver's display name only now, after
+        // server-side acceptance already succeeded — RLS ("Users can view
+        // connected profiles") only grants this read once the connection
+        // is genuinely accepted, so this can never leak who a code
+        // belonged to before it was used.
+        const { data: connectionRow } = await supabase
+            .from('connections')
+            .select('caregiver_id')
+            .eq('recipient_id', user.id)
+            .eq('status', 'accepted')
+            .order('accepted_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+        if (connectionRow?.caregiver_id) {
+            const { data: caregiverProfile } = await supabase
+                .from('profiles')
+                .select('full_name')
+                .eq('id', connectionRow.caregiver_id)
+                .maybeSingle();
+            setConnectedName(caregiverProfile?.full_name ?? null);
+        } else {
+            setConnectedName('');
+        }
+    }
+
+    if (connectedName !== null) {
+        return (
+            <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+                <View style={styles.connectedContent}>
+                    <View style={styles.connectedIconWrap}>
+                        <Ionicons name="checkmark-circle" size={48} color={C.success} />
+                    </View>
+                    <Text style={styles.heading} accessibilityRole="header">
+                        {t('joinInvite.connectedTitle')}
+                    </Text>
+                    <Text style={styles.subheading}>
+                        {connectedName
+                            ? t('joinInvite.connectedSubtitle', { name: connectedName })
+                            : t('joinInvite.connectedSubtitleGeneric')}
+                    </Text>
+
+                    <View style={styles.spacer} />
+
+                    <TouchableOpacity
+                        style={[styles.button, SHADOW.primary]}
+                        onPress={() => router.replace('/notification-permission')}
+                        activeOpacity={0.88}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('joinInvite.continueButton')}
+                    >
+                        <Text style={styles.buttonText}>{t('joinInvite.continueButton')}</Text>
+                        <Ionicons name="arrow-forward" size={20} color={C.textInverse} />
+                    </TouchableOpacity>
+                </View>
+            </SafeAreaView>
+        );
     }
 
     return (
@@ -111,6 +178,8 @@ export default function JoinInviteScreen() {
                         style={styles.backButton}
                         onPress={() => router.back()}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('joinInvite.back')}
                     >
                         <Ionicons name="chevron-back" size={22} color={C.primary} />
                         <Text style={styles.backText}>{t('joinInvite.back')}</Text>
@@ -120,7 +189,7 @@ export default function JoinInviteScreen() {
                     <View style={styles.headerIcon}>
                         <Ionicons name="link" size={26} color={C.success} />
                     </View>
-                    <Text style={styles.heading}>{t('joinInvite.heading')}</Text>
+                    <Text style={styles.heading} accessibilityRole="header">{t('joinInvite.heading')}</Text>
                     <Text style={styles.subheading}>
                         {t('joinInvite.subheading')}
                     </Text>
@@ -142,6 +211,8 @@ export default function JoinInviteScreen() {
                             onBlur={() => setFocused(false)}
                             returnKeyType="done"
                             onSubmitEditing={joinInvite}
+                            accessibilityLabel={t('joinInvite.codeLabel')}
+                            accessibilityHint={t('joinInvite.codeHelper')}
                         />
 
                         <Text style={styles.helperText}>
@@ -157,6 +228,8 @@ export default function JoinInviteScreen() {
                         </Text>
                     </View>
 
+                    <Text style={styles.needCodeHint}>{t('joinInvite.needCodeHint')}</Text>
+
                     {/* Spacer */}
                     <View style={styles.spacer} />
 
@@ -166,6 +239,9 @@ export default function JoinInviteScreen() {
                         onPress={joinInvite}
                         disabled={loading}
                         activeOpacity={0.88}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('joinInvite.submit')}
+                        accessibilityState={{ disabled: loading, busy: loading }}
                     >
                         {loading ? (
                             <ActivityIndicator color={C.textInverse} />
@@ -220,6 +296,25 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
         fontWeight: '600',
         color: C.primary,
         marginLeft: 2,
+    },
+
+    // ── Connected confirmation ───────────────────────────────────────
+    connectedContent: {
+        flex: 1,
+        paddingHorizontal: 28,
+        paddingTop: 32,
+        paddingBottom: 24,
+    },
+    connectedIconWrap: {
+        marginBottom: 20,
+    },
+    needCodeHint: {
+        fontSize: 12,
+        color: C.textMuted,
+        textAlign: 'center',
+        lineHeight: 18,
+        marginTop: 14,
+        paddingHorizontal: 8,
     },
 
     // ── Header ────────────────────────────────────────────────────────

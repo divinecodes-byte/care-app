@@ -3,6 +3,7 @@ import { router } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
+    Alert,
     Dimensions,
     Linking,
     Modal,
@@ -21,6 +22,7 @@ import { logout } from '@/lib/accountCleanup';
 import { useLanguage } from '@/lib/i18n/context';
 import { LanguageMode } from '@/lib/i18n/storage';
 import { registerPushToken } from '@/lib/notifications';
+import { isUseCase, USE_CASE_CARD_KEYS, USE_CASES, UseCase } from '@/lib/onboarding';
 import { supabase } from '@/lib/supabase';
 import { syncCurrentUserTimezone } from '@/lib/timezone';
 import { AppearanceMode, useThemeColors, useThemeMode } from '@/lib/theme';
@@ -96,6 +98,13 @@ export function SettingsSheet({ visible, onClose }: Props) {
     // flash of a state that implies detailed content might already be on.
     const [previewMode, setPreviewMode] = useState<PreviewMode>('private');
 
+    // Display-only signal (see the migration comment on profiles.use_case)
+    // — never affects authorization or role. null until the profile row
+    // loads / if genuinely unset (older account, or skipped during
+    // onboarding).
+    const [useCase, setUseCase] = useState<UseCase | null>(null);
+    const [savingUseCase, setSavingUseCase] = useState(false);
+
     useEffect(() => {
         if (visible) fetchProfile();
     }, [visible]);
@@ -109,7 +118,7 @@ export function SettingsSheet({ visible, onClose }: Props) {
 
         const { data: profileRow } = await supabase
             .from('profiles')
-            .select('full_name, role, notification_preview_mode')
+            .select('full_name, role, notification_preview_mode, use_case')
             .eq('id', user.id)
             .maybeSingle();
 
@@ -119,6 +128,7 @@ export function SettingsSheet({ visible, onClose }: Props) {
 
         setUserId(user.id);
         setPreviewMode(profileRow?.notification_preview_mode === 'detailed' ? 'detailed' : 'private');
+        setUseCase(isUseCase(profileRow?.use_case) ? profileRow.use_case : null);
 
         if (role === 'caregiver') {
             const { data: accepted } = await supabase
@@ -275,6 +285,27 @@ export function SettingsSheet({ visible, onClose }: Props) {
         if (error) {
             console.error('[PreviewMode] update error:', error.message);
             setPreviewMode(previous);
+        }
+    }
+
+    async function updateUseCase(next: UseCase) {
+        if (!userId || next === useCase || savingUseCase) return;
+
+        const previous = useCase;
+        setUseCase(next);
+        setSavingUseCase(true);
+
+        const { error } = await supabase
+            .from('profiles')
+            .update({ use_case: next })
+            .eq('id', userId);
+
+        setSavingUseCase(false);
+
+        if (error) {
+            console.error('[UseCase] update error:', error.message);
+            setUseCase(previous);
+            Alert.alert(t('settings.useCaseSavingErrorTitle'), t('settings.useCaseSavingErrorMessage'));
         }
     }
 
@@ -510,6 +541,36 @@ export function SettingsSheet({ visible, onClose }: Props) {
                                     value={profile.connectionStatus}
                                     valueStyle={profile.connectionOk ? styles.valConnected : undefined}
                                 />
+                            </Card>
+
+                            {/* ── How you use Tavora ─────────────────────────── */}
+                            <SectionLabel text={t('settings.sectionUseCase')} />
+                            <Card>
+                                {USE_CASES.map((option, i) => {
+                                    const keys = USE_CASE_CARD_KEYS[option];
+                                    return (
+                                        <View key={option}>
+                                            {i > 0 ? <Sep /> : null}
+                                            <SelectRow
+                                                icon={keys.icon}
+                                                label={t(keys.title)}
+                                                caption={t(keys.desc)}
+                                                selected={useCase === option}
+                                                onPress={() => updateUseCase(option)}
+                                            />
+                                        </View>
+                                    );
+                                })}
+                                <Sep />
+                                <View style={styles.pushBanner}>
+                                    <Ionicons
+                                        name="information-circle-outline"
+                                        size={14}
+                                        color={C.textMuted}
+                                        style={styles.pushBannerIcon}
+                                    />
+                                    <Text style={styles.pushBannerText}>{t('settings.useCaseChangeHint')}</Text>
+                                </View>
                             </Card>
 
                             {/* ── Notifications (caregiver) ── */}

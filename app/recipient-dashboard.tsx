@@ -7,6 +7,7 @@ import {
     Alert,
     AppState,
     AppStateStatus,
+    Linking,
     Platform,
     RefreshControl,
     ScrollView,
@@ -170,6 +171,11 @@ export default function RecipientDashboard() {
     const [savingReminderId, setSavingReminderId] = useState<string | null>(null);
     const [settingsVisible, setSettingsVisible]   = useState(false);
     const [notifDenied, setNotifDenied]           = useState(false);
+    // null while unknown; distinguishes "never connected to an organizer"
+    // from "connected, nothing due right now" for the empty state below —
+    // both used to show the identical "All clear" copy, which stranded a
+    // recipient who backed out of join-invite with no way back in.
+    const [hasConnection, setHasConnection]       = useState<boolean | null>(null);
     const appStateRef = useRef<AppStateStatus>(AppState.currentState);
     const pushRegistrationAttemptedRef = useRef(false);
 
@@ -201,6 +207,13 @@ export default function RecipientDashboard() {
             router.replace('/signin');
             return;
         }
+
+        const { count: connectionCount } = await supabase
+            .from('connections')
+            .select('id', { count: 'exact', head: true })
+            .eq('recipient_id', user.id)
+            .eq('status', 'accepted');
+        setHasConnection((connectionCount ?? 0) > 0);
 
         // Reconcile this device's timezone every load (not just once) — a
         // recipient who travels needs their stored profiles.timezone to
@@ -457,6 +470,14 @@ export default function RecipientDashboard() {
                         <Text style={styles.notifDeniedText}>
                             {t('participantDashboard.notifDeniedText')}
                         </Text>
+                        <TouchableOpacity
+                            onPress={() => Linking.openSettings()}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('participantDashboard.notifDeniedOpenSettings')}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                            <Text style={styles.notifDeniedAction}>{t('participantDashboard.notifDeniedOpenSettings')}</Text>
+                        </TouchableOpacity>
                     </View>
                 )}
 
@@ -471,8 +492,30 @@ export default function RecipientDashboard() {
                     </View>
                 )}
 
-                {/* Empty state */}
-                {!loading && reminders.length === 0 && (
+                {/* Empty state — not connected to any organizer yet */}
+                {!loading && reminders.length === 0 && hasConnection === false && (
+                    <View style={[styles.emptyCard, SHADOW.xs]}>
+                        <View style={styles.emptyIconWrap}>
+                            <Ionicons name="link-outline" size={32} color={C.primary} />
+                        </View>
+                        <Text style={styles.emptyTitle}>{t('participantDashboard.notConnectedTitle')}</Text>
+                        <Text style={styles.emptyText}>
+                            {t('participantDashboard.notConnectedText')}
+                        </Text>
+                        <TouchableOpacity
+                            style={styles.emptyActionButton}
+                            onPress={() => router.push('/join-invite')}
+                            activeOpacity={0.88}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('participantDashboard.notConnectedAction')}
+                        >
+                            <Text style={styles.emptyActionButtonText}>{t('participantDashboard.notConnectedAction')}</Text>
+                        </TouchableOpacity>
+                    </View>
+                )}
+
+                {/* Empty state — connected, nothing due right now */}
+                {!loading && reminders.length === 0 && hasConnection !== false && (
                     <View style={[styles.emptyCard, SHADOW.xs]}>
                         <View style={styles.emptyIconWrap}>
                             <Text style={styles.emptyEmoji}>🕊️</Text>
@@ -911,6 +954,26 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
         color: '#92400E',
         fontWeight: '500',
         lineHeight: 18,
+    },
+    notifDeniedAction: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#92400E',
+        textDecorationLine: 'underline',
+    },
+    emptyActionButton: {
+        backgroundColor: C.primary,
+        paddingVertical: 14,
+        paddingHorizontal: 24,
+        borderRadius: RADIUS.xl,
+        marginTop: 16,
+        minHeight: 44,
+        justifyContent: 'center',
+    },
+    emptyActionButtonText: {
+        color: C.textInverse,
+        fontSize: 15,
+        fontWeight: '700',
     },
 
     // ── Already-responded state ───────────────────────────────────────

@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { router } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { router, useFocusEffect } from 'expo-router';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -18,6 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
 import { useTranslation } from '@/lib/i18n/context';
 import { MAX_FREE_PARTICIPANTS } from '@/lib/limits';
+import { logOnboardingEvent } from '@/lib/onboarding';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 
@@ -40,6 +41,39 @@ export default function InviteRecipientScreen() {
     // never restored from a previous visit — each "Add Participant" action
     // is a fresh invite for a distinct participant, never a reused one.
     const [draftConnectionId, setDraftConnectionId] = useState<string | null>(null);
+    const [expiresAt, setExpiresAt] = useState<string | null>(null);
+    // null = not yet checked/still pending; a string once the draft
+    // connection is found accepted (participant's display name, or '' if
+    // the name is unavailable for some reason).
+    const [joinedName, setJoinedName] = useState<string | null>(null);
+
+    // Re-checks the draft connection's status every time this screen
+    // regains focus (e.g. the caregiver backgrounds Tavora while their
+    // participant enters the code, then returns) — the success state with
+    // the participant's name is shown only once the server confirms
+    // acceptance, never guessed client-side.
+    useFocusEffect(
+        useCallback(() => {
+            if (!draftConnectionId) return;
+            (async () => {
+                const { data: connectionRow } = await supabase
+                    .from('connections')
+                    .select('status, recipient_id')
+                    .eq('id', draftConnectionId)
+                    .maybeSingle();
+
+                if (connectionRow?.status !== 'accepted' || !connectionRow.recipient_id) return;
+
+                const { data: recipientProfile } = await supabase
+                    .from('profiles')
+                    .select('full_name')
+                    .eq('id', connectionRow.recipient_id)
+                    .maybeSingle();
+
+                setJoinedName(recipientProfile?.full_name ?? '');
+            })();
+        }, [draftConnectionId])
+    );
 
     // Check how many accepted participants this organizer already has, to
     // gate against the Free plan limit — creating another invite that later
@@ -95,6 +129,9 @@ export default function InviteRecipientScreen() {
 
         setDraftConnectionId(result.id);
         setInviteCode(result.invite_code);
+        setExpiresAt(result.expires_at);
+        setJoinedName(null); // a regenerated code is a fresh invite -- any prior joined-state no longer applies
+        logOnboardingEvent('invite_created');
     }
 
     async function shareInviteCode() {
@@ -179,6 +216,8 @@ export default function InviteRecipientScreen() {
                     style={styles.backButton}
                     onPress={() => router.back()}
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('inviteParticipant.back')}
                 >
                     <Ionicons name="chevron-back" size={22} color={C.primary} />
                     <Text style={styles.backText}>{t('inviteParticipant.back')}</Text>
@@ -188,10 +227,19 @@ export default function InviteRecipientScreen() {
                 <View style={styles.headerIcon}>
                     <Ionicons name="person-add" size={26} color={C.primary} />
                 </View>
-                <Text style={styles.heading}>{t('inviteParticipant.heading')}</Text>
+                <Text style={styles.heading} accessibilityRole="header">{t('inviteParticipant.heading')}</Text>
                 <Text style={styles.subheading}>
                     {t('inviteParticipant.subheading')}
                 </Text>
+
+                {/* What this code does */}
+                <View style={[styles.explainerCard, SHADOW.xs]}>
+                    <Ionicons name="information-circle-outline" size={18} color={C.primary} />
+                    <View style={styles.explainerTextWrap}>
+                        <Text style={styles.explainerTitle}>{t('inviteParticipant.whatThisDoesTitle')}</Text>
+                        <Text style={styles.explainerBody}>{t('inviteParticipant.whatThisDoesBody')}</Text>
+                    </View>
+                </View>
 
                 {/* Code card */}
                 <View style={[styles.codeCard, SHADOW.sm, hasCode && styles.codeCardActive]}>
@@ -199,11 +247,25 @@ export default function InviteRecipientScreen() {
 
                     {hasCode ? (
                         <>
-                            <Text style={styles.code}>{inviteCode}</Text>
-                            <View style={styles.codeReadyBadge}>
-                                <Ionicons name="checkmark-circle" size={14} color={C.success} />
-                                <Text style={styles.codeReadyText}>{t('inviteParticipant.readyToShare')}</Text>
-                            </View>
+                            <Text style={styles.code} accessibilityLabel={inviteCode.split('').join(' ')}>{inviteCode}</Text>
+                            {joinedName !== null ? (
+                                <View style={[styles.codeReadyBadge, styles.codeJoinedBadge]}>
+                                    <Ionicons name="checkmark-circle" size={14} color={C.success} />
+                                    <Text style={styles.codeReadyText}>
+                                        {joinedName ? t('inviteParticipant.connectedBadge', { name: joinedName }) : t('joinInvite.connectedSubtitleGeneric')}
+                                    </Text>
+                                </View>
+                            ) : (
+                                <View style={styles.codeReadyBadge}>
+                                    <Ionicons name="time-outline" size={14} color={C.textMuted} />
+                                    <Text style={styles.codeWaitingText}>{t('inviteParticipant.waitingBadge')}</Text>
+                                </View>
+                            )}
+                            {expiresAt && (
+                                <Text style={styles.expiresText}>
+                                    {t('inviteParticipant.expiresOn', { date: new Date(expiresAt).toLocaleDateString() })}
+                                </Text>
+                            )}
                         </>
                     ) : (
                         <>
@@ -227,6 +289,9 @@ export default function InviteRecipientScreen() {
                     onPress={createInviteCode}
                     disabled={loading}
                     activeOpacity={0.88}
+                    accessibilityRole="button"
+                    accessibilityLabel={hasCode ? t('inviteParticipant.regenerate') : t('inviteParticipant.generate')}
+                    accessibilityState={{ disabled: loading, busy: loading }}
                 >
                     {loading ? (
                         <ActivityIndicator color={hasCode ? C.primary : C.textInverse} />
@@ -243,6 +308,7 @@ export default function InviteRecipientScreen() {
                         </>
                     )}
                 </TouchableOpacity>
+                {hasCode && <Text style={styles.regenerateHint}>{t('inviteParticipant.regenerateHint')}</Text>}
 
                 {/* Share button — only shown once code exists */}
                 {hasCode && (
@@ -250,6 +316,8 @@ export default function InviteRecipientScreen() {
                         style={[styles.shareButton, SHADOW.primary]}
                         onPress={shareInviteCode}
                         activeOpacity={0.88}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('inviteParticipant.share')}
                     >
                         <Ionicons name="share-social" size={20} color={C.textInverse} />
                         <Text style={styles.shareButtonText}>{t('inviteParticipant.share')}</Text>
@@ -275,6 +343,8 @@ export default function InviteRecipientScreen() {
                     style={styles.doneButton}
                     onPress={() => router.push('/caregiver-dashboard')}
                     activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('inviteParticipant.done')}
                 >
                     <Text style={styles.doneButtonText}>{t('inviteParticipant.done')}</Text>
                 </TouchableOpacity>
@@ -361,6 +431,30 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
         fontWeight: '600',
     },
 
+    // ── Explainer card ───────────────────────────────────────────────
+    explainerCard: {
+        backgroundColor: C.bgSurface,
+        borderRadius: RADIUS.lg,
+        padding: 16,
+        marginBottom: 14,
+        flexDirection: 'row',
+        gap: 10,
+    },
+    explainerTextWrap: {
+        flex: 1,
+    },
+    explainerTitle: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: C.textPrimary,
+        marginBottom: 4,
+    },
+    explainerBody: {
+        fontSize: 12,
+        color: C.textSecondary,
+        lineHeight: 18,
+    },
+
     // ── Code card ─────────────────────────────────────────────────────
     codeCard: {
         backgroundColor: C.bgSurface,
@@ -402,6 +496,28 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
         fontSize: 13,
         color: C.success,
         fontWeight: '600',
+    },
+    codeJoinedBadge: {
+        marginBottom: 4,
+    },
+    codeWaitingText: {
+        fontSize: 13,
+        color: C.textMuted,
+        fontWeight: '600',
+    },
+    expiresText: {
+        fontSize: 12,
+        color: C.textMuted,
+        marginTop: 10,
+    },
+    regenerateHint: {
+        fontSize: 12,
+        color: C.textMuted,
+        textAlign: 'center',
+        lineHeight: 17,
+        marginTop: -4,
+        marginBottom: 16,
+        paddingHorizontal: 8,
     },
     codePlaceholderRow: {
         flexDirection: 'row',

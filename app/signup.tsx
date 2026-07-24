@@ -18,6 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
 import { AUTH_ERROR_TRANSLATION_KEYS, classifyAuthError } from '@/lib/authErrors';
 import { useTranslation } from '@/lib/i18n/context';
+import { logOnboardingEvent } from '@/lib/onboarding';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 
@@ -71,7 +72,8 @@ export default function SignupScreen() {
             return;
         }
 
-        router.replace('/choose-role');
+        logOnboardingEvent('onboarding_started');
+        router.replace('/choose-use-case');
     }
 
     const inputStyle = (field: string) => [

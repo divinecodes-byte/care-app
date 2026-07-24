@@ -19,6 +19,7 @@ import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
 import { AUTH_ERROR_TRANSLATION_KEYS, classifyAuthError } from '@/lib/authErrors';
 import { useAuthSession } from '@/lib/authSession';
 import { useTranslation } from '@/lib/i18n/context';
+import { isUseCase, recipientHasAcceptedConnection, resolveProfileRoute } from '@/lib/onboarding';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 import { syncCurrentUserTimezone } from '@/lib/timezone';
@@ -85,7 +86,7 @@ export default function SigninScreen() {
         // hit a raw "no rows" error and get stuck on this screen forever.
         const { data: profile, error: profileError } = await supabase
             .from('profiles')
-            .select('role, account_status')
+            .select('role, account_status, use_case')
             .eq('id', userId)
             .maybeSingle();
 
@@ -110,21 +111,18 @@ export default function SigninScreen() {
             return;
         }
 
-        if (profile?.role === 'caregiver') {
-            router.replace('/caregiver-dashboard');
-            return;
-        }
+        const role = profile?.role === 'caregiver' || profile?.role === 'recipient' ? profile.role : null;
+        const useCase = isUseCase(profile?.use_case) ? profile.use_case : null;
+        const hasConnection = role === 'recipient' ? await recipientHasAcceptedConnection(userId) : false;
+        const route = resolveProfileRoute({ role, useCase }, hasConnection);
 
-        if (profile?.role === 'recipient') {
+        if (route === '/recipient-dashboard') {
             // Fire-and-forget — the recipient's own device is the only
             // source of truth for their timezone, reconciled here right
             // after login rather than waiting for the dashboard to mount.
             syncCurrentUserTimezone().catch(() => {});
-            router.replace('/recipient-dashboard');
-            return;
         }
-
-        router.replace('/choose-role');
+        router.replace(route);
     }
 
     const inputStyle = (field: string) => [

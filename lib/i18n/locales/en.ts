@@ -27,14 +27,62 @@ export const en = {
         terms: 'By continuing, you agree to our Terms of Use and Privacy Policy.',
     },
 
+    useCase: {
+        title: 'How are you planning\nto use Tavora?',
+        subtitle: "This just helps us show you the right examples — you can change it anytime in Settings.",
+        careTitle: 'Care for someone',
+        careDesc: 'Medication, appointments, and daily wellbeing check-ins.',
+        familyTitle: 'Manage family routines',
+        familyDesc: 'Chores, morning routines, and shared household tasks.',
+        coachingTitle: 'Coach or train someone',
+        coachingDesc: 'Workouts, training plans, and progress check-ins.',
+        teamTitle: 'Manage a team',
+        teamDesc: 'Daily checklists and accountability for your team.',
+        personalTitle: 'Personal accountability',
+        personalDesc: 'Keep yourself on track with your own goals.',
+        otherTitle: 'Something else',
+        otherDesc: "We'll keep things general — you're all set either way.",
+        continueHint: 'Tap a card to continue.',
+    },
+
     chooseRole: {
-        title: 'How will you use\nTavora?',
+        title: 'What will you do\nin Tavora?',
         subtitle: 'Choose your role so we can personalize your experience.',
         organizerTitle: "I'm an Organizer",
         organizerDesc: "Create reminders and track a participant's progress.",
         participantTitle: "I'm a Participant",
         participantDesc: "See today's reminders and mark tasks as completed.",
-        hint: 'You can only choose your role once. This helps us set up the right experience for you.',
+        hint: 'This helps us set up the right experience for you. Once you connect with someone, your role can no longer be changed here — contact support if you need to change it.',
+        roleLockedTitle: "Role can't be changed",
+        roleLockedMessage: "You already have a connection, so your role can't be changed anymore. Contact support if you need help.",
+        savingErrorTitle: "Couldn't save your role",
+        savingErrorMessage: 'Please check your connection and try again.',
+
+        // Care
+        careOrganizerTitle: "I'm a Caregiver",
+        careOrganizerDesc: "Create reminders and follow your loved one's progress.",
+        careParticipantTitle: "I'm a Loved One",
+        careParticipantDesc: "Receive reminders and mark them complete.",
+
+        // Coaching
+        coachingOrganizerTitle: "I'm a Coach",
+        coachingOrganizerDesc: "Create reminders and follow your athlete's progress.",
+        coachingParticipantTitle: "I'm an Athlete",
+        coachingParticipantDesc: "Receive reminders and mark them complete.",
+
+        // Team
+        teamOrganizerTitle: "I'm a Manager",
+        teamOrganizerDesc: "Create reminders and follow your team's progress.",
+        teamParticipantTitle: "I'm a Team Member",
+        teamParticipantDesc: "Receive reminders and mark them complete.",
+    },
+
+    onboardingExamples: {
+        care: 'Morning medication',
+        family: 'Complete morning routine',
+        coaching: "Finish today's workout",
+        team: 'Submit the daily checklist',
+        personal: "Complete today's goal",
     },
 
     signin: {
@@ -142,6 +190,11 @@ export const en = {
         alreadyUsedMessage: 'This invite has already been used. Ask your organizer for a new invite.',
         expiredCodeMessage: 'This invite code has expired. Ask your organizer for a new one.',
         selfConnectMessage: 'You can’t use your own invite code.',
+        connectedTitle: "You're connected!",
+        connectedSubtitle: "You're now connected with {{name}}.",
+        connectedSubtitleGeneric: "You're now connected.",
+        continueButton: 'Continue',
+        needCodeHint: "Don't have a code? Ask your organizer to open Tavora and share one with you.",
     },
 
     status: {
@@ -170,10 +223,14 @@ export const en = {
         allDoneToday: 'All done for today',
         doneOfTotalToday: '{{done}} of {{total}} done today',
         notifDeniedText: 'Notifications are off. Enable them in Settings to receive reminder alerts.',
+        notifDeniedOpenSettings: 'Open Settings',
         loadingReminders: 'Loading your reminders…',
         justAMoment: 'Just a moment.',
         allClearTitle: 'All clear for today',
         allClearText: 'No reminders are scheduled right now. Your organizer will send them when needed.',
+        notConnectedTitle: 'No connection yet',
+        notConnectedText: "You'll need an invite code from your organizer to get connected.",
+        notConnectedAction: 'Enter invite code',
         noNotesFromOrganizer: 'No notes from your organizer.',
         todaysStatus: "Today's status",
         saving: 'Saving…',
@@ -212,6 +269,34 @@ export const en = {
         footerResponded: 'Your organizer can see your response.',
         footerOverdue: 'You can still respond — your organizer will see your update.',
         footerDefault: 'Your organizer will see your response.',
+        explainDone: 'Mark this as done once completed.',
+        explainLater: "Not ready yet? We'll remind you again shortly.",
+        explainSkip: 'Skip this one for today — your organizer will see that too.',
+        recordedTitle: 'Got it',
+        recordedSubtitle: 'Your organizer can now see this update.',
+        allSetMessage: "You're all set. Tavora will keep your reminders and progress in one place.",
+        allSetContinue: 'Continue',
+    },
+
+    notificationPermission: {
+        title: 'Never miss an important reminder',
+        body: 'Tavora uses notifications to deliver reminders on time. You can control what appears on your lock screen in Settings.',
+        timeSensitiveNote: 'Time Sensitive alerts may appear during supported Focus modes.',
+        continueButton: 'Continue',
+        notNowButton: 'Not now',
+    },
+
+    firstReminder: {
+        emptyCtaTitle: 'Create your first reminder',
+        emptyCtaSubtitle: '{{name}} will get it as soon as you save.',
+        emptyCtaSubtitleGeneric: 'Your participant will get it as soon as you save.',
+        confirmTitle: "You're all set",
+        confirmSubtitle: '{{name}} will receive this reminder.',
+        confirmTimeLabel: 'Time',
+        confirmParticipantLabel: 'Participant',
+        confirmNextLabel: 'Next reminder',
+        viewReminder: 'View reminder',
+        backToDashboard: 'Back to dashboard',
     },
 
     reminderDetails: {
@@ -373,6 +458,9 @@ export const en = {
         savedMessage: 'Reminder created for {{name}}.',
         minutesShort: '{{n}} min',
         hoursShort: '{{n}} hr',
+        namePlaceholderPrefix: 'e.g. ',
+        participantWillReceive: '{{name}} will receive this reminder.',
+        participantWillReceiveGeneric: 'Your participant will receive this reminder.',
     },
 
     inviteParticipant: {
@@ -405,6 +493,12 @@ export const en = {
         plusPriority: 'Priority reminder delivery',
         comingSoon: 'Coming soon',
         notNow: 'Not now',
+        whatThisDoesTitle: 'What this code does',
+        whatThisDoesBody: 'Anyone who enters this code links their account to yours as a participant. Only share it with someone you trust.',
+        expiresOn: 'Expires {{date}}',
+        waitingBadge: 'Waiting for them to join',
+        connectedBadge: '{{name}} joined!',
+        regenerateHint: 'Need a new code? Generating one replaces this code — the old one stops working.',
     },
 
     settings: {
@@ -423,6 +517,10 @@ export const en = {
         emailLabel: 'Email',
         roleLabel: 'Role',
         connectionLabel: 'Connection',
+        sectionUseCase: 'How you use Tavora',
+        useCaseChangeHint: 'This only changes examples and suggestions — not how your account works.',
+        useCaseSavingErrorTitle: "Couldn't save",
+        useCaseSavingErrorMessage: 'Please check your connection and try again.',
         sectionNotifications: 'Notifications',
         notifyMissed: 'Missed reminders',
         notifySkipped: 'Skipped reminders',

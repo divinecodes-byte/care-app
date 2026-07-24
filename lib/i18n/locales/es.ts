@@ -29,14 +29,62 @@ export const es: typeof en = {
         terms: 'Al continuar, aceptas nuestros Términos de Uso y Política de Privacidad.',
     },
 
+    useCase: {
+        title: '¿Cómo planeas\nusar Tavora?',
+        subtitle: 'Esto solo nos ayuda a mostrarte los ejemplos correctos — puedes cambiarlo cuando quieras en Configuración.',
+        careTitle: 'Cuidar a alguien',
+        careDesc: 'Medicación, citas y controles diarios de bienestar.',
+        familyTitle: 'Gestionar rutinas familiares',
+        familyDesc: 'Tareas del hogar, rutinas matutinas y tareas compartidas.',
+        coachingTitle: 'Entrenar a alguien',
+        coachingDesc: 'Entrenamientos, planes y controles de progreso.',
+        teamTitle: 'Gestionar un equipo',
+        teamDesc: 'Listas diarias y responsabilidad para tu equipo.',
+        personalTitle: 'Responsabilidad personal',
+        personalDesc: 'Mantente al día con tus propias metas.',
+        otherTitle: 'Otra cosa',
+        otherDesc: 'Mantendremos todo general — de cualquier forma estás listo.',
+        continueHint: 'Toca una tarjeta para continuar.',
+    },
+
     chooseRole: {
-        title: '¿Cómo usarás\nTavora?',
+        title: '¿Qué harás\nen Tavora?',
         subtitle: 'Elige tu rol para que podamos personalizar tu experiencia.',
         organizerTitle: 'Soy Organizador',
         organizerDesc: 'Crea recordatorios y sigue el progreso de un participante.',
         participantTitle: 'Soy Participante',
         participantDesc: 'Consulta los recordatorios de hoy y márcalos como completados.',
-        hint: 'Solo puedes elegir tu rol una vez. Esto nos ayuda a configurar la experiencia adecuada para ti.',
+        hint: 'Esto nos ayuda a configurar la experiencia adecuada para ti. Una vez que te conectes con alguien, tu rol ya no podrá cambiarse aquí — contacta a soporte si necesitas cambiarlo.',
+        roleLockedTitle: 'El rol no se puede cambiar',
+        roleLockedMessage: 'Ya tienes una conexión, así que tu rol ya no se puede cambiar. Contacta a soporte si necesitas ayuda.',
+        savingErrorTitle: 'No se pudo guardar tu rol',
+        savingErrorMessage: 'Verifica tu conexión e inténtalo de nuevo.',
+
+        // Care
+        careOrganizerTitle: 'Soy Cuidador',
+        careOrganizerDesc: 'Crea recordatorios y sigue el progreso de tu ser querido.',
+        careParticipantTitle: 'Soy el Ser Querido',
+        careParticipantDesc: 'Recibe recordatorios y márcalos como completados.',
+
+        // Coaching
+        coachingOrganizerTitle: 'Soy Entrenador',
+        coachingOrganizerDesc: 'Crea recordatorios y sigue el progreso de tu atleta.',
+        coachingParticipantTitle: 'Soy Atleta',
+        coachingParticipantDesc: 'Recibe recordatorios y márcalos como completados.',
+
+        // Team
+        teamOrganizerTitle: 'Soy Gerente',
+        teamOrganizerDesc: 'Crea recordatorios y sigue el progreso de tu equipo.',
+        teamParticipantTitle: 'Soy Miembro del Equipo',
+        teamParticipantDesc: 'Recibe recordatorios y márcalos como completados.',
+    },
+
+    onboardingExamples: {
+        care: 'Medicación matutina',
+        family: 'Completar la rutina matutina',
+        coaching: 'Terminar el entrenamiento de hoy',
+        team: 'Enviar la lista diaria',
+        personal: 'Completar la meta de hoy',
     },
 
     signin: {
@@ -144,6 +192,11 @@ export const es: typeof en = {
         alreadyUsedMessage: 'Esta invitación ya fue utilizada. Pídele a tu organizador un nuevo código.',
         expiredCodeMessage: 'Este código de invitación ha caducado. Pídele a tu organizador uno nuevo.',
         selfConnectMessage: 'No puedes usar tu propio código de invitación.',
+        connectedTitle: '¡Estás conectado!',
+        connectedSubtitle: 'Ahora estás conectado con {{name}}.',
+        connectedSubtitleGeneric: 'Ahora estás conectado.',
+        continueButton: 'Continuar',
+        needCodeHint: '¿No tienes un código? Pídele a tu organizador que abra Tavora y comparta uno contigo.',
     },
 
     status: {
@@ -172,10 +225,14 @@ export const es: typeof en = {
         allDoneToday: 'Todo completado por hoy',
         doneOfTotalToday: '{{done}} de {{total}} completados hoy',
         notifDeniedText: 'Las notificaciones están desactivadas. Actívalas en Configuración para recibir alertas de recordatorios.',
+        notifDeniedOpenSettings: 'Abrir Configuración',
         loadingReminders: 'Cargando tus recordatorios…',
         justAMoment: 'Un momento.',
         allClearTitle: 'Todo despejado por hoy',
         allClearText: 'No hay recordatorios programados por ahora. Tu organizador los enviará cuando sea necesario.',
+        notConnectedTitle: 'Aún sin conexión',
+        notConnectedText: 'Necesitas un código de invitación de tu organizador para conectarte.',
+        notConnectedAction: 'Ingresar código de invitación',
         noNotesFromOrganizer: 'Tu organizador no dejó notas.',
         todaysStatus: 'Estado de hoy',
         saving: 'Guardando…',
@@ -214,6 +271,34 @@ export const es: typeof en = {
         footerResponded: 'Tu organizador puede ver tu respuesta.',
         footerOverdue: 'Aún puedes responder — tu organizador verá tu actualización.',
         footerDefault: 'Tu organizador verá tu respuesta.',
+        explainDone: 'Márcalo como hecho una vez completado.',
+        explainLater: '¿Aún no? Te lo recordaremos de nuevo en un momento.',
+        explainSkip: 'Omite este por hoy — tu organizador también lo verá.',
+        recordedTitle: 'Listo',
+        recordedSubtitle: 'Tu organizador ya puede ver esta actualización.',
+        allSetMessage: 'Ya estás listo. Tavora mantendrá tus recordatorios y progreso en un solo lugar.',
+        allSetContinue: 'Continuar',
+    },
+
+    notificationPermission: {
+        title: 'Nunca te pierdas un recordatorio importante',
+        body: 'Tavora usa notificaciones para entregar recordatorios a tiempo. Puedes controlar qué aparece en tu pantalla de bloqueo en Configuración.',
+        timeSensitiveNote: 'Las alertas urgentes pueden aparecer durante los modos de enfoque compatibles.',
+        continueButton: 'Continuar',
+        notNowButton: 'Ahora no',
+    },
+
+    firstReminder: {
+        emptyCtaTitle: 'Crea tu primer recordatorio',
+        emptyCtaSubtitle: '{{name}} lo recibirá en cuanto lo guardes.',
+        emptyCtaSubtitleGeneric: 'Tu participante lo recibirá en cuanto lo guardes.',
+        confirmTitle: 'Ya estás listo',
+        confirmSubtitle: '{{name}} recibirá este recordatorio.',
+        confirmTimeLabel: 'Hora',
+        confirmParticipantLabel: 'Participante',
+        confirmNextLabel: 'Próximo recordatorio',
+        viewReminder: 'Ver recordatorio',
+        backToDashboard: 'Volver al panel',
     },
 
     reminderDetails: {
@@ -375,6 +460,9 @@ export const es: typeof en = {
         savedMessage: 'Recordatorio creado para {{name}}.',
         minutesShort: '{{n}} min',
         hoursShort: '{{n}} h',
+        namePlaceholderPrefix: 'ej. ',
+        participantWillReceive: '{{name}} recibirá este recordatorio.',
+        participantWillReceiveGeneric: 'Tu participante recibirá este recordatorio.',
     },
 
     inviteParticipant: {
@@ -407,6 +495,12 @@ export const es: typeof en = {
         plusPriority: 'Entrega prioritaria de recordatorios',
         comingSoon: 'Próximamente',
         notNow: 'Ahora no',
+        whatThisDoesTitle: 'Qué hace este código',
+        whatThisDoesBody: 'Cualquier persona que ingrese este código vincula su cuenta a la tuya como participante. Compártelo solo con alguien de confianza.',
+        expiresOn: 'Caduca el {{date}}',
+        waitingBadge: 'Esperando a que se unan',
+        connectedBadge: '¡{{name}} se unió!',
+        regenerateHint: '¿Necesitas un código nuevo? Generar uno reemplaza este código — el anterior deja de funcionar.',
     },
 
     settings: {
@@ -425,6 +519,10 @@ export const es: typeof en = {
         emailLabel: 'Correo electrónico',
         roleLabel: 'Rol',
         connectionLabel: 'Conexión',
+        sectionUseCase: 'Cómo usas Tavora',
+        useCaseChangeHint: 'Esto solo cambia los ejemplos y sugerencias — no cómo funciona tu cuenta.',
+        useCaseSavingErrorTitle: 'No se pudo guardar',
+        useCaseSavingErrorMessage: 'Verifica tu conexión e inténtalo de nuevo.',
         sectionNotifications: 'Notificaciones',
         notifyMissed: 'Recordatorios perdidos',
         notifySkipped: 'Recordatorios omitidos',

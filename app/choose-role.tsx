@@ -1,9 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
+    Alert,
     Platform,
     StyleSheet,
     Text,
@@ -14,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
 import { useTranslation } from '@/lib/i18n/context';
+import { getRoleLabelKeys, isUseCase, logOnboardingEvent, UseCase } from '@/lib/onboarding';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 
@@ -24,6 +26,25 @@ export default function ChooseRoleScreen() {
     const t = useTranslation();
     const styles = useMemo(() => createStyles(C), [C]);
     const [loadingRole, setLoadingRole] = useState<Role | null>(null);
+    const [useCase, setUseCase] = useState<UseCase | null>(null);
+
+    // Only affects which labels are shown (e.g. "Caregiver / Loved One" for
+    // the care use case) — never affects authorization, which stays on the
+    // role value written below regardless of use_case.
+    useEffect(() => {
+        (async () => {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) return;
+            const { data } = await supabase
+                .from('profiles')
+                .select('use_case')
+                .eq('id', user.id)
+                .maybeSingle();
+            if (data?.use_case && isUseCase(data.use_case)) setUseCase(data.use_case);
+        })();
+    }, []);
+
+    const labels = getRoleLabelKeys(useCase);
 
     async function handleChooseRole(role: Role) {
         if (loadingRole) return;
@@ -46,10 +67,19 @@ export default function ChooseRoleScreen() {
             .eq('id', user.id);
 
         if (error) {
-            console.log(error.message);
             setLoadingRole(null);
+            // guard_profile_role_change() raises this fixed message once a
+            // connection already exists — everything else (network, RLS,
+            // unexpected) gets the generic retry copy.
+            if (error.message?.includes('role_locked')) {
+                Alert.alert(t('chooseRole.roleLockedTitle'), t('chooseRole.roleLockedMessage'));
+            } else {
+                Alert.alert(t('chooseRole.savingErrorTitle'), t('chooseRole.savingErrorMessage'));
+            }
             return;
         }
+
+        logOnboardingEvent('role_selected');
 
         if (role === 'caregiver') {
             router.replace('/caregiver-dashboard');
@@ -68,7 +98,7 @@ export default function ChooseRoleScreen() {
                     <View style={styles.headerIcon}>
                         <Ionicons name="people" size={26} color={C.primary} />
                     </View>
-                    <Text style={styles.title}>{t('chooseRole.title')}</Text>
+                    <Text style={styles.title} accessibilityRole="header">{t('chooseRole.title')}</Text>
                     <Text style={styles.subtitle}>
                         {t('chooseRole.subtitle')}
                     </Text>
@@ -87,15 +117,19 @@ export default function ChooseRoleScreen() {
                         onPress={() => handleChooseRole('caregiver')}
                         disabled={isLoading}
                         activeOpacity={0.82}
+                        accessibilityRole="button"
+                        accessibilityLabel={t(labels.organizerTitle)}
+                        accessibilityHint={t(labels.organizerDesc)}
+                        accessibilityState={{ selected: loadingRole === 'caregiver', disabled: isLoading }}
                     >
                         <View style={[styles.cardIconWrap, { backgroundColor: C.caregiverLight }]}>
                             <Ionicons name="heart" size={26} color={C.caregiverColor} />
                         </View>
 
                         <View style={styles.cardBody}>
-                            <Text style={styles.cardTitle}>{t('chooseRole.organizerTitle')}</Text>
+                            <Text style={styles.cardTitle}>{t(labels.organizerTitle)}</Text>
                             <Text style={styles.cardText}>
-                                {t('chooseRole.organizerDesc')}
+                                {t(labels.organizerDesc)}
                             </Text>
                         </View>
 
@@ -119,15 +153,19 @@ export default function ChooseRoleScreen() {
                         onPress={() => handleChooseRole('recipient')}
                         disabled={isLoading}
                         activeOpacity={0.82}
+                        accessibilityRole="button"
+                        accessibilityLabel={t(labels.participantTitle)}
+                        accessibilityHint={t(labels.participantDesc)}
+                        accessibilityState={{ selected: loadingRole === 'recipient', disabled: isLoading }}
                     >
                         <View style={[styles.cardIconWrap, { backgroundColor: C.recipientLight }]}>
                             <Ionicons name="person" size={26} color={C.recipientColor} />
                         </View>
 
                         <View style={styles.cardBody}>
-                            <Text style={styles.cardTitle}>{t('chooseRole.participantTitle')}</Text>
+                            <Text style={styles.cardTitle}>{t(labels.participantTitle)}</Text>
                             <Text style={styles.cardText}>
-                                {t('chooseRole.participantDesc')}
+                                {t(labels.participantDesc)}
                             </Text>
                         </View>
 
@@ -201,6 +239,7 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
         alignItems: 'center',
         borderWidth: 1.5,
         borderColor: C.border,
+        minHeight: 44,
     },
     cardActive: {
         borderColor: C.primary,

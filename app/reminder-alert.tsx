@@ -25,6 +25,7 @@ import {
     scheduleSnoozeNotification,
     syncRecipientReminderNotifications,
 } from '@/lib/notifications';
+import { logOnboardingEvent } from '@/lib/onboarding';
 import { REMINDER_ERROR_TRANSLATION_KEYS } from '@/lib/reminderErrors';
 import { respondToReminderOccurrence } from '@/lib/reminderLifecycle';
 import { getFirstEligibleDateString, isPastNoResponseWindow } from '@/lib/reminderStatus';
@@ -106,6 +107,10 @@ export default function ReminderAlertScreen() {
     const [inactive, setInactive]       = useState(false);
     const [reminder, setReminder]       = useState<Reminder | null>(null);
     const [todayStatus, setTodayStatus] = useState<ReminderStatus | null>(null);
+    // Set right after a successful response — shows a brief confirmation
+    // before returning to the dashboard. showAllSet is only true the very
+    // first time this recipient has ever responded to anything.
+    const [justRecorded, setJustRecorded] = useState<{ status: 'taken' | 'snoozed' | 'skipped'; showAllSet: boolean } | null>(null);
     const [isOverdue, setIsOverdue]     = useState(false);
 
     const pulseScale   = useRef(new Animated.Value(1)).current;
@@ -242,6 +247,20 @@ export default function ReminderAlertScreen() {
 
         const todayDate = getTodayDateString();
 
+        // Checked BEFORE this response is recorded — a reminder_logs row is
+        // only ever created by an actual response or the missed-sync cron
+        // (never a placeholder "pending" row), so any existing row for
+        // this recipient already means "not their first response."
+        const { data: { user } } = await supabase.auth.getUser();
+        let isFirstEverResponse = false;
+        if (user) {
+            const { count } = await supabase
+                .from('reminder_logs')
+                .select('id', { count: 'exact', head: true })
+                .eq('recipient_id', user.id);
+            isFirstEverResponse = (count ?? 0) === 0;
+        }
+
         // The server (respond_to_reminder_occurrence) validates ownership,
         // reminder.is_active, connection.status, occurrence eligibility,
         // and legal state transitions, and computes occurrence_date/
@@ -279,6 +298,13 @@ export default function ReminderAlertScreen() {
         // handler — cheap and idempotent.
         syncRecipientReminderNotifications().catch(console.warn);
 
+        logOnboardingEvent('first_response_recorded');
+        if (isFirstEverResponse) logOnboardingEvent('onboarding_completed');
+
+        setJustRecorded({ status, showAllSet: isFirstEverResponse });
+    }
+
+    function continueAfterRecorded() {
         router.replace('/recipient-dashboard');
     }
 
@@ -356,6 +382,42 @@ export default function ReminderAlertScreen() {
                         activeOpacity={0.8}
                     >
                         <Text style={styles.errorButtonText}>{t('reminderAlert.goBack')}</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+        );
+    }
+
+    // ── Just-recorded confirmation ───────────────────────────────────────────
+
+    if (justRecorded) {
+        const icon = justRecorded.status === 'taken' ? 'checkmark-circle' : justRecorded.status === 'snoozed' ? 'time-outline' : 'remove-circle-outline';
+        return (
+            <View style={[styles.container, { paddingTop: insets.top }]}>
+                <Animated.View
+                    style={[styles.glowRing, { transform: [{ scale: pulseScale }], opacity: pulseOpacity }]}
+                />
+                <View style={styles.centeredState}>
+                    <View style={styles.inactiveIconWrap}>
+                        <Ionicons name={icon as never} size={36} color="#4ADE80" />
+                    </View>
+                    <Text style={styles.inactiveTitle} accessibilityRole="header">{t('reminderAlert.recordedTitle')}</Text>
+                    <Text style={styles.inactiveText}>{t('reminderAlert.recordedSubtitle')}</Text>
+
+                    {justRecorded.showAllSet && (
+                        <Text style={[styles.inactiveText, { marginTop: 12 }]}>{t('reminderAlert.allSetMessage')}</Text>
+                    )}
+
+                    <TouchableOpacity
+                        style={styles.errorButton}
+                        onPress={continueAfterRecorded}
+                        activeOpacity={0.8}
+                        accessibilityRole="button"
+                        accessibilityLabel={justRecorded.showAllSet ? t('reminderAlert.allSetContinue') : t('reminderAlert.done')}
+                    >
+                        <Text style={styles.errorButtonText}>
+                            {justRecorded.showAllSet ? t('reminderAlert.allSetContinue') : t('reminderAlert.done')}
+                        </Text>
                     </TouchableOpacity>
                 </View>
             </View>
@@ -470,6 +532,11 @@ export default function ReminderAlertScreen() {
                             style={[styles.takenButton, SHADOW.sm]}
                             onPress={() => handleAction('taken')}
                             activeOpacity={0.88}
+                            disabled={saving}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('reminderAlert.done')}
+                            accessibilityHint={t('reminderAlert.explainDone')}
+                            accessibilityState={{ disabled: saving, busy: saving }}
                         >
                             <Ionicons name="checkmark-circle" size={24} color="#FFFFFF" />
                             <Text style={styles.takenText}>{t('reminderAlert.done')}</Text>
@@ -479,6 +546,11 @@ export default function ReminderAlertScreen() {
                             style={styles.laterButton}
                             onPress={() => handleAction('snoozed')}
                             activeOpacity={0.8}
+                            disabled={saving}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('reminderAlert.remindMeLater')}
+                            accessibilityHint={t('reminderAlert.explainLater')}
+                            accessibilityState={{ disabled: saving, busy: saving }}
                         >
                             <Ionicons name="time-outline" size={20} color="#93C5FD" />
                             <Text style={styles.laterText}>{t('reminderAlert.remindMeLater')}</Text>
@@ -488,6 +560,11 @@ export default function ReminderAlertScreen() {
                             style={styles.skipButton}
                             onPress={() => handleAction('skipped')}
                             activeOpacity={0.6}
+                            disabled={saving}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('reminderAlert.skipThisReminder')}
+                            accessibilityHint={t('reminderAlert.explainSkip')}
+                            accessibilityState={{ disabled: saving, busy: saving }}
                         >
                             <Text style={styles.skipText}>{t('reminderAlert.skipThisReminder')}</Text>
                         </TouchableOpacity>
