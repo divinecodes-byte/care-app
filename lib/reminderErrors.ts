@@ -7,6 +7,7 @@ export const REMINDER_ERROR_TRANSLATION_KEYS: Record<ReminderLifecycleErrorKind,
     connection_inactive: 'reminderErrors.connectionInactive',
     not_eligible: 'reminderErrors.notEligible',
     not_authorized: 'reminderErrors.notAuthorized',
+    invalid_input: 'reminderErrors.invalidInput',
     network: 'reminderErrors.network',
     unexpected: 'reminderErrors.unexpected',
 };

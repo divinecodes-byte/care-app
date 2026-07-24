@@ -78,14 +78,22 @@ function sanitizeMessage(raw: string): string {
   return raw.replace(TOKEN_PATTERN, 'ExponentPushToken[REDACTED]').slice(0, 300);
 }
 
-function normalizeSkipReason(reason: string): { code: string; message: string } {
-  if (reason === 'reminder_not_found') return { code: 'reminder_not_found', message: reason };
-  if (reason === 'reminder_inactive') return { code: 'reminder_inactive', message: reason };
-  if (reason === 'reminder_reassigned') return { code: 'reminder_reassigned', message: reason };
-  if (reason.startsWith('snooze_no_longer_pending:') || reason.startsWith('already_answered:')) {
-    return { code: 'occurrence_answered', message: reason };
-  }
-  return { code: 'internal_error', message: sanitizeMessage(reason) };
+// Skip codes now come directly from validate_reminder_deliveries_for_send
+// (Week 1 task #8) -- it already returns one of this exact vocabulary, so
+// there's no free-text reason string left to parse/classify here.
+const KNOWN_SKIP_CODES = new Set([
+  'reminder_not_found',
+  'reminder_inactive',
+  'reminder_reassigned',
+  'connection_inactive',
+  'stale_schedule',
+  'occurrence_ineligible',
+  'occurrence_answered',
+]);
+
+function normalizeSkipReason(code: string): { code: string; message: string } {
+  if (KNOWN_SKIP_CODES.has(code)) return { code, message: code };
+  return { code: 'internal_error', message: sanitizeMessage(code) };
 }
 
 function normalizeSendError(lastError: string | undefined, lastErrorDetail: string | undefined): { code: string; message: string } {
@@ -157,18 +165,18 @@ Deno.serve(async (req) => {
     return Response.json({ scanned: 0, sent: 0, failed: 0, skipped: 0 });
   }
 
-  // Lookup helpers distinguish "confirmed not found / null" (a real skip
-  // reason) from "the lookup itself failed" (a transient error that must be
-  // retried, never silently treated as if the row didn't exist — this is
-  // the fix for a crashed/erroring lookup being able to leave a delivery
-  // stuck: previously an unhandled exception here aborted the entire
-  // invocation, and every row in the batch — not just the one that failed —
-  // would have been left completely unprocessed with no attempt_count
-  // increment, indefinitely).
+  // Content lookup (title only, for the Expo message body in detailed
+  // mode) — deliberately separate from validation now. Live
+  // reminder/connection/schedule-revision/occurrence-answered validation
+  // is delegated entirely to validate_reminder_deliveries_for_send (Week 1
+  // task #8), a single native-SQL function that recomputes the exact same
+  // AT TIME ZONE math the claim functions use, in one batched round trip —
+  // this is what closes the edit-race window a per-row JS-side re-check
+  // could never fully cover (see docs/reminder-editing-model.md).
   type Lookup<T> = { ok: true; value: T } | { ok: false };
 
   const reminderCache = new Map<string, ReminderInfo | null>();
-  async function getReminder(reminderId: string): Promise<Lookup<ReminderInfo | null>> {
+  async function getReminderContent(reminderId: string): Promise<Lookup<ReminderInfo | null>> {
     if (reminderCache.has(reminderId)) return { ok: true, value: reminderCache.get(reminderId)! };
     try {
       const { data, error } = await supabase
@@ -189,31 +197,7 @@ Deno.serve(async (req) => {
     }
   }
 
-  const logCache = new Map<string, string | null>();
-  async function getLogStatus(reminderId: string, occurrenceDate: string): Promise<Lookup<string | null>> {
-    const key = `${reminderId}|${occurrenceDate}`;
-    if (logCache.has(key)) return { ok: true, value: logCache.get(key)! };
-    try {
-      const { data, error } = await supabase
-        .from('reminder_logs')
-        .select('status')
-        .eq('reminder_id', reminderId)
-        .eq('occurrence_date', occurrenceDate)
-        .maybeSingle();
-      if (error) {
-        log('get_log_status_error', { reminderId, occurrenceDate, error: error.message });
-        return { ok: false };
-      }
-      const status = data?.status ?? null;
-      logCache.set(key, status);
-      return { ok: true, value: status };
-    } catch (err) {
-      log('get_log_status_exception', { reminderId, occurrenceDate, error: err instanceof Error ? err.message : String(err) });
-      return { ok: false };
-    }
-  }
-
-  // Unlike getReminder/getLogStatus, a failed lookup here must never block or
+  // Unlike getReminderContent, a failed lookup here must never block or
   // retry a send — it fails toward the safe default (private) and the
   // notification still goes out, just with generic content. This is the
   // literal "fail private, do not default to detailed" requirement.
@@ -255,58 +239,46 @@ Deno.serve(async (req) => {
   }
 
   // ── Phase 1: re-validate live state right before sending ──────────────────
+  // One batched call — every row gets a single, internally-consistent
+  // snapshot of reminder/connection/schedule-revision/occurrence state,
+  // computed natively in Postgres. A failure of the call itself (network/
+  // DB error) is a lookup failure for the *whole batch*, retried exactly
+  // like a failed send attempt — never silently treated as if every row
+  // had failed validation for a real reason.
   const skipReasons = new Map<string, string>();
   const lookupFailedRows: DeliveryRow[] = [];
   const attemptRows: DeliveryRow[] = [];
 
-  for (const row of toProcess) {
-    try {
-      const reminderLookup = await getReminder(row.reminder_id);
-      if (!reminderLookup.ok) {
-        lookupFailedRows.push(row);
-        continue;
-      }
-      const reminder = reminderLookup.value;
-      if (!reminder) {
-        skipReasons.set(row.id, 'reminder_not_found');
-        continue;
-      }
-      if (!reminder.is_active) {
-        skipReasons.set(row.id, 'reminder_inactive');
-        continue;
-      }
-      if (reminder.recipient_id !== row.recipient_id) {
-        skipReasons.set(row.id, 'reminder_reassigned');
-        continue;
-      }
+  try {
+    const { data: verdicts, error: validateError } = await supabase.rpc('validate_reminder_deliveries_for_send', {
+      p_delivery_ids: toProcess.map((r) => r.id),
+    });
 
-      const logLookup = await getLogStatus(row.reminder_id, row.occurrence_date);
-      if (!logLookup.ok) {
-        lookupFailedRows.push(row);
-        continue;
-      }
-      const logStatus = logLookup.value;
-
-      if (row.delivery_type === 'snooze') {
-        // Taken/Skipped/re-snoozed-elsewhere since the claim — don't send a
-        // stale snooze re-alert.
-        if (logStatus !== 'snoozed') {
-          skipReasons.set(row.id, `snooze_no_longer_pending:${logStatus ?? 'none'}`);
+    if (validateError) {
+      log('validate_batch_error', { error: validateError.message });
+      lookupFailedRows.push(...toProcess);
+    } else {
+      const verdictById = new Map<string, { ok: boolean; skip_code: string | null }>(
+        (verdicts ?? []).map((v: { delivery_id: string; ok: boolean; skip_code: string | null }) => [v.delivery_id, v])
+      );
+      for (const row of toProcess) {
+        const verdict = verdictById.get(row.id);
+        if (!verdict) {
+          // The validator didn't return a row for this id at all — treat
+          // as a lookup failure (retry), not a silent skip.
+          lookupFailedRows.push(row);
           continue;
         }
-      } else if (logStatus !== null && logStatus !== 'pending') {
-        // Answered (taken/skipped/snoozed/missed) since the claim.
-        skipReasons.set(row.id, `already_answered:${logStatus}`);
-        continue;
+        if (verdict.ok) {
+          attemptRows.push(row);
+        } else {
+          skipReasons.set(row.id, verdict.skip_code ?? 'internal_error');
+        }
       }
-
-      attemptRows.push(row);
-    } catch (err) {
-      // Defensive catch-all: whatever went wrong for this one row must
-      // never abort processing of the rest of the batch.
-      log('validate_row_exception', { deliveryId: row.id, error: err instanceof Error ? err.message : String(err) });
-      lookupFailedRows.push(row);
     }
+  } catch (err) {
+    log('validate_batch_exception', { error: err instanceof Error ? err.message : String(err) });
+    lookupFailedRows.push(...toProcess);
   }
 
   if (skipReasons.size > 0) {
@@ -336,9 +308,18 @@ Deno.serve(async (req) => {
 
   const messages: PendingMessage[] = [];
   const rowOutcome = new Map<string, { anyOk: boolean; ticketId?: string; lastError?: string; lastErrorDetail?: string }>();
+  const contentFailedRows: DeliveryRow[] = [];
 
   for (const row of attemptRows) {
-    const reminder = reminderCache.get(row.reminder_id)!;
+    const contentLookup = await getReminderContent(row.reminder_id);
+    if (!contentLookup.ok || !contentLookup.value) {
+      // Passed live validation a moment ago but the content fetch itself
+      // failed (or the row vanished in the gap) — retry next tick rather
+      // than crash or send with missing content.
+      contentFailedRows.push(row);
+      continue;
+    }
+    const reminder = contentLookup.value;
     const tokens = await getActiveTokens(row.recipient_id);
 
     if (tokens.length === 0) {
@@ -488,8 +469,10 @@ Deno.serve(async (req) => {
   // Rows whose live-state lookup itself failed (transient DB/network error,
   // not a real skip reason) are retried exactly like a failed send attempt —
   // this is what guarantees they can never sit unprocessed with
-  // attempt_count stuck at its old value indefinitely.
-  for (const row of lookupFailedRows) {
+  // attempt_count stuck at its old value indefinitely. Content-fetch
+  // failures (passed validation, then couldn't be re-read for the Expo
+  // message body) get the exact same treatment.
+  for (const row of [...lookupFailedRows, ...contentFailedRows]) {
     failed++;
     const nextAttempt = row.attempt_count + 1;
     await supabase
@@ -516,6 +499,7 @@ Deno.serve(async (req) => {
     failed,
     skipped: skipReasons.size,
     lookupFailed: lookupFailedRows.length,
+    contentFailed: contentFailedRows.length,
     missingToken,
     tokensDeactivated: tokensToDeactivate.size,
   });
@@ -525,7 +509,7 @@ Deno.serve(async (req) => {
     sent,
     failed,
     skipped: skipReasons.size,
-    lookupFailed: lookupFailedRows.length,
+    lookupFailed: lookupFailedRows.length + contentFailedRows.length,
     missingToken,
   });
   }

@@ -38,6 +38,7 @@ export type ReminderLifecycleErrorKind =
     | 'connection_inactive'
     | 'not_eligible'
     | 'not_authorized'
+    | 'invalid_input'
     | 'network'
     | 'unexpected';
 
@@ -88,18 +89,79 @@ export async function respondToReminderOccurrence(
     }
 }
 
-/**
- * Best-effort cleanup of any stale, not-yet-sent delivery claim for
- * today's occurrence after a caregiver edits a reminder's
- * time_of_day/days_of_week/no_response_minutes — see
- * clear_stale_reminder_deliveries in the Week 1 task #7 migration. Never
- * throws; a failure here just means a possibly-stale delivery is left for
- * the Edge Function's own defensive checks, not a reason to block the
- * edit itself from saving.
- */
-export async function clearStaleReminderDeliveries(reminderId: string): Promise<void> {
-    const { error } = await supabase.rpc('clear_stale_reminder_deliveries', { p_reminder_id: reminderId });
-    if (error) {
-        console.warn('[reminderLifecycle] clear_stale_reminder_deliveries failed:', error.message);
+// ─── Central reminder-edit write path ─────────────────────────────────────────
+// The only place in the client that edits a reminder's title/schedule —
+// wraps the update_reminder_schedule RPC (SECURITY DEFINER; see the Week 1
+// task #8 migration), which updates the reminder and, in the SAME
+// transaction, reconciles today's still-unsent delivery row in place
+// (never a separate best-effort call, and never a delete-then-reclaim —
+// see docs/reminder-editing-model.md). Supersedes the prior task's
+// two-step update()-then-clear_stale_reminder_deliveries() flow.
+
+export type ReminderRow = {
+    id: string;
+    connection_id: string;
+    caregiver_id: string;
+    recipient_id: string;
+    title: string;
+    reminder_type: string;
+    notes: string | null;
+    time_of_day: string;
+    frequency: string;
+    days_of_week: number[];
+    no_response_minutes: number;
+    is_active: boolean;
+    schedule_version: number;
+    created_at: string;
+    updated_at: string;
+};
+
+export type UpdateReminderScheduleInput = {
+    reminderId: string;
+    title: string;
+    reminderType: string;
+    notes: string | null;
+    timeOfDay: string;
+    frequency: string;
+    daysOfWeek: number[];
+    noResponseMinutes: number;
+};
+
+export type UpdateScheduleResult =
+    | { ok: true; reminder: ReminderRow }
+    | { ok: false; kind: ReminderLifecycleErrorKind };
+
+function classifyUpdateScheduleError(message: string | undefined): ReminderLifecycleErrorKind {
+    const m = (message ?? '').toLowerCase();
+    if (m.includes('reminder_inactive')) return 'reminder_inactive';
+    if (m.includes('connection_inactive')) return 'connection_inactive';
+    if (m.includes('not_authorized') || m.includes('authentication_required')) return 'not_authorized';
+    if (m.includes('invalid_title') || m.includes('invalid_reminder_type') || m.includes('invalid_frequency') || m.includes('invalid_days_of_week') || m.includes('invalid_no_response_minutes')) return 'invalid_input';
+    if (m.includes('network request failed') || m.includes('fetch failed') || m.includes('failed to fetch') || m.includes('timed out') || m.includes('timeout')) return 'network';
+    return 'unexpected';
+}
+
+export async function updateReminderSchedule(input: UpdateReminderScheduleInput): Promise<UpdateScheduleResult> {
+    try {
+        const { data, error } = await supabase.rpc('update_reminder_schedule', {
+            p_reminder_id: input.reminderId,
+            p_title: input.title,
+            p_reminder_type: input.reminderType,
+            p_notes: input.notes,
+            p_time_of_day: input.timeOfDay,
+            p_frequency: input.frequency,
+            p_days_of_week: input.daysOfWeek,
+            p_no_response_minutes: input.noResponseMinutes,
+        });
+
+        if (error) {
+            console.warn('[reminderLifecycle] update_reminder_schedule failed:', error.message);
+            return { ok: false, kind: classifyUpdateScheduleError(error.message) };
+        }
+
+        return { ok: true, reminder: data as ReminderRow };
+    } catch (err) {
+        console.warn('[reminderLifecycle] update_reminder_schedule threw:', err);
+        return { ok: false, kind: classifyUpdateScheduleError(err instanceof Error ? err.message : String(err)) };
     }
 }

@@ -213,26 +213,26 @@ is never touched by this function again.
 
 ## Editing semantics
 
+See **`docs/reminder-editing-model.md`** for the full detail (schedule
+revision mechanism, current-day edit rules A-F, delivery-ledger
+reconciliation) — Week 1 task #8 replaced the original two-step
+client-orchestrated edit flow (`reminders` `UPDATE` followed by a separate
+best-effort `clear_stale_reminder_deliveries()` call) with one atomic
+`update_reminder_schedule()` RPC. Summary:
+
 - Title/notes/type changes: affect current display and future
-  notification content immediately; never touch `reminder_logs`.
+  notification content immediately; never touch `reminder_logs`, never
+  bump `reminders.schedule_version`, never touch any delivery row.
 - `time_of_day`/`days_of_week`/`no_response_minutes` changes: affect
-  future/current-unresolved occurrences only. Historical `reminder_logs`
-  rows are never rewritten — there is no code path that updates a
-  resolved log's `scheduled_for` or any other field after the fact (the
-  identity-immutability trigger also blocks that specific case, though
-  the real protection is simply that no function ever attempts it).
-- **Stale delivery claims**: if today's occurrence was already claimed for
-  delivery (a `reminder_notification_deliveries` row exists, not yet
-  sent) before a schedule-affecting edit, that claim would otherwise still
-  reflect the pre-edit time. `clear_stale_reminder_deliveries(reminder_id)`
-  (caregiver-only, ownership-checked) purges any `pending`/`failed`
-  (never `sent` — that already happened and can't be undone)
-  `delivery_type = 'reminder'` row for *today's* occurrence only, so the
-  next cron tick can claim fresh at the corrected time. `edit-reminder.tsx`
-  calls this automatically, but only when `time_of_day`/`days_of_week`/
-  `no_response_minutes` actually changed (a title-only edit never
-  triggers it). A snooze delivery in flight is never touched by an edit —
-  that's a separate, already-user-initiated branch.
+  future/current-unresolved occurrences only, and atomically bump
+  `reminders.schedule_version` + reconcile today's still-unsent delivery
+  row (if any) **in place** — never a delete-then-reclaim, so the
+  `UNIQUE(reminder_id, occurrence_date, delivery_type)` constraint is
+  never at risk of blocking the corrected send. Historical `reminder_logs`
+  rows are never rewritten by any edit — there is no code path that
+  updates a resolved log's `scheduled_for` or any other field after the
+  fact (the identity-immutability trigger also blocks that specific case,
+  though the real protection is simply that no function ever attempts it).
 
 ## Deactivation and deletion semantics
 
@@ -262,29 +262,38 @@ is never touched by this function again.
 
 ## Known residual risks
 
-- **Client display vs. server persistence timezone**: every client-side
-  "is this missed/pending" computation (`lib/reminderStatus.ts`,
-  used by all four screens as of this task's consolidation) uses the
-  *device's* local clock, not the recipient's stored `profiles.timezone`.
-  The server is always timezone-correct; a recipient whose device
-  timezone has drifted from their stored profile timezone (traveled,
-  hasn't synced) can see a briefly-wrong computed display that
-  self-corrects once the authoritative server value loads. This was true
-  before this task and is unchanged by it — documented, not fixed, as a
-  deliberately proportionate scope decision (fixing it would mean
-  rewriting every dashboard's status computation to fetch/use the
-  recipient's timezone, a much larger change than this task's stated
-  scope).
+- **Recipient's own device clock vs. stored profile timezone**: the
+  recipient's own dashboard/alert screens (`recipient-dashboard.tsx`,
+  `reminder-alert.tsx`) still compute their own instant display status
+  from *their device's* local clock, not a fetched `profiles.timezone`
+  round trip — intentional, per Week 1 task #8's own scope ("recipient
+  device/current profile timezone, which should normally match"). A
+  recipient whose device timezone has drifted from their stored profile
+  timezone (traveled, hasn't synced) can briefly see a display that
+  disagrees with the eventual server-authoritative value. **This is now
+  the only remaining instance of this risk** — caregiver-facing screens
+  (`caregiver-dashboard.tsx`, `reminder-details.tsx`) were fixed in task
+  #8 to compute in the connected recipient's own stored timezone via
+  `lib/zonedTime.ts`/the zoned variants in `lib/reminderStatus.ts`, never
+  the viewing caregiver's device clock. See
+  `docs/reminder-editing-model.md`'s "Recipient-timezone display
+  authority" section for the full before/after.
 - **Caregiver-deactivate vs. recipient-response** has no single
   deterministic winner (see "Concurrency rules" above) — by design, not a
   gap, but worth knowing when debugging a report of "I marked it taken
   but it shows inactive."
-- **`clear_stale_reminder_deliveries` has a narrow timing gap**: a
-  delivery claimed in the few seconds between an edit and this cleanup
-  RPC actually running could still send once at the old time. Bounded to
-  roughly one cron tick's worth of window (currently 30 seconds); judged
-  acceptable rather than adding transactional coordination between the
-  reminders `UPDATE` and the cleanup call.
+- **`update_reminder_schedule`'s reconciliation has a narrow timing gap**:
+  a delivery claimed in the few seconds between an edit committing and a
+  *different, still-in-flight* claim/send tick reading pre-edit state
+  could in principle still process against a value that's about to be
+  corrected — closed for the common case by the transaction combining the
+  edit and reconciliation, and further closed by
+  `validate_reminder_deliveries_for_send`'s independent
+  immediately-before-send re-check (schedule_version and recomputed
+  `scheduled_for`, both compared fresh at send time — see
+  `docs/reminder-editing-model.md`). The remaining window is bounded to
+  sub-second execution time of a single Postgres transaction, not the
+  ~30-second cron-tick window the prior (task #7) design had.
 
 ## Operational recovery steps
 

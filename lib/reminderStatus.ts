@@ -1,4 +1,5 @@
 import { isDueOnDate } from '@/lib/frequency';
+import { getZonedDateString, isPastNoResponseWindowAt, zonedDateTimeToUtc } from '@/lib/zonedTime';
 
 // ─── Shared missed-reminder helpers ──────────────────────────────────────────
 // Used by recipient-dashboard, reminder-alert, caregiver-dashboard, and
@@ -205,5 +206,79 @@ export function getComputedStatus(
     const scheduledFor = buildScheduledDateTime(dateString, reminder.time_of_day);
     const missedAt = new Date(scheduledFor.getTime() + reminder.no_response_minutes * 60 * 1000);
     if (new Date() < missedAt) return 'pending';
+    return 'missed';
+}
+
+// ─── Recipient-timezone-aware variants (caregiver-facing screens) ───────────
+// Everything below mirrors the device-clock functions above exactly in
+// shape and intent, but interprets "today"/"now"/day-of-week in an
+// explicitly supplied IANA timezone (the connected recipient's stored
+// profiles.timezone) instead of the viewing device's clock — built on
+// lib/zonedTime.ts. This is what fixes the confirmed bug where a caregiver
+// in a different timezone than their recipient could see an incorrect
+// Pending/Missed/Future status. Recipient-facing screens (the recipient
+// viewing their own reminders) intentionally keep using the device-clock
+// functions above — the recipient's own device is expected to match their
+// synced profile timezone (see docs/reminder-state-model.md).
+
+/** ISO weekday (1=Monday..7=Sunday) of a "YYYY-MM-DD" calendar date — a pure calendar computation, the same regardless of timezone once you already have the date string. */
+export function isoWeekdayOfDateString(dateString: string): number {
+    const [y, m, d] = dateString.split('-').map(Number);
+    const jsDay = new Date(y, m - 1, d, 12, 0, 0).getDay();
+    return jsDay === 0 ? 7 : jsDay;
+}
+
+/** Zoned equivalent of getAnalyticsStartDate — returns a "YYYY-MM-DD" boundary date instead of a Date object (unambiguous once timezone is involved). */
+export function getZonedAnalyticsStartDateString(
+    connectionAcceptedAt: string,
+    reminderCreatedAt: string,
+    timeOfDay: string,
+    timeZone: string
+): string {
+    const connDate = new Date(connectionAcceptedAt);
+    const remDate = new Date(reminderCreatedAt);
+    const later = connDate > remDate ? connDate : remDate;
+
+    const laterDateString = getZonedDateString(later, timeZone);
+    const scheduledOnLaterDate = zonedDateTimeToUtc(laterDateString, timeOfDay, timeZone);
+
+    if (later > scheduledOnLaterDate) {
+        const [y, m, d] = laterDateString.split('-').map(Number);
+        const next = new Date(y, m - 1, d + 1);
+        return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
+    }
+    return laterDateString;
+}
+
+/** Zoned equivalent of isReminderEligibleOnDate — takes a "YYYY-MM-DD" string rather than a Date, and the recipient's timeZone explicitly. */
+export function isReminderEligibleOnZonedDate(
+    reminder: ReminderScheduleLike,
+    dateString: string,
+    timeZone: string,
+    connectionAcceptedAt: string,
+    hasLogOnDate: boolean
+): boolean {
+    if (!reminder.days_of_week.includes(isoWeekdayOfDateString(dateString))) return false;
+
+    const start = getZonedAnalyticsStartDateString(connectionAcceptedAt, reminder.created_at, reminder.time_of_day, timeZone);
+    if (dateString < start) return false;
+
+    if (!reminder.is_active) return hasLogOnDate;
+
+    return true;
+}
+
+/** Zoned equivalent of getComputedStatus — the response-window check compares against the actual current instant, same as the device-clock version, but the scheduled instant is computed in the recipient's timezone rather than the device's. */
+export function getZonedComputedStatus(
+    reminder: ReminderScheduleLike,
+    dateString: string,
+    todayString: string,
+    timeZone: string,
+    log?: ReminderLogLike
+): DisplayReminderStatus {
+    if (log?.status) return log.status;
+    if (dateString > todayString) return 'pending';
+    const scheduledFor = zonedDateTimeToUtc(dateString, reminder.time_of_day, timeZone);
+    if (!isPastNoResponseWindowAt(scheduledFor, reminder.no_response_minutes)) return 'pending';
     return 'missed';
 }

@@ -14,9 +14,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
 import { formatFrequency as formatFrequencyDays } from '@/lib/frequency';
 import { useLanguage, useStatusLabel } from '@/lib/i18n/context';
-import { getAnalyticsStartDate, getComputedStatus, isReminderEligibleOnDate } from '@/lib/reminderStatus';
+import { getZonedAnalyticsStartDateString, getZonedComputedStatus, isReminderEligibleOnZonedDate } from '@/lib/reminderStatus';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
+import { getZonedTodayString } from '@/lib/zonedTime';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -111,15 +112,16 @@ function formatDateLabel(date: Date, locale: string): string {
     return date.toLocaleDateString(locale, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
-// getAnalyticsStartDate / isReminderEligibleOnDate / getComputedStatus /
-// buildScheduledDateTime now live in lib/reminderStatus.ts, shared with
-// caregiver-dashboard.tsx. This file previously had its own
+// Recipient-timezone-aware eligibility/status functions now live in
+// lib/reminderStatus.ts / lib/zonedTime.ts, shared with
+// caregiver-dashboard.tsx. This file previously had its own device-clock
 // isReminderEligibleOnDate that excluded dates after a deactivated
 // reminder's updated_at — that could both hide a genuine same-day log and
 // still show a computed missed/pending status on the deactivation day
-// itself, contradicting the documented intended rule (see
-// lib/reminderStatus.ts's isReminderEligibleOnDate doc comment). Fixed by
-// this consolidation onto the hasLogOnDate-based rule.
+// itself, contradicting the documented intended rule (fixed during the
+// Week 1 task #7 consolidation). Week 1 task #8 additionally moved this
+// screen off the caregiver's own device clock entirely — see
+// lib/reminderStatus.ts's zoned-variant header comment.
 
 function getAdherenceColor(pct: number | null, C: ThemeColors): string {
     if (pct === null) return C.textMuted;
@@ -136,9 +138,10 @@ function buildDetailData(
     weekDates: Date[],
     monthDates: Date[],
     connectionAcceptedAt: string,
-    locale: string
+    locale: string,
+    recipientTimeZone: string
 ): { stats: DetailStats; history: HistoryEntry[] } {
-    const todayString = getLocalDateString(new Date());
+    const todayString = getZonedTodayString(recipientTimeZone);
 
     let weekTaken = 0, weekCountable = 0;
     let monthTaken = 0, monthCountable = 0;
@@ -150,9 +153,9 @@ function buildDetailData(
         const dateString = getLocalDateString(date);
         if (dateString > todayString) return;
         const log = logs.find((l) => l.occurrence_date === dateString);
-        if (!isReminderEligibleOnDate(reminder, date, connectionAcceptedAt, !!log)) return;
+        if (!isReminderEligibleOnZonedDate(reminder, dateString, recipientTimeZone, connectionAcceptedAt, !!log)) return;
 
-        const status = getComputedStatus(reminder, dateString, todayString, log);
+        const status = getZonedComputedStatus(reminder, dateString, todayString, recipientTimeZone, log);
 
         if (status === 'pending') {
             pending += 1;
@@ -182,8 +185,8 @@ function buildDetailData(
         const dateString = getLocalDateString(date);
         if (dateString > todayString) return;
         const log = logs.find((l) => l.occurrence_date === dateString);
-        if (!isReminderEligibleOnDate(reminder, date, connectionAcceptedAt, !!log)) return;
-        const status = getComputedStatus(reminder, dateString, todayString, log);
+        if (!isReminderEligibleOnZonedDate(reminder, dateString, recipientTimeZone, connectionAcceptedAt, !!log)) return;
+        const status = getZonedComputedStatus(reminder, dateString, todayString, recipientTimeZone, log);
         if (status === 'pending') return;
         weekCountable += 1;
         if (status === 'taken') weekTaken += 1;
@@ -251,6 +254,10 @@ export default function ReminderDetailsScreen() {
     const [history,             setHistory]             = useState<HistoryEntry[]>([]);
     const [analyticsStartLabel, setAnalyticsStartLabel] = useState('');
     const [error,               setError]               = useState<string | null>(null);
+    // Only used to decide whether the compact "in participant's timezone"
+    // context label is worth showing — never displayed as a raw IANA
+    // identifier itself.
+    const [showsTimeZoneContext, setShowsTimeZoneContext] = useState(false);
 
     useEffect(() => {
         if (!reminderId) {
@@ -296,6 +303,20 @@ export default function ReminderDetailsScreen() {
 
         const acceptedAt = conn.accepted_at || conn.created_at || new Date().toISOString();
 
+        // Every pending/missed/future computation below runs in the
+        // recipient's own stored timezone, never this caregiver's device
+        // clock — see lib/reminderStatus.ts's zoned-variant header
+        // comment. Falls back to this device's timezone only if the
+        // recipient's genuinely can't be read.
+        const { data: recipientProfile } = await supabase
+            .from('profiles')
+            .select('timezone')
+            .eq('id', rem.recipient_id)
+            .maybeSingle();
+        const deviceTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const recipientTimeZone = recipientProfile?.timezone || deviceTimeZone;
+        setShowsTimeZoneContext(!!recipientProfile?.timezone && recipientProfile.timezone !== deviceTimeZone);
+
         const today      = new Date();
         const weekStart  = getStartOfWeek(today);
         const weekDates  = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
@@ -312,9 +333,10 @@ export default function ReminderDetailsScreen() {
         const reminderData = rem as Reminder;
 
         const locale = language === 'es' ? 'es-ES' : 'en-US';
-        const startDate = getAnalyticsStartDate(acceptedAt, reminderData.created_at, reminderData.time_of_day);
+        const startDateString = getZonedAnalyticsStartDateString(acceptedAt, reminderData.created_at, reminderData.time_of_day, recipientTimeZone);
+        const [startY, startM, startD] = startDateString.split('-').map(Number);
         setAnalyticsStartLabel(
-            startDate.toLocaleDateString(locale, { month: 'long', day: 'numeric', year: 'numeric' })
+            new Date(startY, startM - 1, startD).toLocaleDateString(locale, { month: 'long', day: 'numeric', year: 'numeric' })
         );
 
         const { stats: computed, history: hist } = buildDetailData(
@@ -323,7 +345,8 @@ export default function ReminderDetailsScreen() {
             weekDates,
             monthDates,
             acceptedAt,
-            locale
+            locale,
+            recipientTimeZone
         );
 
         setReminder(reminderData);
@@ -398,6 +421,11 @@ export default function ReminderDetailsScreen() {
                                 ? `${formatTime(reminder.time_of_day)} · ${formatFrequency(reminder.frequency, reminder.days_of_week)}`
                                 : t('reminderDetails.noLongerScheduled')}
                         </Text>
+                        {reminder.is_active && showsTimeZoneContext ? (
+                            <Text style={styles.timeZoneContext}>
+                                {t('reminderDetails.participantTimeZoneContext', { time: formatTime(reminder.time_of_day) })}
+                            </Text>
+                        ) : null}
 
                         {reminder.notes ? (
                             <View style={styles.infoRow}>
@@ -651,6 +679,12 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
         fontSize: 15,
         color: C.textSecondary,
         fontWeight: '500',
+        marginBottom: 16,
+    },
+    timeZoneContext: {
+        fontSize: 12,
+        color: C.textMuted,
+        marginTop: -12,
         marginBottom: 16,
     },
     infoRow: {

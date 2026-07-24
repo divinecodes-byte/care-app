@@ -16,14 +16,15 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { SettingsSheet } from '@/components/settings-sheet';
 import { RADIUS, SHADOW, SPACING, ThemeColors } from '@/constants/theme';
-import { formatFrequency as formatFrequencyDays, isDueOnDate } from '@/lib/frequency';
+import { formatFrequency as formatFrequencyDays } from '@/lib/frequency';
 import { useStatusLabel, useTranslation } from '@/lib/i18n/context';
 import { MAX_FREE_PARTICIPANTS } from '@/lib/limits';
 import { registerPushToken } from '@/lib/notifications';
-import { getComputedStatus, isReminderEligibleOnDate } from '@/lib/reminderStatus';
+import { getZonedComputedStatus, isoWeekdayOfDateString, isReminderEligibleOnZonedDate } from '@/lib/reminderStatus';
 import { getStoredSelectedConnectionId, setStoredSelectedConnectionId } from '@/lib/selected-participant';
 import { supabase } from '@/lib/supabase';
 import { useThemeColors } from '@/lib/theme';
+import { getZonedTodayString } from '@/lib/zonedTime';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -164,32 +165,40 @@ function formatFrequency(freq: Reminder['frequency'], daysOfWeek: number[]): str
     return formatFrequencyDays(freq, daysOfWeek);
 }
 
-function shouldShowOnDate(daysOfWeek: number[], date: Date): boolean {
-    return isDueOnDate(daysOfWeek, date);
-}
-
 // ─── Analytics helpers ────────────────────────────────────────────────────────
-// getAnalyticsStartDate / isReminderEligibleOnDate / getComputedStatus /
-// buildScheduledDateTime now live in lib/reminderStatus.ts, shared with
-// reminder-details.tsx — see that file's header comment for the real
-// divergence this consolidation fixed.
+// Recipient-timezone-aware eligibility/status functions
+// (isReminderEligibleOnZonedDate / getZonedComputedStatus /
+// isoWeekdayOfDateString / getZonedTodayString) live in
+// lib/reminderStatus.ts / lib/zonedTime.ts — see those files' header
+// comments. Week 1 task #8: this screen previously used the CAREGIVER's
+// own device clock to decide a connected recipient's reminder status,
+// which could disagree with the recipient's (and the server's) view in a
+// different timezone.
 
 function buildDayData(
     date: Date,
     reminders: Reminder[],
     logs: ReminderLog[],
-    connectionAcceptedAt: string
+    connectionAcceptedAt: string,
+    recipientTimeZone: string
 ): DayData {
+    // The calendar date itself is derived in the RECIPIENT's timezone, not
+    // the caregiver device's — see lib/reminderStatus.ts's zoned-variant
+    // header comment. `date` is still device-local for iteration purposes
+    // (constructing "each day of this month" is timezone-agnostic
+    // calendar-day arithmetic), but every *interpretation* of it (which
+    // weekday, whether it's today/future, whether the response window has
+    // passed) goes through the zoned helpers below.
     const dateString  = getLocalDateString(date);
-    const todayString = getLocalDateString(new Date());
+    const todayString = getZonedTodayString(recipientTimeZone);
     const isFuture    = dateString > todayString;
 
-    const scheduledReminders = reminders.filter((r) => shouldShowOnDate(r.days_of_week, date));
+    const scheduledReminders = reminders.filter((r) => r.days_of_week.includes(isoWeekdayOfDateString(dateString)));
     const eligibleReminders  = scheduledReminders.filter((r) => {
         const hasLogOnDate = logs.some(
             (l) => l.reminder_id === r.id && l.occurrence_date === dateString
         );
-        return isReminderEligibleOnDate(r, date, connectionAcceptedAt, hasLogOnDate);
+        return isReminderEligibleOnZonedDate(r, dateString, recipientTimeZone, connectionAcceptedAt, hasLogOnDate);
     });
 
     const reminderDisplays: ReminderDisplay[] = eligibleReminders.map((reminder) => {
@@ -200,7 +209,7 @@ function buildDayData(
             id:       reminder.id,
             name:     reminder.title,
             time:     formatTime(reminder.time_of_day),
-            status:   getComputedStatus(reminder, dateString, todayString, log),
+            status:   getZonedComputedStatus(reminder, dateString, todayString, recipientTimeZone, log),
             isActive: reminder.is_active,
         };
     });
@@ -233,8 +242,8 @@ function buildDayData(
     };
 }
 
-function getRangeStats(days: DayData[]): RangeStats {
-    const todayString = getLocalDateString(new Date());
+function getRangeStats(days: DayData[], recipientTimeZone: string): RangeStats {
+    const todayString = getZonedTodayString(recipientTimeZone);
     const past        = days.filter((d) => d.dateString <= todayString);
     const countable   = past.reduce((s, d) => s + d.countableCount, 0);
     const taken       = past.reduce((s, d) => s + d.takenCount, 0);
@@ -249,20 +258,21 @@ function buildReminderBreakdown(
     reminders: Reminder[],
     logs: ReminderLog[],
     monthDates: Date[],
-    connectionAcceptedAt: string
+    connectionAcceptedAt: string,
+    recipientTimeZone: string
 ): ReminderBreakdownItem[] {
-    const todayString = getLocalDateString(new Date());
+    const todayString = getZonedTodayString(recipientTimeZone);
     // Deleted/inactive reminders keep contributing their past logs to
-    // analytics (via isReminderEligibleOnDate below), but must not appear
-    // as cards in the active reminder breakdown.
+    // analytics (via isReminderEligibleOnZonedDate below), but must not
+    // appear as cards in the active reminder breakdown.
     return reminders.filter((reminder) => reminder.is_active).map((reminder) => {
         let scheduled = 0, completed = 0, missed = 0, skipped = 0, snoozed = 0, pending = 0;
         monthDates.forEach((date) => {
             const dateString = getLocalDateString(date);
             if (dateString > todayString) return;
             const log = logs.find((l) => l.reminder_id === reminder.id && l.occurrence_date === dateString);
-            if (!isReminderEligibleOnDate(reminder, date, connectionAcceptedAt, !!log)) return;
-            const status = getComputedStatus(reminder, dateString, todayString, log);
+            if (!isReminderEligibleOnZonedDate(reminder, dateString, recipientTimeZone, connectionAcceptedAt, !!log)) return;
+            const status = getZonedComputedStatus(reminder, dateString, todayString, recipientTimeZone, log);
             if (status === 'pending') { pending += 1; return; }
             scheduled += 1;
             if (status === 'taken')   completed += 1;
@@ -320,7 +330,7 @@ export default function CaregiverDashboard() {
     }
 
     function getHeatmapStyle(day: DayData) {
-        const todayString = getLocalDateString(new Date());
+        const todayString = getZonedTodayString(recipientTimeZone);
         if (day.dateString > todayString) return styles.heatmapFuture;
         if (!day.hasData) return styles.heatmapNoData;
         if (day.countableCount === 0 && day.pendingCount > 0) return styles.heatmapPending;
@@ -495,6 +505,11 @@ export default function CaregiverDashboard() {
     const [reminderBreakdown, setReminderBreakdown] = useState<ReminderBreakdownItem[]>([]);
     const [hasAnyReminders, setHasAnyReminders]     = useState(false);
     const [settingsVisible, setSettingsVisible]     = useState(false);
+    // The connected recipient's own stored timezone — set by
+    // loadReminderData, read by getHeatmapStyle and the adherence-stats
+    // getRangeStats calls below. Defaults to this device's own timezone
+    // only until the real value loads.
+    const [recipientTimeZone, setRecipientTimeZone] = useState<string>(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
 
     // Caregiver/Organizer id, cached for re-fetching reminder data on participant switch.
     const caregiverIdRef = useRef<string | null>(null);
@@ -509,6 +524,31 @@ export default function CaregiverDashboard() {
         setDashboardLoading(true);
         const caregiverId = caregiverIdRef.current;
         if (!caregiverId) { setDashboardLoading(false); return; }
+
+        // Every pending/missed/future computation below runs in the
+        // connected RECIPIENT's own stored timezone, never this
+        // caregiver's device clock — a caregiver viewing a recipient in a
+        // different timezone must see the same status the recipient (and
+        // the server) would compute. Falls back to this device's own
+        // timezone only if the recipient's can't be read at all (never
+        // silently falls back to treating the caregiver's zone as
+        // authoritative when the real value IS available).
+        const { data: connectionRow } = await supabase
+            .from('connections')
+            .select('recipient_id')
+            .eq('id', connectionId)
+            .maybeSingle();
+
+        let recipientTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (connectionRow?.recipient_id) {
+            const { data: recipientProfile } = await supabase
+                .from('profiles')
+                .select('timezone')
+                .eq('id', connectionRow.recipient_id)
+                .maybeSingle();
+            if (recipientProfile?.timezone) recipientTz = recipientProfile.timezone;
+        }
+        setRecipientTimeZone(recipientTz);
 
         const { data: remindersData, error: remindersError } = await supabase
             .from('reminders')
@@ -554,16 +594,16 @@ export default function CaregiverDashboard() {
             else logs = (logsData || []) as ReminderLog[];
         }
 
-        const todayDayData = buildDayData(today, reminders, logs, acceptedAt);
-        const weekDayData  = weekDates.map((d) => buildDayData(d, reminders, logs, acceptedAt));
-        const monthDayData = monthDates.map((d) => buildDayData(d, reminders, logs, acceptedAt));
+        const todayDayData = buildDayData(today, reminders, logs, acceptedAt, recipientTz);
+        const weekDayData  = weekDates.map((d) => buildDayData(d, reminders, logs, acceptedAt, recipientTz));
+        const monthDayData = monthDates.map((d) => buildDayData(d, reminders, logs, acceptedAt, recipientTz));
 
         setSelectedWeekIndex(today.getDay());
         setSelectedMonthIndex(today.getDate() - 1);
         setTodayData(todayDayData);
         setWeeklyData(weekDayData);
         setMonthData(monthDayData);
-        setReminderBreakdown(buildReminderBreakdown(reminders, logs, monthDates, acceptedAt));
+        setReminderBreakdown(buildReminderBreakdown(reminders, logs, monthDates, acceptedAt, recipientTz));
         setDashboardLoading(false);
     }
 
@@ -881,9 +921,9 @@ export default function CaregiverDashboard() {
         }
 
         const rangeStats: RangeStats =
-            selectedRange === 'Today' && todayData ? getRangeStats([todayData])
-            : selectedRange === 'Week'             ? getRangeStats(weeklyData)
-            :                                        getRangeStats(monthData);
+            selectedRange === 'Today' && todayData ? getRangeStats([todayData], recipientTimeZone)
+            : selectedRange === 'Week'             ? getRangeStats(weeklyData, recipientTimeZone)
+            :                                        getRangeStats(monthData, recipientTimeZone);
 
         const selectedDay: DayData | undefined =
             selectedRange === 'Week'  ? weeklyData[selectedWeekIndex]

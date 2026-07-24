@@ -102,14 +102,20 @@ decision made in this task.
   `getComputedStatus` never returns anything but `pending` for a future
   date, and every screen's own date-iteration loop skips
   `dateString > todayString` before even calling into the shared helpers.
-- **Timezone**: analytics boundaries and status computation run on the
-  *client's device clock* (see `docs/reminder-state-model.md`'s residual
-  risk section) — the *persisted* data being aggregated
-  (`reminder_logs.status`) is always timezone-correct (computed
-  server-side in the recipient's stored timezone), so the numbers
-  themselves are correct; only the client's own "is today's occurrence
-  inside its response window yet" instant-display judgment can be
-  briefly off if device and profile timezone disagree.
+- **Timezone**: as of Week 1 task #8, the caregiver dashboard and
+  reminder-details screens compute analytics boundaries and status in the
+  connected **recipient's own stored `profiles.timezone`** — fetched once
+  per screen load, never the viewing caregiver's device clock (see
+  `docs/reminder-editing-model.md`). The recipient's own dashboard
+  continues to use its device clock for its own instant display (the
+  device and profile timezone should normally match for that specific
+  case — see `docs/reminder-state-model.md`'s residual risk section). The
+  *persisted* data being aggregated (`reminder_logs.status`) is always
+  timezone-correct regardless (computed server-side in the recipient's
+  stored timezone), so the underlying numbers were never wrong — this
+  fixed a *display* bug (a caregiver in a different timezone than their
+  recipient could see an incorrect Pending/Missed/Future split), not a
+  data-correctness bug.
 - **Reminders that change schedule mid-period**: `days_of_week`/
   `time_of_day` changes apply going forward only — a month's analytics
   necessarily mix pre-edit and post-edit occurrences, each evaluated

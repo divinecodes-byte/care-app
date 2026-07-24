@@ -119,6 +119,29 @@ async function main() {
         return client.rpc('respond_to_reminder_occurrence', { p_reminder_id: reminderId, p_status: status, p_snooze_minutes: snoozeMinutes });
     }
 
+    // Loads the reminder's current row (authoritative — mirrors how
+    // edit-reminder.tsx loads before editing) and calls
+    // update_reminder_schedule with those values overridden by `overrides`
+    // — Week 1 task #8's sole edit write path, superseding
+    // clear_stale_reminder_deliveries from the prior task.
+    async function editSchedule(
+        client: ReturnType<typeof newClient>,
+        reminderId: string,
+        overrides: Partial<{ title: string; reminderType: string; notes: string | null; timeOfDay: string; frequency: string; daysOfWeek: number[]; noResponseMinutes: number }>
+    ) {
+        const current = (dbQuery(`select title, reminder_type, notes, time_of_day, frequency, days_of_week, no_response_minutes from public.reminders where id = '${reminderId}';`)[0] ?? {}) as any;
+        return client.rpc('update_reminder_schedule', {
+            p_reminder_id: reminderId,
+            p_title: overrides.title ?? current.title,
+            p_reminder_type: overrides.reminderType ?? current.reminder_type,
+            p_notes: overrides.notes !== undefined ? overrides.notes : current.notes,
+            p_time_of_day: overrides.timeOfDay ?? current.time_of_day,
+            p_frequency: overrides.frequency ?? current.frequency,
+            p_days_of_week: overrides.daysOfWeek ?? current.days_of_week,
+            p_no_response_minutes: overrides.noResponseMinutes ?? current.no_response_minutes,
+        });
+    }
+
     function logFor(reminderId: string): any {
         const rows = dbQuery(`select * from public.reminder_logs where reminder_id = '${reminderId}';`);
         return rows[0];
@@ -245,22 +268,20 @@ async function main() {
         const rResp = await respond(recipientR.client, reminderR, 'taken');
         record('R', 'responding after the connection has ended is rejected', !!rResp.error && rpcErrorKind(rResp.error.message) === 'connection_inactive', rResp.error?.message);
 
-        // ── S: edit time before due (nothing yet claimed -- cleanup is a harmless no-op) ──
+        // ── S: edit time before due (nothing yet claimed -- reconciliation is a harmless no-op) ──
         const reminderS = await createReminder(connA, caregiverA.id, recipientA.id, { daysOfWeek: [1, 2, 3, 4, 5, 6, 7], scheduledOffsetMinutes: 60 });
-        dbQuery(`update public.reminders set time_of_day = '${utcTimeString(-5)}' where id = '${reminderS}';`);
-        const sClearResp = await caregiverA.client.rpc('clear_stale_reminder_deliveries', { p_reminder_id: reminderS });
-        record('S', 'clearing stale deliveries for a reminder edited before its due time is a harmless no-op', !sClearResp.error, sClearResp.error?.message);
+        const sEditResp = await editSchedule(caregiverA.client, reminderS, { timeOfDay: utcTimeString(-5) });
+        record('S', 'editing a reminder before its due time succeeds with nothing to reconcile', !sEditResp.error, sEditResp.error?.message);
 
-        // ── T: edit time after due (a stale claimed-but-unsent delivery must be purged) ──
+        // ── T: edit time after due (a stale claimed-but-unsent delivery must be requeued in place, not duplicated) ──
         const reminderT = await createReminder(connA, caregiverA.id, recipientA.id, { daysOfWeek: [1, 2, 3, 4, 5, 6, 7], scheduledOffsetMinutes: -5 });
         dbQuery(`
-          insert into public.reminder_notification_deliveries (reminder_id, recipient_id, occurrence_date, scheduled_for, delivery_type, status)
-          values ('${reminderT}', '${recipientA.id}', current_date, now() - interval '5 minutes', 'reminder', 'pending');
+          insert into public.reminder_notification_deliveries (reminder_id, recipient_id, occurrence_date, scheduled_for, delivery_type, status, schedule_version)
+          values ('${reminderT}', '${recipientA.id}', current_date, now() - interval '5 minutes', 'reminder', 'pending', 1);
         `);
-        dbQuery(`update public.reminders set time_of_day = '${utcTimeString(30)}' where id = '${reminderT}';`);
-        await caregiverA.client.rpc('clear_stale_reminder_deliveries', { p_reminder_id: reminderT });
-        const tDeliveries = dbQuery(`select count(*) as c from public.reminder_notification_deliveries where reminder_id = '${reminderT}';`)[0] as any;
-        record('T', 'a stale unsent delivery claim is purged after a schedule-affecting edit', Number(tDeliveries.c) === 0, `remaining=${tDeliveries.c}`);
+        await editSchedule(caregiverA.client, reminderT, { timeOfDay: utcTimeString(30) });
+        const tDeliveries = dbQuery(`select count(*) as c, max(schedule_version) as version, max(status) as status from public.reminder_notification_deliveries where reminder_id = '${reminderT}' and delivery_type = 'reminder';`)[0] as any;
+        record('T', 'a stale unsent delivery claim is requeued in place (still exactly one row) after a schedule-affecting edit', Number(tDeliveries.c) === 1 && Number(tDeliveries.version) === 2 && tDeliveries.status === 'pending', JSON.stringify(tDeliveries));
 
         // ── U: delete during snooze (no snooze delivery claimed for an inactive reminder) ──
         const reminderU = await createReminder(connA, caregiverA.id, recipientA.id, { daysOfWeek: [1, 2, 3, 4, 5, 6, 7], scheduledOffsetMinutes: -5 });
@@ -338,15 +359,24 @@ async function main() {
         const acLog = logFor(reminderAC);
         record('AC', "a recipient's historical log survives their own account deletion (shared history preserved for the caregiver)", acLog?.status === 'taken');
 
-        // ── AD: timezone-change duplicate prevention (same calendar day) ────────
+        // ── AD: timezone-change duplicate prevention ─────────────────────────────
+        // Whether UTC and America/New_York agree on "today"'s calendar date,
+        // and whether the reminder's fixed time_of_day is even still
+        // eligible once reinterpreted in a different zone, both depend on
+        // the real wall-clock moment this test happens to run at -- rather
+        // than predict an exact outcome, assert the one invariant that must
+        // hold regardless: no two reminder_logs rows for this reminder ever
+        // share the same occurrence_date. That -- not a specific row count
+        // -- is the literal meaning of "a timezone change must not
+        // duplicate an already-recorded occurrence."
         const reminderAD = await createReminder(connA, caregiverA.id, recipientA.id, { daysOfWeek: [1, 2, 3, 4, 5, 6, 7], scheduledOffsetMinutes: -5 });
         const adResp1 = await respond(recipientA.client, reminderAD, 'taken');
         dbQuery(`update public.profiles set timezone = 'America/New_York' where id = '${recipientA.id}';`);
-        // Only re-run if this doesn't cross UTC midnight relative to America/New_York for the test host's current moment -- guard defensively rather than assume.
         const adResp2 = await respond(recipientA.client, reminderAD, 'taken');
         dbQuery(`update public.profiles set timezone = 'UTC' where id = '${recipientA.id}';`); // restore for later scenarios
-        const adRows = dbQuery(`select count(*) as c from public.reminder_logs where reminder_id = '${reminderAD}';`)[0] as any;
-        record('AD', 'a same-day timezone change does not duplicate an already-recorded occurrence', Number(adRows.c) === 1, `rows=${adRows.c} first_ok=${!adResp1.error} second_ok_or_expected=${!adResp2.error || rpcErrorKind(adResp2.error?.message) === 'not_eligible_today'}`);
+        const adRows = dbQuery(`select occurrence_date from public.reminder_logs where reminder_id = '${reminderAD}';`) as { occurrence_date: string }[];
+        const distinctDates = new Set(adRows.map((r) => r.occurrence_date));
+        record('AD', 'no two logged occurrences for the same reminder ever share an occurrence_date across a timezone change', distinctDates.size === adRows.length, `rows=${adRows.length} distinct_dates=${distinctDates.size} first_ok=${!adResp1.error} second_error=${adResp2.error?.message ?? 'none'}`);
 
         // ── AE/AF: DST boundary date math (direct SQL verification of Postgres's tz handling) ──
         const springForward = dbQuery(`select ('2026-03-08 09:00:00'::timestamp at time zone 'America/New_York') as scheduled_for;`)[0] as any;
@@ -371,8 +401,8 @@ async function main() {
         // ── AH: direct privileged RPC rejection ──────────────────────────────────
         const ahSync = await recipientA.client.rpc('sync_missed_reminders_db');
         record('AH', 'sync_missed_reminders_db is not callable by an authenticated client (service_role only)', !!ahSync.error, ahSync.error?.message);
-        const ahClear = await recipientA.client.rpc('clear_stale_reminder_deliveries', { p_reminder_id: reminderC });
-        record('AH', 'a recipient cannot call clear_stale_reminder_deliveries for a reminder they do not own as caregiver', !!ahClear.error, ahClear.error?.message);
+        const ahEdit = await editSchedule(recipientA.client, reminderC, { title: 'forged edit' });
+        record('AH', 'a recipient cannot call update_reminder_schedule for a reminder they do not own as caregiver', !!ahEdit.error, ahEdit.error?.message);
 
         // ── AI/AJ/AK: full regression suites ─────────────────────────────────────
         try {
