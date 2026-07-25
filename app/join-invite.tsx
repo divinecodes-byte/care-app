@@ -4,7 +4,6 @@ import { router } from 'expo-router';
 import { useMemo, useState } from 'react';
 import {
     ActivityIndicator,
-    Alert,
     KeyboardAvoidingView,
     Platform,
     ScrollView,
@@ -21,6 +20,10 @@ import { useTranslation } from '@/lib/i18n/context';
 import { logOnboardingEvent } from '@/lib/onboarding';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
+import { showAlertOnce } from '@/lib/alertGuard';
+import { classifyScreenError } from '@/lib/asyncStateCore';
+import { ERROR_CATEGORY_TRANSLATION_KEYS } from '@/lib/errorClassification';
+import { useRequestGeneration } from '@/lib/useRequestGeneration';
 
 export default function JoinInviteScreen() {
     const C = useThemeColors();
@@ -34,28 +37,37 @@ export default function JoinInviteScreen() {
     // fetched pre-emptively from the raw code), per the task's own
     // requirement not to reveal who a code belongs to before acceptance.
     const [connectedName, setConnectedName] = useState<string | null>(null);
+    const { start: startLoad, isCurrent: isLoadCurrent } = useRequestGeneration();
 
     async function joinInvite() {
+        // Guards both the button (already disabled via `disabled={loading}`)
+        // and the keyboard "Done" submit path (TextInput's onSubmitEditing
+        // isn't gated by that prop) against a rapid double-fire.
+        if (loading) return;
+
         const normalizedCode = inviteCode.trim().toUpperCase();
 
         if (!normalizedCode) {
-            Alert.alert(t('joinInvite.missingCodeTitle'), t('joinInvite.missingCodeMessage'));
+            showAlertOnce(t('joinInvite.missingCodeTitle'), t('joinInvite.missingCodeMessage'));
             return;
         }
 
         if (normalizedCode.length < 6) {
-            Alert.alert(t('joinInvite.invalidCodeTitle'), t('joinInvite.invalidCodeLength'));
+            showAlertOnce(t('joinInvite.invalidCodeTitle'), t('joinInvite.invalidCodeLength'));
             return;
         }
 
         if (Platform.OS === 'ios') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        const generation = startLoad();
         setLoading(true);
 
         const { data: { user }, error: userError } = await supabase.auth.getUser();
 
+        if (!isLoadCurrent(generation)) return;
+
         if (userError || !user) {
             setLoading(false);
-            Alert.alert(t('joinInvite.notSignedInTitle'), t('joinInvite.notSignedInMessage'));
+            showAlertOnce(t('joinInvite.notSignedInTitle'), t('joinInvite.notSignedInMessage'));
             return;
         }
 
@@ -67,23 +79,25 @@ export default function JoinInviteScreen() {
         const { data: result, error: acceptError } = await supabase
             .rpc('accept_invite_code', { p_code: normalizedCode });
 
+        if (!isLoadCurrent(generation)) return;
         setLoading(false);
 
         if (acceptError) {
-            // Never surface a raw Supabase error string here — every other
-            // failure branch in this screen uses translated copy, and a
-            // network/unexpected failure should read the same way.
-            Alert.alert(t('joinInvite.errorTitle'), t('authErrors.unexpected'));
+            // Never surface a raw Supabase error string here — classify it
+            // the same way every other screen does, so network/rate-limited/
+            // unexpected each get their own distinct, translated copy
+            // instead of collapsing into one generic message.
+            showAlertOnce(t('joinInvite.errorTitle'), t(ERROR_CATEGORY_TRANSLATION_KEYS[classifyScreenError(acceptError.message)]));
             return;
         }
 
         if (result === 'not_found') {
-            Alert.alert(t('joinInvite.invalidCodeTitle'), t('joinInvite.invalidCodeNotFound'));
+            showAlertOnce(t('joinInvite.invalidCodeTitle'), t('joinInvite.invalidCodeNotFound'));
             return;
         }
 
         if (result === 'already_accepted') {
-            Alert.alert(
+            showAlertOnce(
                 t('joinInvite.alreadyUsedTitle'),
                 t('joinInvite.alreadyUsedMessage')
             );
@@ -91,12 +105,12 @@ export default function JoinInviteScreen() {
         }
 
         if (result === 'expired') {
-            Alert.alert(t('joinInvite.invalidCodeTitle'), t('joinInvite.expiredCodeMessage'));
+            showAlertOnce(t('joinInvite.invalidCodeTitle'), t('joinInvite.expiredCodeMessage'));
             return;
         }
 
         if (result === 'self') {
-            Alert.alert(t('joinInvite.invalidCodeTitle'), t('joinInvite.selfConnectMessage'));
+            showAlertOnce(t('joinInvite.invalidCodeTitle'), t('joinInvite.selfConnectMessage'));
             return;
         }
 
@@ -116,12 +130,15 @@ export default function JoinInviteScreen() {
             .limit(1)
             .maybeSingle();
 
+        if (!isLoadCurrent(generation)) return;
+
         if (connectionRow?.caregiver_id) {
             const { data: caregiverProfile } = await supabase
                 .from('profiles')
                 .select('full_name')
                 .eq('id', connectionRow.caregiver_id)
                 .maybeSingle();
+            if (!isLoadCurrent(generation)) return;
             setConnectedName(caregiverProfile?.full_name ?? null);
         } else {
             setConnectedName('');

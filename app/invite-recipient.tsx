@@ -1,10 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
-    Alert,
     AppState,
     Platform,
     ScrollView,
@@ -23,6 +22,7 @@ import { MAX_STANDARD_PARTICIPANTS } from '@/lib/limits';
 import { logOnboardingEvent } from '@/lib/onboarding';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
+import { showAlertOnce } from '@/lib/alertGuard';
 
 export default function InviteRecipientScreen() {
     const C = useThemeColors();
@@ -52,15 +52,24 @@ export default function InviteRecipientScreen() {
     // connection is found accepted (participant's display name, or '' if
     // the name is unavailable for some reason).
     const [joinedName, setJoinedName] = useState<string | null>(null);
+    // Always holds the CURRENT draftConnectionId (regenerating the code
+    // creates a new one) — checkDraftAcceptance closes over whatever id was
+    // current when IT started, so this ref lets a check for an
+    // already-superseded id detect that and bail before committing state
+    // for the wrong connection.
+    const draftConnectionIdRef = useRef(draftConnectionId);
+    useEffect(() => { draftConnectionIdRef.current = draftConnectionId; }, [draftConnectionId]);
 
     const checkDraftAcceptance = useCallback(async () => {
         if (!draftConnectionId) return;
+        const checkingId = draftConnectionId;
         const { data: connectionRow } = await supabase
             .from('connections')
             .select('status, recipient_id')
-            .eq('id', draftConnectionId)
+            .eq('id', checkingId)
             .maybeSingle();
 
+        if (draftConnectionIdRef.current !== checkingId) return;
         if (connectionRow?.status !== 'accepted' || !connectionRow.recipient_id) return;
 
         const { data: recipientProfile } = await supabase
@@ -69,6 +78,7 @@ export default function InviteRecipientScreen() {
             .eq('id', connectionRow.recipient_id)
             .maybeSingle();
 
+        if (draftConnectionIdRef.current !== checkingId) return;
         setJoinedName(recipientProfile?.full_name ?? '');
     }, [draftConnectionId]);
 
@@ -101,18 +111,32 @@ export default function InviteRecipientScreen() {
     // generator right up until the server's authoritative check rejects
     // it — see PHASE 4 in the task, and create_invite_code() itself).
     useEffect(() => {
+        let cancelled = false;
         (async () => {
             const { data: { user } } = await supabase.auth.getUser();
-            if (!user) return;
+            if (!user || cancelled) return;
 
-            const { slotsUsed: used } = await fetchOrganizerConnections(user.id);
-            setSlotsUsed(used);
+            const connections = await fetchOrganizerConnections(user.id);
+            if (cancelled) return;
+            // A failed count fetch leaves slotsUsed at its "unknown" null
+            // state rather than confidently showing 0 — the server is the
+            // real enforcement point regardless (create_invite_code()
+            // re-checks the limit itself), this only affects whether the
+            // client shows the lock icon pre-emptively.
+            if (connections.ok) setSlotsUsed(connections.slotsUsed);
         })();
+        return () => { cancelled = true; };
     }, []);
 
     const atStandardLimit = slotsUsed !== null && slotsUsed >= MAX_STANDARD_PARTICIPANTS;
 
     async function createInviteCode() {
+        // Without this, a rapid double-tap of the very first "Generate"
+        // (before draftConnectionId exists) can fire two concurrent INSERTs
+        // -- unlike a regenerate, which updates the same row in place and
+        // is naturally idempotent, a fresh invite has no such protection
+        // server-side.
+        if (loading) return;
         if (Platform.OS === 'ios') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         setLoading(true);
 
@@ -120,7 +144,7 @@ export default function InviteRecipientScreen() {
 
         if (userError || !user) {
             setLoading(false);
-            Alert.alert(t('inviteParticipant.notSignedInTitle'), t('inviteParticipant.notSignedInMessage'));
+            showAlertOnce(t('inviteParticipant.notSignedInTitle'), t('inviteParticipant.notSignedInMessage'));
             return;
         }
 
@@ -145,13 +169,13 @@ export default function InviteRecipientScreen() {
             // enforcement point).
             if (error?.message?.includes('participant_limit_reached')) {
                 setSlotsUsed(MAX_STANDARD_PARTICIPANTS); // re-gate this screen immediately without a second round trip
-                Alert.alert(
+                showAlertOnce(
                     t('inviteParticipant.limitReachedTitle'),
                     t('inviteParticipant.limitReachedMessage', { limit: MAX_STANDARD_PARTICIPANTS })
                 );
                 return;
             }
-            Alert.alert(
+            showAlertOnce(
                 t('inviteParticipant.saveErrorTitle'),
                 t('inviteParticipant.saveErrorMessage')
             );
@@ -167,7 +191,7 @@ export default function InviteRecipientScreen() {
 
     async function shareInviteCode() {
         if (!inviteCode) {
-            Alert.alert(t('inviteParticipant.noCodeTitle'), t('inviteParticipant.noCodeMessage'));
+            showAlertOnce(t('inviteParticipant.noCodeTitle'), t('inviteParticipant.noCodeMessage'));
             return;
         }
 

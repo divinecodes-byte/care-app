@@ -15,10 +15,14 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { OfflineBanner, SectionErrorState, announceStateChange } from '@/components/StateViews';
 import { SettingsSheet } from '@/components/settings-sheet';
 import { RADIUS, SHADOW, SPACING, ThemeColors } from '@/constants/theme';
 import { clearAccountScopedLocalState } from '@/lib/accountCleanup';
+import { showAlertOnce } from '@/lib/alertGuard';
+import { classifyScreenError, ErrorCategory } from '@/lib/asyncStateCore';
 import { categorizeConnection } from '@/lib/connectionStateCore';
+import { ERROR_CATEGORY_TRANSLATION_KEYS } from '@/lib/errorClassification';
 import { formatFrequency as formatFrequencyDays } from '@/lib/frequency';
 import { useStatusLabel, useTranslation } from '@/lib/i18n/context';
 import { MAX_STANDARD_PARTICIPANTS } from '@/lib/limits';
@@ -494,6 +498,40 @@ export default function CaregiverDashboard() {
 
     const [connectionLoading, setConnectionLoading] = useState(true);
     const [dashboardLoading, setDashboardLoading]   = useState(true);
+    // Set on a genuine fetch failure (connections, reminders, or logs) —
+    // rendered as a compact, retryable SectionErrorState that never
+    // replaces the rest of the dashboard (PHASE 4: "if reminders load but
+    // analytics fail, show reminders, show an analytics error with retry,
+    // don't replace the entire dashboard"). Cleared at the start of every
+    // load attempt.
+    const [connectionsError, setConnectionsError] = useState<ErrorCategory | null>(null);
+    const [reminderDataError, setReminderDataError] = useState<ErrorCategory | null>(null);
+    // True only when reminders themselves loaded but the logs (analytics/
+    // history) query failed — today's reminders still render normally,
+    // just with a narrower "analytics unavailable" notice near the
+    // breakdown/history sections instead of losing the whole screen.
+    const [analyticsOnlyError, setAnalyticsOnlyError] = useState(false);
+    // Reset on every fresh loadDashboardData() call so a dismissed banner
+    // reappears on the next failed request rather than staying hidden for
+    // the rest of the session while still genuinely offline.
+    const [offlineDismissed, setOfflineDismissed] = useState(false);
+    const hasLoadedParticipantsOnceRef = useRef(false);
+    // Distinct from hasLoadedParticipantsOnceRef: this one is deliberately
+    // reset to false in selectParticipant() so switching to a different
+    // participant still shows the full loading card (a different person's
+    // data is about to replace what's on screen — this should be obvious,
+    // not silently swapped in). A plain refetch of the SAME participant
+    // (focus refire, pull-to-refresh) never resets it, so that case keeps
+    // the existing analytics visible with only the discreet RefreshControl
+    // spinner, per PHASE 4 ("preserve currently valid data during a
+    // background refresh").
+    const hasLoadedReminderDataOnceRef = useRef(false);
+    // Set by loadDashboardData() right before it calls loadReminderData(),
+    // only when recovering from a prior error -- lets loadReminderData()
+    // announce "back online" to VoiceOver at its own success point without
+    // reading connectionsError/reminderDataError React state, which
+    // wouldn't yet reflect this render's in-flight updates.
+    const pendingRecoveryAnnounceRef = useRef(false);
 
     const pushRegistrationAttemptedRef = useRef(false);
 
@@ -590,9 +628,13 @@ export default function CaregiverDashboard() {
         if (remindersError) {
             console.error('[caregiver-dashboard] reminders fetch failed:', remindersError.message);
             setDashboardLoading(false);
+            setReminderDataError(classifyScreenError(remindersError.message));
+            hasLoadedReminderDataOnceRef.current = true;
+            pendingRecoveryAnnounceRef.current = false;
             return;
         }
 
+        setReminderDataError(null);
         const reminders  = (remindersData || []) as Reminder[];
         setHasAnyReminders(reminders.length > 0);
         const today      = new Date();
@@ -618,8 +660,15 @@ export default function CaregiverDashboard() {
                 .lte('occurrence_date', getLocalDateString(latestDate))
                 .in('reminder_id', reminderIds);
 
-            if (logsError) console.error('[caregiver-dashboard] logs fetch failed:', logsError.message);
-            else logs = (logsData || []) as ReminderLog[];
+            if (logsError) {
+                console.error('[caregiver-dashboard] logs fetch failed:', logsError.message);
+                setAnalyticsOnlyError(true);
+            } else {
+                logs = (logsData || []) as ReminderLog[];
+                setAnalyticsOnlyError(false);
+            }
+        } else {
+            setAnalyticsOnlyError(false);
         }
 
         // Final check before committing this batch of analytics state —
@@ -639,19 +688,34 @@ export default function CaregiverDashboard() {
         setMonthData(monthDayData);
         setReminderBreakdown(buildReminderBreakdown(reminders, logs, monthDates, acceptedAt, recipientTz));
         setDashboardLoading(false);
+        hasLoadedReminderDataOnceRef.current = true;
+        if (pendingRecoveryAnnounceRef.current) {
+            pendingRecoveryAnnounceRef.current = false;
+            announceStateChange(t('stateViews.backToNormal'));
+        }
     }
 
     function selectParticipant(p: ConnectionSummary) {
         if (p.id === selectedConnectionIdRef.current) return;
         selectedConnectionIdRef.current = p.id;
         setConnectionSummary(p);
+        // A different participant's data is about to load — show the full
+        // loading card rather than leaving the previous participant's
+        // analytics on screen under the new participant's name.
+        hasLoadedReminderDataOnceRef.current = false;
         if (caregiverIdRef.current) setStoredSelectedConnectionId(caregiverIdRef.current, p.id);
         loadReminderData(p.id, p.acceptedAt ?? new Date().toISOString());
     }
 
     async function loadDashboardData() {
+        // Captured before this attempt clears them -- lets a load that
+        // recovers from a prior error/offline banner announce that fact to
+        // VoiceOver once the banner disappears (it has no live region of
+        // its own once it's gone).
+        const wasRecoveringFromError = connectionsError !== null || reminderDataError !== null;
         setConnectionLoading(true);
         setDashboardLoading(true);
+        setOfflineDismissed(false);
 
         const { data: { user }, error: userError } = await supabase.auth.getUser();
 
@@ -706,11 +770,19 @@ export default function CaregiverDashboard() {
             .limit(50);
 
         if (connectionError) {
+            // Never clears participants/connectionSummary — a failed
+            // background refresh leaves whatever was last showing intact
+            // (see the SectionErrorState rendered near the participant
+            // selector below).
             console.error('[caregiver-dashboard] connections fetch failed:', connectionError.message);
             setConnectionLoading(false);
             setDashboardLoading(false);
+            setConnectionsError(classifyScreenError(connectionError.message));
             return;
         }
+
+        setConnectionsError(null);
+        hasLoadedParticipantsOnceRef.current = true;
 
         const acceptedConnections = (connections ?? []).filter(
             (c) => c.status === 'accepted' && c.recipient_id
@@ -742,6 +814,7 @@ export default function CaregiverDashboard() {
             setHasAnyReminders(false);
             setConnectionLoading(false);
             setDashboardLoading(false);
+            hasLoadedReminderDataOnceRef.current = true;
             return;
         }
 
@@ -772,6 +845,15 @@ export default function CaregiverDashboard() {
         const byParam     = routeConnectionId
             ? nextParticipants.find((p) => p.id === routeConnectionId)
             : undefined;
+        // The caller (e.g. Create/Edit Reminder) pointed at a specific
+        // participant that no longer exists among the accepted ones by the
+        // time this screen finished loading -- their connection ended in
+        // the gap between navigating away and back. Silently substituting a
+        // different participant here would misattribute whatever loads
+        // next to the wrong name, so say so once instead.
+        if (routeConnectionId && !byParam) {
+            showAlertOnce(t('organizerDashboard.participantNoLongerAvailableTitle'), t('organizerDashboard.participantNoLongerAvailableMessage'));
+        }
         const byInMemory  = byParam
             ? undefined
             : nextParticipants.find((p) => p.id === selectedConnectionIdRef.current);
@@ -789,6 +871,7 @@ export default function CaregiverDashboard() {
         setConnectionLoading(false);
         setStoredSelectedConnectionId(user.id, selected.id);
 
+        pendingRecoveryAnnounceRef.current = wasRecoveringFromError;
         await loadReminderData(selected.id, selected.acceptedAt ?? new Date().toISOString());
     }
 
@@ -845,7 +928,7 @@ export default function CaregiverDashboard() {
     // ── Connection card ─────────────────────────────────────────────────────
 
     function ConnectionCard() {
-        if (connectionLoading) {
+        if (connectionLoading && !hasLoadedParticipantsOnceRef.current) {
             return (
                 <View style={[styles.connectionCard, SHADOW.xs]}>
                     <View style={styles.connectionCardInner}>
@@ -1046,7 +1129,7 @@ export default function CaregiverDashboard() {
             );
         }
 
-        if (dashboardLoading) {
+        if (dashboardLoading && !hasLoadedReminderDataOnceRef.current) {
             return (
                 <View style={[styles.card, SHADOW.xs]}>
                     <View style={styles.loadingState}>
@@ -1455,10 +1538,44 @@ export default function CaregiverDashboard() {
                     </View>
                 </View>
 
+                {(connectionsError === 'network' || reminderDataError === 'network') && !offlineDismissed && (
+                    <OfflineBanner onDismiss={() => setOfflineDismissed(true)} />
+                )}
+
+                {connectionsError && connectionsError !== 'network' && (
+                    <SectionErrorState
+                        text={t(ERROR_CATEGORY_TRANSLATION_KEYS[connectionsError])}
+                        onRetry={loadDashboardData}
+                        retrying={connectionLoading}
+                    />
+                )}
+
                 <ConnectionCard />
                 <ParticipantSelector />
 
-                {renderAnalytics()}
+                {reminderDataError && reminderDataError !== 'network' ? (
+                    <SectionErrorState
+                        text={t(ERROR_CATEGORY_TRANSLATION_KEYS[reminderDataError])}
+                        onRetry={() => loadReminderData(connectionSummary.id, connectionSummary.acceptedAt ?? new Date().toISOString())}
+                        retrying={dashboardLoading}
+                    />
+                ) : (
+                    // Either no reminder-data error at all, or the error is
+                    // 'network' — in the latter case the OfflineBanner
+                    // above already communicates it, and any previously
+                    // loaded analytics stays visible underneath rather
+                    // than being replaced by an error card.
+                    <>
+                        {analyticsOnlyError && (
+                            <SectionErrorState
+                                text={t('organizerDashboard.analyticsUnavailable')}
+                                onRetry={() => loadReminderData(connectionSummary.id, connectionSummary.acceptedAt ?? new Date().toISOString())}
+                                retrying={dashboardLoading}
+                            />
+                        )}
+                        {renderAnalytics()}
+                    </>
+                )}
             </ScrollView>
 
             <SettingsSheet

@@ -1,10 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
-    Alert,
     Platform,
     RefreshControl,
     ScrollView,
@@ -16,15 +15,20 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { OfflineBanner, SectionErrorState, announceStateChange } from '@/components/StateViews';
 import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
+import { ErrorCategory } from '@/lib/asyncStateCore';
 import { CONNECTION_ERROR_TRANSLATION_KEYS } from '@/lib/connectionErrors';
 import { endConnection, fetchOrganizerConnections, ParticipantSummary, PendingInviteSummary } from '@/lib/connections';
+import { ERROR_CATEGORY_TRANSLATION_KEYS } from '@/lib/errorClassification';
 import { useTranslation } from '@/lib/i18n/context';
 import { MAX_STANDARD_PARTICIPANTS } from '@/lib/limits';
 import { getRoleLabelKeys, UseCase } from '@/lib/onboarding';
 import { setStoredSelectedConnectionId } from '@/lib/selected-participant';
 import { useThemeColors } from '@/lib/theme';
+import { useRequestGeneration } from '@/lib/useRequestGeneration';
 import { supabase } from '@/lib/supabase';
+import { showAlertOnce } from '@/lib/alertGuard';
 
 type ReminderCounts = Record<string, number>;
 
@@ -35,16 +39,35 @@ export default function ParticipantsScreen() {
 
     const [loading, setLoading] = useState(true);
     const [errored, setErrored] = useState(false);
+    const [errorCategory, setErrorCategory] = useState<ErrorCategory | null>(null);
     const [refreshing, setRefreshing] = useState(false);
     const [active, setActive] = useState<ParticipantSummary[]>([]);
     const [pending, setPending] = useState<PendingInviteSummary[]>([]);
     const [reminderCounts, setReminderCounts] = useState<ReminderCounts>({});
     const [organizerUseCase, setOrganizerUseCase] = useState<UseCase | null>(null);
     const [busyConnectionId, setBusyConnectionId] = useState<string | null>(null);
+    const hasLoadedOnceRef = useRef(false);
+    // Mirrors the `errored` state for synchronous reads at the top of
+    // load() -- see the comment there for why the state itself can't be
+    // used for this.
+    const erroredRef = useRef(false);
+    const { start: startLoad, isCurrent: isLoadCurrent } = useRequestGeneration();
 
     const load = useCallback(async (isRefresh: boolean) => {
-        if (isRefresh) setRefreshing(true); else setLoading(true);
+        const generation = startLoad();
+        // Captured before clearing -- lets a load that recovers from a
+        // prior error/offline banner announce that fact to VoiceOver once
+        // the banner disappears (it has no live region of its own once
+        // it's gone). A ref, not the `errored` state, since React state
+        // wouldn't reflect this render's own upcoming update in time.
+        const wasRecoveringFromError = erroredRef.current;
+        let succeeded = true;
+        // First load shows the full loading card; a refetch (focus, pull-
+        // to-refresh) with data already on screen only shows the discreet
+        // RefreshControl spinner — a failed refresh never blanks the list.
+        if (isRefresh || hasLoadedOnceRef.current) setRefreshing(true); else setLoading(true);
         setErrored(false);
+        setErrorCategory(null);
 
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) {
@@ -59,7 +82,22 @@ export default function ParticipantsScreen() {
                 supabase.from('profiles').select('use_case').eq('id', user.id).maybeSingle(),
                 fetchOrganizerConnections(user.id),
             ]);
+
+            if (!isLoadCurrent(generation)) return;
+
             setOrganizerUseCase((profileRow?.use_case as UseCase | null) ?? null);
+
+            if (!connections.ok) {
+                // Preserve whatever active/pending was already on screen —
+                // never replace real data with an empty list just because
+                // this one fetch failed (previously this function silently
+                // treated a query error identically to "zero participants").
+                setErrored(true);
+                setErrorCategory(connections.errorCategory);
+                succeeded = false;
+                return;
+            }
+
             setActive(connections.active);
             setPending(connections.pending);
 
@@ -71,6 +109,7 @@ export default function ParticipantsScreen() {
                     .select('connection_id')
                     .in('connection_id', connections.active.map((p) => p.connectionId))
                     .eq('is_active', true);
+                if (!isLoadCurrent(generation)) return;
                 const counts: ReminderCounts = {};
                 for (const row of reminderRows ?? []) {
                     counts[row.connection_id] = (counts[row.connection_id] ?? 0) + 1;
@@ -80,12 +119,20 @@ export default function ParticipantsScreen() {
                 setReminderCounts({});
             }
         } catch {
+            if (!isLoadCurrent(generation)) return;
             setErrored(true);
+            setErrorCategory(null);
+            succeeded = false;
         } finally {
-            setLoading(false);
-            setRefreshing(false);
+            if (isLoadCurrent(generation)) {
+                setLoading(false);
+                setRefreshing(false);
+                hasLoadedOnceRef.current = true;
+                erroredRef.current = !succeeded;
+                if (succeeded && wasRecoveringFromError) announceStateChange(t('stateViews.backToNormal'));
+            }
         }
-    }, []);
+    }, [startLoad, isLoadCurrent]);
 
     useFocusEffect(useCallback(() => { load(false); }, [load]));
 
@@ -105,7 +152,7 @@ export default function ParticipantsScreen() {
     }
 
     function confirmEndConnection(connectionId: string, name: string) {
-        Alert.alert(
+        showAlertOnce(
             t('participants.endConnectionConfirmTitle'),
             t('participants.endConnectionConfirmMessage', { name }),
             [
@@ -126,14 +173,14 @@ export default function ParticipantsScreen() {
         setBusyConnectionId(null);
 
         if (!result.ok) {
-            Alert.alert(t('participants.actionErrorTitle'), t(CONNECTION_ERROR_TRANSLATION_KEYS[result.kind]));
+            showAlertOnce(t('participants.actionErrorTitle'), t(CONNECTION_ERROR_TRANSLATION_KEYS[result.kind]));
             return;
         }
         await load(true);
     }
 
     function manageParticipant(p: ParticipantSummary) {
-        Alert.alert(
+        showAlertOnce(
             p.recipientName || participantRoleLabel,
             undefined,
             [
@@ -156,14 +203,14 @@ export default function ParticipantsScreen() {
         const { error } = await supabase.rpc('create_invite_code', { p_existing_connection_id: connectionId });
         setBusyConnectionId(null);
         if (error) {
-            Alert.alert(t('inviteParticipant.saveErrorTitle'), t('inviteParticipant.saveErrorMessage'));
+            showAlertOnce(t('inviteParticipant.saveErrorTitle'), t('inviteParticipant.saveErrorMessage'));
             return;
         }
         await load(true);
     }
 
     function confirmRevoke(connectionId: string) {
-        Alert.alert(
+        showAlertOnce(
             t('participants.revokeConfirmTitle'),
             t('participants.revokeConfirmMessage'),
             [
@@ -231,11 +278,14 @@ export default function ParticipantsScreen() {
                         <ActivityIndicator color={C.primary} />
                         <Text style={styles.stateText}>{t('participants.loading')}</Text>
                     </View>
-                ) : errored ? (
+                ) : errored && active.length === 0 && pending.length === 0 ? (
+                    // Nothing to preserve — full error card, same as before.
                     <View style={[styles.stateCard, SHADOW.xs]}>
                         <Ionicons name="alert-circle-outline" size={28} color={C.textMuted} />
                         <Text style={styles.stateTitle}>{t('participants.errorTitle')}</Text>
-                        <Text style={styles.stateText}>{t('participants.errorText')}</Text>
+                        <Text style={styles.stateText}>
+                            {errorCategory ? t(ERROR_CATEGORY_TRANSLATION_KEYS[errorCategory]) : t('participants.errorText')}
+                        </Text>
                         <TouchableOpacity style={styles.retryButton} onPress={() => load(false)} accessibilityRole="button" accessibilityLabel={t('participants.retry')}>
                             <Text style={styles.retryButtonText}>{t('participants.retry')}</Text>
                         </TouchableOpacity>
@@ -258,6 +308,15 @@ export default function ParticipantsScreen() {
                     </View>
                 ) : (
                     <>
+                        {errored && errorCategory === 'network' ? (
+                            <OfflineBanner />
+                        ) : errored ? (
+                            <SectionErrorState
+                                text={errorCategory ? t(ERROR_CATEGORY_TRANSLATION_KEYS[errorCategory]) : t('participants.errorText')}
+                                onRetry={() => load(false)}
+                                retrying={refreshing}
+                            />
+                        ) : null}
                         {active.length > 0 && (
                             <>
                                 <Text style={styles.sectionLabel}>{t('participants.activeSection')}</Text>

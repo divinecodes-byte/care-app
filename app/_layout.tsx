@@ -89,11 +89,20 @@ function RootLayoutNav() {
     // reads private data before we know whether there's even a valid,
     // active account to read it as.
     const pendingNotificationRef = useRef<Notifications.NotificationResponse | null>(null);
+    // Distinct from handledNotifRef (which only dedupes the SAME
+    // notification firing twice) — this guards against two DIFFERENT
+    // notifications tapped in rapid succession each pushing their own
+    // screen onto the stack back-to-back.
+    const lastNavAtRef = useRef(0);
+    const NOTIF_NAV_DEBOUNCE_MS = 1000;
 
     function processNotification(response: Notifications.NotificationResponse) {
         const notifId = response.notification.request.identifier;
         if (handledNotifRef.current === notifId) return;
+        const now = Date.now();
+        if (now - lastNavAtRef.current < NOTIF_NAV_DEBOUNCE_MS) return;
         handledNotifRef.current = notifId;
+        lastNavAtRef.current = now;
 
         // No authorized, active account on this device right now — dropping
         // the deep link (rather than routing and letting the destination

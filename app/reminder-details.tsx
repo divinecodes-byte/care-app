@@ -12,6 +12,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
+import { classifyScreenError } from '@/lib/asyncStateCore';
+import { ERROR_CATEGORY_TRANSLATION_KEYS } from '@/lib/errorClassification';
 import { formatFrequency as formatFrequencyDays } from '@/lib/frequency';
 import { useLanguage, useStatusLabel } from '@/lib/i18n/context';
 import { getZonedAnalyticsStartDateString, getZonedComputedStatus, isReminderEligibleOnZonedDate } from '@/lib/reminderStatus';
@@ -254,6 +256,9 @@ export default function ReminderDetailsScreen() {
     const [history,             setHistory]             = useState<HistoryEntry[]>([]);
     const [analyticsStartLabel, setAnalyticsStartLabel] = useState('');
     const [error,               setError]               = useState<string | null>(null);
+    // Only true for a genuine fetch failure — a truly deleted reminder/
+    // connection can't be fixed by retrying the same query.
+    const [canRetryLoad,        setCanRetryLoad]         = useState(false);
     // Only used to decide whether the compact "in participant's timezone"
     // context label is worth showing — never displayed as a raw IANA
     // identifier itself.
@@ -271,6 +276,7 @@ export default function ReminderDetailsScreen() {
     async function loadData() {
         setLoading(true);
         setError(null);
+        setCanRetryLoad(false);
 
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) { setError(t('reminderDetails.notAuthenticated')); setLoading(false); return; }
@@ -283,8 +289,16 @@ export default function ReminderDetailsScreen() {
             .eq('id', reminderId)
             .maybeSingle();
 
-        if (remErr || !rem) {
+        if (remErr) {
+            setError(t(ERROR_CATEGORY_TRANSLATION_KEYS[classifyScreenError(remErr.message)]));
+            setCanRetryLoad(true);
+            setLoading(false);
+            return;
+        }
+
+        if (!rem) {
             setError(t('reminderDetails.reminderNotFound'));
+            setCanRetryLoad(false);
             setLoading(false);
             return;
         }
@@ -295,8 +309,16 @@ export default function ReminderDetailsScreen() {
             .eq('id', rem.connection_id)
             .maybeSingle();
 
-        if (connErr || !conn) {
+        if (connErr) {
+            setError(t(ERROR_CATEGORY_TRANSLATION_KEYS[classifyScreenError(connErr.message)]));
+            setCanRetryLoad(true);
+            setLoading(false);
+            return;
+        }
+
+        if (!conn) {
             setError(t('reminderDetails.connectionNotFound'));
+            setCanRetryLoad(false);
             setLoading(false);
             return;
         }
@@ -398,7 +420,22 @@ export default function ReminderDetailsScreen() {
                     </View>
                     <Text style={styles.errorTitle}>{t('reminderDetails.somethingWrong')}</Text>
                     <Text style={styles.errorText}>{error}</Text>
-                    <TouchableOpacity style={styles.errorBack} onPress={() => router.back()}>
+                    {canRetryLoad && (
+                        <TouchableOpacity
+                            style={styles.errorBack}
+                            onPress={loadData}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('stateViews.retry')}
+                        >
+                            <Text style={styles.errorBackText}>{t('stateViews.retry')}</Text>
+                        </TouchableOpacity>
+                    )}
+                    <TouchableOpacity
+                        style={styles.errorBack}
+                        onPress={() => router.back()}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('reminderDetails.goBack')}
+                    >
                         <Text style={styles.errorBackText}>{t('reminderDetails.goBack')}</Text>
                     </TouchableOpacity>
                 </View>

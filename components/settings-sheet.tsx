@@ -3,7 +3,6 @@ import { router } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
-    Alert,
     Dimensions,
     Linking,
     Modal,
@@ -28,6 +27,8 @@ import { isUseCase, USE_CASE_CARD_KEYS, USE_CASES, UseCase } from '@/lib/onboard
 import { supabase } from '@/lib/supabase';
 import { syncCurrentUserTimezone } from '@/lib/timezone';
 import { AppearanceMode, useThemeColors, useThemeMode } from '@/lib/theme';
+import { showAlertOnce } from '@/lib/alertGuard';
+import { useRequestGeneration } from '@/lib/useRequestGeneration';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -51,7 +52,15 @@ const LANGUAGE_OPTIONS: { value: LanguageMode; labelKey: string; icon: string }[
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Props = { visible: boolean; onClose: () => void };
+type Props = {
+    visible: boolean;
+    onClose: () => void;
+    // Called after this participant successfully ends their own connection,
+    // so the dashboard behind this sheet can refetch immediately rather
+    // than showing stale reminders/connection state until the next focus
+    // or pull-to-refresh.
+    onConnectionEnded?: () => void;
+};
 
 type ProfileData = {
     fullName:         string;
@@ -77,7 +86,7 @@ const PREVIEW_MODE_OPTIONS: { value: PreviewMode; icon: string; labelKey: string
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function SettingsSheet({ visible, onClose }: Props) {
+export function SettingsSheet({ visible, onClose, onConnectionEnded }: Props) {
     const insets = useSafeAreaInsets();
     const C = useThemeColors();
     const styles = useMemo(() => createStyles(C), [C]);
@@ -111,16 +120,19 @@ export function SettingsSheet({ visible, onClose }: Props) {
     // can target a specific one when there's more than one.
     const [organizerConnections, setOrganizerConnections] = useState<{ connectionId: string; name: string }[]>([]);
     const [endingConnectionId, setEndingConnectionId] = useState<string | null>(null);
+    const { start: startLoad, isCurrent: isLoadCurrent } = useRequestGeneration();
 
     useEffect(() => {
         if (visible) fetchProfile();
     }, [visible]);
 
     async function fetchProfile() {
+        const generation = startLoad();
         setLoading(true);
         setPushTokenMsg(null);
 
         const { data: { user } } = await supabase.auth.getUser();
+        if (!isLoadCurrent(generation)) return;
         if (!user) { setLoading(false); return; }
 
         const { data: profileRow } = await supabase
@@ -178,7 +190,7 @@ export function SettingsSheet({ visible, onClose }: Props) {
             await loadNotifPrefs(user.id);
             // Register push token in background — don't block the sheet from opening
             registerPushToken(user.id).then(result => {
-                if (!result.ok) setPushTokenMsg(result.message);
+                if (!result.ok && isLoadCurrent(generation)) setPushTokenMsg(result.message);
             });
 
         } else if (role === 'recipient') {
@@ -223,6 +235,7 @@ export function SettingsSheet({ visible, onClose }: Props) {
             }
         }
 
+        if (!isLoadCurrent(generation)) return; // superseded by a newer open/close/reopen cycle
         setProfile({
             fullName:         profileRow?.full_name ?? 'Unknown',
             email:            user.email ?? '',
@@ -282,8 +295,10 @@ export function SettingsSheet({ visible, onClose }: Props) {
 
         if (error) {
             console.error('[NotifPrefs] update error:', error.message);
-            // Revert optimistic change
+            // Revert optimistic change — and tell the user why it snapped
+            // back, rather than a silent, unexplained revert.
             setNotifPrefs(previous);
+            showAlertOnce(t('settings.useCaseSavingErrorTitle'), t('settings.useCaseSavingErrorMessage'));
         }
     }
 
@@ -304,6 +319,7 @@ export function SettingsSheet({ visible, onClose }: Props) {
         if (error) {
             console.error('[PreviewMode] update error:', error.message);
             setPreviewMode(previous);
+            showAlertOnce(t('settings.useCaseSavingErrorTitle'), t('settings.useCaseSavingErrorMessage'));
         }
     }
 
@@ -324,7 +340,7 @@ export function SettingsSheet({ visible, onClose }: Props) {
         if (error) {
             console.error('[UseCase] update error:', error.message);
             setUseCase(previous);
-            Alert.alert(t('settings.useCaseSavingErrorTitle'), t('settings.useCaseSavingErrorMessage'));
+            showAlertOnce(t('settings.useCaseSavingErrorTitle'), t('settings.useCaseSavingErrorMessage'));
         }
     }
 
@@ -334,14 +350,15 @@ export function SettingsSheet({ visible, onClose }: Props) {
         setEndingConnectionId(null);
 
         if (!result.ok) {
-            Alert.alert(t('participants.actionErrorTitle'), t(CONNECTION_ERROR_TRANSLATION_KEYS[result.kind]));
+            showAlertOnce(t('participants.actionErrorTitle'), t(CONNECTION_ERROR_TRANSLATION_KEYS[result.kind]));
             return;
         }
         await fetchProfile();
+        onConnectionEnded?.();
     }
 
     function confirmEndConnection(connectionId: string, name: string) {
-        Alert.alert(
+        showAlertOnce(
             t('participants.endConnectionConfirmTitle'),
             t('participants.endConnectionConfirmMessage', { name }),
             [
@@ -357,7 +374,7 @@ export function SettingsSheet({ visible, onClose }: Props) {
             confirmEndConnection(organizerConnections[0].connectionId, organizerConnections[0].name);
             return;
         }
-        Alert.alert(
+        showAlertOnce(
             t('settings.chooseOrganizerToEndTitle'),
             undefined,
             [

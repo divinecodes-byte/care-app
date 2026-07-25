@@ -49,6 +49,11 @@ export default function HomeScreen() {
                 syncCurrentUserTimezone().catch(() => {});
             }
             router.replace(route);
+        }).catch((err) => {
+            // A signed-in user simply stays on this welcome screen instead
+            // of being auto-routed to their dashboard — not ideal, but
+            // never a blank/stuck screen, and Sign In is always right here.
+            console.warn('[index] session/profile check failed:', err);
         });
     }, [ready, hasChosenLanguage]);
 

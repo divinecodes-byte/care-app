@@ -3,7 +3,6 @@ import { router } from 'expo-router';
 import { useMemo, useState } from 'react';
 import {
     ActivityIndicator,
-    Alert,
     KeyboardAvoidingView,
     Platform,
     ScrollView,
@@ -21,6 +20,7 @@ import { useTranslation } from '@/lib/i18n/context';
 import { logOnboardingEvent } from '@/lib/onboarding';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
+import { showAlertOnce } from '@/lib/alertGuard';
 
 export default function SignupScreen() {
     const C = useThemeColors();
@@ -34,12 +34,12 @@ export default function SignupScreen() {
 
     async function handleSignup() {
         if (!fullName || !email || !password) {
-            Alert.alert(t('signup.missingInfoTitle'), t('signup.missingInfoMessage'));
+            showAlertOnce(t('signup.missingInfoTitle'), t('signup.missingInfoMessage'));
             return;
         }
 
         if (password.length < 6) {
-            Alert.alert(t('signup.passwordShortTitle'), t('signup.passwordShortMessage'));
+            showAlertOnce(t('signup.passwordShortTitle'), t('signup.passwordShortMessage'));
             return;
         }
 
@@ -63,12 +63,12 @@ export default function SignupScreen() {
         if (error) {
             console.warn('[signup] signUp failed:', error.message);
             const kind = classifyAuthError(error);
-            Alert.alert(t('signup.failedTitle'), t(AUTH_ERROR_TRANSLATION_KEYS[kind]));
+            showAlertOnce(t('signup.failedTitle'), t(AUTH_ERROR_TRANSLATION_KEYS[kind]));
             return;
         }
 
         if (!data.user?.id) {
-            Alert.alert(t('signup.issueTitle'), t('signup.issueMessage'));
+            showAlertOnce(t('signup.issueTitle'), t('signup.issueMessage'));
             return;
         }
 

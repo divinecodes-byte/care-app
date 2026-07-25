@@ -4,7 +4,6 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
-    Alert,
     KeyboardAvoidingView,
     Platform,
     ScrollView,
@@ -20,6 +19,8 @@ import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
 import { useTranslation } from '@/lib/i18n/context';
 import { useThemeColors } from '@/lib/theme';
 import { buildTimeString, parseTimeString, TimePickerField } from '@/components/TimePickerField';
+import { classifyScreenError } from '@/lib/asyncStateCore';
+import { ERROR_CATEGORY_TRANSLATION_KEYS } from '@/lib/errorClassification';
 import { DAY_OPTIONS, daysForFrequency, Frequency, frequencyForDays } from '@/lib/frequency';
 import { REMINDER_ERROR_TRANSLATION_KEYS } from '@/lib/reminderErrors';
 import { updateReminderSchedule } from '@/lib/reminderLifecycle';
@@ -30,6 +31,7 @@ import {
     NO_RESPONSE_OPTIONS,
 } from '@/lib/reminderOptions';
 import { supabase } from '@/lib/supabase';
+import { showAlertOnce } from '@/lib/alertGuard';
 
 // ─── Types & constants ────────────────────────────────────────────────────────
 
@@ -79,6 +81,11 @@ export default function EditReminderScreen() {
     const [saving,       setSaving]       = useState(false);
     const [deactivating, setDeactivating] = useState(false);
     const [error,        setError]        = useState<string | null>(null);
+    // Only true for a genuine fetch failure (network/unexpected) — a
+    // reminder that's truly deleted/deactivated/not-owned can't be fixed
+    // by retrying the same query, so no Retry action is shown for that
+    // case (only "Go Back").
+    const [canRetryLoad, setCanRetryLoad] = useState(false);
     const [focused,      setFocused]      = useState<string | null>(null);
 
     // Form state
@@ -114,6 +121,7 @@ export default function EditReminderScreen() {
     async function loadReminder() {
         setPageLoading(true);
         setError(null);
+        setCanRetryLoad(false);
 
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) { setError(t('reminderForm.notAuthenticated')); setPageLoading(false); return; }
@@ -126,8 +134,21 @@ export default function EditReminderScreen() {
             .eq('is_active', true)
             .maybeSingle();
 
-        if (remErr || !rem) {
+        if (remErr) {
+            // A genuine query failure (network/unexpected) — distinct from
+            // "no row found," which is never retryable (see below).
+            const category = classifyScreenError(remErr.message);
+            setError(t(ERROR_CATEGORY_TRANSLATION_KEYS[category]));
+            setCanRetryLoad(true);
+            setPageLoading(false);
+            return;
+        }
+
+        if (!rem) {
+            // Genuinely deleted/deactivated/not-owned — retrying the same
+            // query can never fix this, so no Retry action is offered.
             setError(t('reminderForm.notFoundOrNoPermission'));
+            setCanRetryLoad(false);
             setPageLoading(false);
             return;
         }
@@ -166,12 +187,12 @@ export default function EditReminderScreen() {
 
     async function saveChanges() {
         if (!title.trim()) {
-            Alert.alert(t('reminderForm.missingTitleTitle'), t('reminderForm.missingTitleMessage'));
+            showAlertOnce(t('reminderForm.missingTitleTitle'), t('reminderForm.missingTitleMessage'));
             return;
         }
 
         if (frequency === 'custom' && selectedDays.length === 0) {
-            Alert.alert(t('reminderForm.selectDayTitle'), t('reminderForm.selectDayMessage'));
+            showAlertOnce(t('reminderForm.selectDayTitle'), t('reminderForm.selectDayMessage'));
             return;
         }
 
@@ -206,7 +227,7 @@ export default function EditReminderScreen() {
         setSaving(false);
 
         if (!result.ok) {
-            Alert.alert(t('reminderForm.saveErrorTitle'), t(REMINDER_ERROR_TRANSLATION_KEYS[result.kind]));
+            showAlertOnce(t('reminderForm.saveErrorTitle'), t(REMINDER_ERROR_TRANSLATION_KEYS[result.kind]));
             return;
         }
 
@@ -218,7 +239,7 @@ export default function EditReminderScreen() {
     }
 
     function confirmDeactivate() {
-        Alert.alert(
+        showAlertOnce(
             t('reminderForm.deactivateConfirmTitle'),
             t('reminderForm.deactivateConfirmMessage'),
             [
@@ -239,7 +260,7 @@ export default function EditReminderScreen() {
         setDeactivating(false);
 
         if (updateError) {
-            Alert.alert(t('reminderForm.genericErrorTitle'), updateError.message);
+            showAlertOnce(t('reminderForm.genericErrorTitle'), t(ERROR_CATEGORY_TRANSLATION_KEYS[classifyScreenError(updateError.message)]));
             return;
         }
 
@@ -275,7 +296,22 @@ export default function EditReminderScreen() {
                         </View>
                         <Text style={styles.errorTitle}>{t('reminderForm.cantLoadTitle')}</Text>
                         <Text style={styles.errorText}>{error}</Text>
-                        <TouchableOpacity style={styles.errorBack} onPress={() => router.back()}>
+                        {canRetryLoad && (
+                            <TouchableOpacity
+                                style={styles.errorBack}
+                                onPress={loadReminder}
+                                accessibilityRole="button"
+                                accessibilityLabel={t('stateViews.retry')}
+                            >
+                                <Text style={styles.errorBackText}>{t('stateViews.retry')}</Text>
+                            </TouchableOpacity>
+                        )}
+                        <TouchableOpacity
+                            style={styles.errorBack}
+                            onPress={() => router.back()}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('reminderForm.goBack')}
+                        >
                             <Text style={styles.errorBackText}>{t('reminderForm.goBack')}</Text>
                         </TouchableOpacity>
                     </View>

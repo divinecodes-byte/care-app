@@ -3,7 +3,6 @@ import { router } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
-    Alert,
     KeyboardAvoidingView,
     Platform,
     ScrollView,
@@ -24,6 +23,7 @@ import { isUseCase, recipientHasAcceptedConnection, resolveProfileRoute } from '
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 import { syncCurrentUserTimezone } from '@/lib/timezone';
+import { showAlertOnce } from '@/lib/alertGuard';
 
 export default function SigninScreen() {
     const C = useThemeColors();
@@ -52,7 +52,7 @@ export default function SigninScreen() {
 
     async function handleSignin() {
         if (!email || !password) {
-            Alert.alert(t('signin.missingInfoTitle'), t('signin.missingInfoMessage'));
+            showAlertOnce(t('signin.missingInfoTitle'), t('signin.missingInfoMessage'));
             return;
         }
 
@@ -69,7 +69,7 @@ export default function SigninScreen() {
             setLoading(false);
             console.warn('[signin] signInWithPassword failed:', error.message);
             const kind = classifyAuthError(error);
-            Alert.alert(t('signin.failedTitle'), t(AUTH_ERROR_TRANSLATION_KEYS[kind]));
+            showAlertOnce(t('signin.failedTitle'), t(AUTH_ERROR_TRANSLATION_KEYS[kind]));
             return;
         }
 
@@ -77,7 +77,7 @@ export default function SigninScreen() {
 
         if (!userId) {
             setLoading(false);
-            Alert.alert(t('signin.issueTitle'), t('signin.issueMessage'));
+            showAlertOnce(t('signin.issueTitle'), t('signin.issueMessage'));
             return;
         }
 
@@ -96,7 +96,7 @@ export default function SigninScreen() {
         if (profileError) {
             console.warn('[signin] profile fetch failed:', profileError.message);
             const kind = classifyAuthError(profileError);
-            Alert.alert(t('signin.profileErrorTitle'), t(AUTH_ERROR_TRANSLATION_KEYS[kind]));
+            showAlertOnce(t('signin.profileErrorTitle'), t(AUTH_ERROR_TRANSLATION_KEYS[kind]));
             return;
         }
 
@@ -109,7 +109,7 @@ export default function SigninScreen() {
             // the explicit sign-in action itself.
             await clearAccountScopedLocalState().catch(() => {});
             await supabase.auth.signOut().catch(() => {});
-            Alert.alert(t('signin.failedTitle'), t('authErrors.accountDeleted'));
+            showAlertOnce(t('signin.failedTitle'), t('authErrors.accountDeleted'));
             return;
         }
 

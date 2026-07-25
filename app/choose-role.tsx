@@ -4,7 +4,6 @@ import { router } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
-    Alert,
     Platform,
     StyleSheet,
     Text,
@@ -18,6 +17,7 @@ import { useTranslation } from '@/lib/i18n/context';
 import { getRoleLabelKeys, isUseCase, logOnboardingEvent, UseCase } from '@/lib/onboarding';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
+import { showAlertOnce } from '@/lib/alertGuard';
 
 type Role = 'caregiver' | 'recipient';
 
@@ -72,9 +72,9 @@ export default function ChooseRoleScreen() {
             // connection already exists — everything else (network, RLS,
             // unexpected) gets the generic retry copy.
             if (error.message?.includes('role_locked')) {
-                Alert.alert(t('chooseRole.roleLockedTitle'), t('chooseRole.roleLockedMessage'));
+                showAlertOnce(t('chooseRole.roleLockedTitle'), t('chooseRole.roleLockedMessage'));
             } else {
-                Alert.alert(t('chooseRole.savingErrorTitle'), t('chooseRole.savingErrorMessage'));
+                showAlertOnce(t('chooseRole.savingErrorTitle'), t('chooseRole.savingErrorMessage'));
             }
             return;
         }

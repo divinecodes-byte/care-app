@@ -4,7 +4,6 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
-    Alert,
     KeyboardAvoidingView,
     Platform,
     ScrollView,
@@ -20,10 +19,13 @@ import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
 import { useTranslation } from '@/lib/i18n/context';
 import { useThemeColors } from '@/lib/theme';
 import { buildTimeString, TimePickerField } from '@/components/TimePickerField';
+import { classifyScreenError } from '@/lib/asyncStateCore';
+import { ERROR_CATEGORY_TRANSLATION_KEYS } from '@/lib/errorClassification';
 import { DAY_OPTIONS, daysForFrequency, Frequency } from '@/lib/frequency';
 import { getExampleReminderTitleKey, isUseCase, logOnboardingEvent, UseCase } from '@/lib/onboarding';
 import { assertValidNoResponseMinutes, DEFAULT_NO_RESPONSE_MINUTES, NO_RESPONSE_OPTIONS } from '@/lib/reminderOptions';
 import { supabase } from '@/lib/supabase';
+import { showAlertOnce } from '@/lib/alertGuard';
 
 type ReminderType = 'medication' | 'hydration' | 'appointment' | 'meal' | 'exercise' | 'other';
 
@@ -186,19 +188,25 @@ export default function CreateReminderScreen() {
     }
 
     async function saveReminder() {
+        // A plain client-side insert (no idempotency key server-side) --
+        // without this, a rapid double-tap before the button's own
+        // `disabled={loading}` takes effect on the next render can create
+        // two duplicate reminder rows.
+        if (loading) return;
+
         const selected = participants.find((p) => p.connectionId === selectedConnectionId);
         if (!selected) {
-            Alert.alert(t('reminderForm.chooseParticipantTitle'), t('reminderForm.chooseParticipantMessage'));
+            showAlertOnce(t('reminderForm.chooseParticipantTitle'), t('reminderForm.chooseParticipantMessage'));
             return;
         }
 
         if (!title.trim()) {
-            Alert.alert(t('reminderForm.missingTitleTitle'), t('reminderForm.missingTitleMessage'));
+            showAlertOnce(t('reminderForm.missingTitleTitle'), t('reminderForm.missingTitleMessage'));
             return;
         }
 
         if (frequency === 'custom' && selectedDays.length === 0) {
-            Alert.alert(t('reminderForm.selectDayTitle'), t('reminderForm.selectDayMessage'));
+            showAlertOnce(t('reminderForm.selectDayTitle'), t('reminderForm.selectDayMessage'));
             return;
         }
 
@@ -214,7 +222,7 @@ export default function CreateReminderScreen() {
 
         if (userError || !user) {
             setLoading(false);
-            Alert.alert(t('reminderForm.notSignedInTitle'), t('reminderForm.notSignedInMessage'));
+            showAlertOnce(t('reminderForm.notSignedInTitle'), t('reminderForm.notSignedInMessage'));
             return;
         }
 
@@ -245,11 +253,11 @@ export default function CreateReminderScreen() {
             // typed result, so detect that specific case here for a
             // friendly message instead of surfacing the raw string.
             if (error?.message?.toLowerCase().includes('row-level security')) {
-                Alert.alert(t('reminderForm.connectionEndedTitle'), t('reminderForm.connectionEndedMessage'));
+                showAlertOnce(t('reminderForm.connectionEndedTitle'), t('reminderForm.connectionEndedMessage'));
                 router.replace('/participants');
                 return;
             }
-            Alert.alert(t('reminderForm.errorTitle'), error?.message ?? t('reminderForm.errorTitle'));
+            showAlertOnce(t('reminderForm.errorTitle'), t(ERROR_CATEGORY_TRANSLATION_KEYS[classifyScreenError(error?.message)]));
             return;
         }
 

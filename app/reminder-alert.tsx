@@ -4,7 +4,6 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
-    Alert,
     Animated,
     Platform,
     ScrollView,
@@ -30,6 +29,8 @@ import { REMINDER_ERROR_TRANSLATION_KEYS } from '@/lib/reminderErrors';
 import { respondToReminderOccurrence } from '@/lib/reminderLifecycle';
 import { getFirstEligibleDateString, isPastNoResponseWindow } from '@/lib/reminderStatus';
 import { supabase } from '@/lib/supabase';
+import { showAlertOnce } from '@/lib/alertGuard';
+import { useRequestGeneration } from '@/lib/useRequestGeneration';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -112,6 +113,9 @@ export default function ReminderAlertScreen() {
     // first time this recipient has ever responded to anything.
     const [justRecorded, setJustRecorded] = useState<{ status: 'taken' | 'snoozed' | 'skipped'; showAllSet: boolean } | null>(null);
     const [isOverdue, setIsOverdue]     = useState(false);
+    const { start: startLoad, isCurrent: isLoadCurrent } = useRequestGeneration();
+    const isMountedRef = useRef(true);
+    useEffect(() => () => { isMountedRef.current = false; }, []);
 
     const pulseScale   = useRef(new Animated.Value(1)).current;
     const pulseOpacity = useRef(new Animated.Value(0.35)).current;
@@ -138,6 +142,7 @@ export default function ReminderAlertScreen() {
     }, [reminderId]);
 
     async function loadReminder() {
+        const generation = startLoad();
         setLoading(true);
         setError(null);
         setInactive(false);
@@ -150,6 +155,8 @@ export default function ReminderAlertScreen() {
 
         const { data: { user }, error: userError } = await supabase.auth.getUser();
 
+        if (!isLoadCurrent(generation)) return;
+
         if (userError || !user) {
             setError(t('reminderAlert.mustBeSignedIn'));
             setLoading(false);
@@ -161,6 +168,8 @@ export default function ReminderAlertScreen() {
             .select('id, connection_id, caregiver_id, recipient_id, title, reminder_type, notes, time_of_day, frequency, no_response_minutes, is_active, created_at')
             .eq('id', reminderId)
             .maybeSingle();
+
+        if (!isLoadCurrent(generation)) return;
 
         if (reminderError) {
             setError(t('reminderAlert.couldNotLoad'));
@@ -223,6 +232,8 @@ export default function ReminderAlertScreen() {
             .eq('occurrence_date', todayDate)
             .maybeSingle();
 
+        if (!isLoadCurrent(generation)) return;
+
         const existingStatus = logData?.status as ReminderStatus | undefined;
 
         if (existingStatus && existingStatus !== 'pending') {
@@ -268,10 +279,11 @@ export default function ReminderAlertScreen() {
         // stored timezone. See lib/reminderLifecycle.ts.
         const result = await respondToReminderOccurrence(reminder.id, status);
 
+        if (!isMountedRef.current) return; // navigated away/backgrounded mid-submit; server already recorded the response
         setSaving(false);
 
         if (!result.ok) {
-            Alert.alert(t('reminderAlert.saveErrorTitle'), t(REMINDER_ERROR_TRANSLATION_KEYS[result.kind]));
+            showAlertOnce(t('reminderAlert.saveErrorTitle'), t(REMINDER_ERROR_TRANSLATION_KEYS[result.kind]));
             return;
         }
 

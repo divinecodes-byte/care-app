@@ -12,6 +12,7 @@ export type AuthErrorKind =
     | 'network'
     | 'expired_session'
     | 'account_deleted'
+    | 'rate_limited'
     | 'unexpected';
 
 const NETWORK_PATTERNS = [
@@ -23,6 +24,13 @@ const NETWORK_PATTERNS = [
     'timeout',
     'no internet',
     'offline',
+];
+
+const RATE_LIMIT_PATTERNS = [
+    'rate limit',
+    'too many requests',
+    'over_request_rate_limit',
+    'over_email_send_rate_limit',
 ];
 
 const CREDENTIAL_PATTERNS = [
@@ -82,6 +90,7 @@ export function classifyAuthError(error: unknown): AuthErrorKind {
     const message = messageOf(error);
     const status = statusOf(error);
 
+    if (RATE_LIMIT_PATTERNS.some((p) => message.includes(p)) || status === 429) return 'rate_limited';
     if (NETWORK_PATTERNS.some((p) => message.includes(p))) return 'network';
     if (EMAIL_IN_USE_PATTERNS.some((p) => message.includes(p))) return 'email_in_use';
     if (WEAK_PASSWORD_PATTERNS.some((p) => message.includes(p))) return 'weak_password';
@@ -93,6 +102,7 @@ export function classifyAuthError(error: unknown): AuthErrorKind {
 
 /** Stable i18n key for each classified error kind — pass to t(). */
 export const AUTH_ERROR_TRANSLATION_KEYS: Record<AuthErrorKind, string> = {
+    rate_limited: 'authErrors.rateLimited',
     invalid_credentials: 'authErrors.invalidCredentials',
     email_in_use: 'authErrors.emailInUse',
     weak_password: 'authErrors.weakPassword',

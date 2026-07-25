@@ -130,6 +130,7 @@ export const en = {
         network: "We couldn't connect. Check your connection and try again.",
         expiredSession: 'Your session expired. Please sign in again.',
         accountDeleted: 'This Tavora account is no longer active.',
+        rateLimited: 'Too many attempts. Please wait a few minutes and try again.',
         unexpected: 'Something went wrong. Please try again.',
     },
 
@@ -231,6 +232,10 @@ export const en = {
         notConnectedTitle: 'No connection yet',
         notConnectedText: "You'll need an invite code from your organizer to get connected.",
         notConnectedAction: 'Enter invite code',
+        connectionEndedTitle: 'Connection ended',
+        connectionEndedText: "Your connection with your organizer has ended. You'll need a new invite code to reconnect.",
+        noRemindersSetUpTitle: 'No reminders yet',
+        noRemindersSetUpText: "Your organizer hasn't set up any reminders yet. You'll see them here once they do.",
         noNotesFromOrganizer: 'No notes from your organizer.',
         todaysStatus: "Today's status",
         saving: 'Saving…',
@@ -349,6 +354,8 @@ export const en = {
         connectionLabel: 'Connection',
         checkingConnection: 'Checking connection…',
         noParticipantLinked: 'No participant linked',
+        participantNoLongerAvailableTitle: 'Participant no longer available',
+        participantNoLongerAvailableMessage: 'This participant is no longer available. Their connection ended while you were away from this screen.',
         sendInviteHint: 'Send an invite so they can receive reminders.',
         invite: 'Invite Participant',
         inviteShort: 'Invite',
@@ -401,6 +408,7 @@ export const en = {
         allParticipantsTaken: '{{n}} taken',
         allParticipantsMissed: '{{n}} missed',
         allParticipantsPending: '{{n}} pending',
+        analyticsUnavailable: "Today's reminders are shown below, but analytics and history couldn't load.",
     },
 
     reminderForm: {
@@ -551,6 +559,30 @@ export const en = {
         notFound: 'This connection no longer exists.',
         network: "We couldn't complete this. Check your connection and try again.",
         unexpected: 'Something went wrong. Please try again.',
+    },
+
+    // Centralized user-facing error categories (lib/asyncStateCore.ts's
+    // classifyScreenError) — every Alert/inline error in the app should
+    // resolve to one of these, never a raw Postgres/RLS/Edge Function
+    // message.
+    stateErrors: {
+        network: "We couldn't connect. Check your connection and try again.",
+        sessionExpired: 'Your session expired. Please sign in again.',
+        unauthorized: "You don't have access to this. Please try again.",
+        noLongerActive: 'This is no longer active.',
+        alreadyCompleted: 'This has already been completed.',
+        validation: 'Please check your entry and try again.',
+        rateLimited: 'Too many attempts. Please wait a few minutes and try again.',
+        unexpected: 'Something went wrong. Please try again.',
+    },
+
+    stateViews: {
+        retry: 'Retry',
+        dismiss: 'Dismiss',
+        offlineBannerText: "You're offline. Showing the latest saved information.",
+        loadingGeneric: 'Loading…',
+        refreshingGeneric: 'Refreshing…',
+        backToNormal: 'Back online. Showing the latest information.',
     },
 
     settings: {

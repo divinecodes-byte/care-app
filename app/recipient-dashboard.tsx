@@ -4,7 +4,6 @@ import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
-    Alert,
     AppState,
     AppStateStatus,
     Linking,
@@ -18,11 +17,15 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { OfflineBanner, SectionErrorState, announceStateChange } from '@/components/StateViews';
 import { SettingsSheet } from '@/components/settings-sheet';
 import { RADIUS, SHADOW, SPACING, ThemeColors } from '@/constants/theme';
 import { clearAccountScopedLocalState } from '@/lib/accountCleanup';
+import { ErrorCategory, classifyScreenError } from '@/lib/asyncStateCore';
+import { ERROR_CATEGORY_TRANSLATION_KEYS } from '@/lib/errorClassification';
 import { useLanguage, useStatusLabel } from '@/lib/i18n/context';
 import { useThemeColors } from '@/lib/theme';
+import { useRequestGeneration } from '@/lib/useRequestGeneration';
 import { supabase } from '@/lib/supabase';
 import {
     cancelReminderOccurrenceNotification,
@@ -35,6 +38,7 @@ import {
 } from '@/lib/notifications';
 import { syncCurrentUserTimezone } from '@/lib/timezone';
 import { isDueOnDate } from '@/lib/frequency';
+import { showAlertOnce } from '@/lib/alertGuard';
 import { REMINDER_ERROR_TRANSLATION_KEYS } from '@/lib/reminderErrors';
 import { respondToReminderOccurrence } from '@/lib/reminderLifecycle';
 import { getFirstEligibleDateString, isPastNoResponseWindow } from '@/lib/reminderStatus';
@@ -169,6 +173,14 @@ export default function RecipientDashboard() {
     const styles = useMemo(() => createStyles(C), [C]);
     const [reminders, setReminders]               = useState<Reminder[]>([]);
     const [loading, setLoading]                   = useState(true);
+    const [refreshing, setRefreshing]             = useState(false);
+    // Set only when a fetch fails — reminders/hasConnection are left
+    // exactly as they were (never cleared), so a background refresh
+    // failure never blanks out already-visible, still-valid data. Only
+    // rendered as a full-screen ErrorState when there is truly nothing to
+    // show yet (first load failed); otherwise shown as a compact
+    // SectionErrorState above the still-visible list.
+    const [loadError, setLoadError]               = useState<ErrorCategory | null>(null);
     const [savingReminderId, setSavingReminderId] = useState<string | null>(null);
     const [settingsVisible, setSettingsVisible]   = useState(false);
     const [notifDenied, setNotifDenied]           = useState(false);
@@ -177,16 +189,46 @@ export default function RecipientDashboard() {
     // both used to show the identical "All clear" copy, which stranded a
     // recipient who backed out of join-invite with no way back in.
     const [hasConnection, setHasConnection]       = useState<boolean | null>(null);
+    // True when this recipient has no *currently* accepted connection but
+    // has at least one past connection row with status 'ended' — distinct
+    // from "never connected," which otherwise shows an identical
+    // "no connection yet" screen with no acknowledgment that a connection
+    // existed and ended (organizer- or participant-initiated).
+    const [connectionEnded, setConnectionEnded]   = useState(false);
+    // True once the organizer has created at least one active reminder,
+    // regardless of whether any is due today — distinguishes "organizer
+    // hasn't set anything up yet" from "reminders exist, just none today,"
+    // which previously shared the identical "All clear" empty state.
+    const [hasAnyReminders, setHasAnyReminders]   = useState(false);
+    // Reset on every new load attempt (not just on dismiss) so a banner
+    // dismissed while still offline reappears on the very next failed
+    // request rather than staying permanently hidden for this session.
+    const [offlineDismissed, setOfflineDismissed] = useState(false);
     const appStateRef = useRef<AppStateStatus>(AppState.currentState);
     const pushRegistrationAttemptedRef = useRef(false);
+    const hasLoadedOnceRef = useRef(false);
+    const { start: startLoad, isCurrent: isLoadCurrent } = useRequestGeneration();
 
     async function loadReminders() {
-        setLoading(true);
+        const generation = startLoad();
+        // First load (no data on screen yet) shows the full loading card;
+        // every subsequent call (focus refetch, pull-to-refresh, AppState
+        // foreground) is a "refresh" — existing reminders stay visible the
+        // whole time, with only a discreet indicator.
+        if (hasLoadedOnceRef.current) setRefreshing(true); else setLoading(true);
+        // Captured before clearing, so a load that recovers from a prior
+        // error/offline banner can announce that fact to VoiceOver once the
+        // banner itself disappears (it has no live region of its own once
+        // it's gone — see components/StateViews.tsx's announceStateChange).
+        const wasRecoveringFromError = loadError !== null;
+        setLoadError(null);
+        setOfflineDismissed(false);
 
         const { data: { user }, error: userError } = await supabase.auth.getUser();
 
         if (userError || !user) {
             setLoading(false);
+            setRefreshing(false);
             router.replace('/signin');
             return;
         }
@@ -204,18 +246,22 @@ export default function RecipientDashboard() {
 
         if (statusRow?.account_status === 'deleted') {
             setLoading(false);
+            setRefreshing(false);
             await clearAccountScopedLocalState().catch(() => {});
             await supabase.auth.signOut().catch(() => {});
             router.replace('/signin');
             return;
         }
 
-        const { count: connectionCount } = await supabase
+        if (!isLoadCurrent(generation)) return; // a newer load has since started
+
+        const { data: connectionRows } = await supabase
             .from('connections')
-            .select('id', { count: 'exact', head: true })
-            .eq('recipient_id', user.id)
-            .eq('status', 'accepted');
-        setHasConnection((connectionCount ?? 0) > 0);
+            .select('status')
+            .eq('recipient_id', user.id);
+        const hasAccepted = (connectionRows ?? []).some((c) => c.status === 'accepted');
+        setHasConnection(hasAccepted);
+        setConnectionEnded(!hasAccepted && (connectionRows ?? []).some((c) => c.status === 'ended'));
 
         // Reconcile this device's timezone every load (not just once) — a
         // recipient who travels needs their stored profiles.timezone to
@@ -243,9 +289,17 @@ export default function RecipientDashboard() {
             .eq('is_active', true)
             .order('time_of_day', { ascending: true });
 
+        if (!isLoadCurrent(generation)) return;
+
         if (error) {
+            // Never a raw Postgres string, and never clears an already-
+            // visible reminder list — a failed background refresh leaves
+            // whatever was last showing intact, with a compact retryable
+            // notice instead of replacing the whole screen.
             setLoading(false);
-            Alert.alert(t('participantDashboard.reminderErrorTitle'), error.message);
+            setRefreshing(false);
+            hasLoadedOnceRef.current = true;
+            setLoadError(classifyScreenError(error.message));
             return;
         }
 
@@ -261,6 +315,7 @@ export default function RecipientDashboard() {
         }
 
         const todayDate = getTodayDateString();
+        setHasAnyReminders((data || []).length > 0);
 
         // Exclude reminders not yet eligible today — a reminder created today
         // after its scheduled time-of-day already passed shouldn't be treated
@@ -271,8 +326,12 @@ export default function RecipientDashboard() {
         );
 
         if (todaysReminders.length === 0) {
+            if (!isLoadCurrent(generation)) return;
             setReminders([]);
             setLoading(false);
+            setRefreshing(false);
+            hasLoadedOnceRef.current = true;
+            if (wasRecoveringFromError) announceStateChange(t('stateViews.backToNormal'));
             return;
         }
 
@@ -285,9 +344,13 @@ export default function RecipientDashboard() {
             .eq('occurrence_date', todayDate)
             .in('reminder_id', reminderIds);
 
+        if (!isLoadCurrent(generation)) return;
+
         if (logsError) {
             setLoading(false);
-            Alert.alert(t('participantDashboard.logsErrorTitle'), logsError.message);
+            setRefreshing(false);
+            hasLoadedOnceRef.current = true;
+            setLoadError(classifyScreenError(logsError.message));
             return;
         }
 
@@ -310,8 +373,13 @@ export default function RecipientDashboard() {
             return { ...reminder, today_status, snoozed_until: null };
         });
 
+        if (!isLoadCurrent(generation)) return;
+
         setReminders(remindersWithStatus);
         setLoading(false);
+        setRefreshing(false);
+        hasLoadedOnceRef.current = true;
+        if (wasRecoveringFromError) announceStateChange(t('stateViews.backToNormal'));
 
         // 'missed' above is a client-computed DISPLAY status only — this
         // dashboard no longer writes it to reminder_logs itself. The
@@ -351,6 +419,11 @@ export default function RecipientDashboard() {
     }, []);
 
     async function saveReminderAction(reminder: Reminder, status: 'taken' | 'skipped' | 'snoozed') {
+        // The action buttons are swapped out for a "saving" box while
+        // savingReminderId is set, but that swap only takes effect on the
+        // next render -- this synchronous guard is the real protection
+        // against a rapid double-tap of the same card queuing two RPCs.
+        if (savingReminderId === reminder.id) return;
         if (Platform.OS === 'ios') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         setSavingReminderId(reminder.id);
 
@@ -368,7 +441,7 @@ export default function RecipientDashboard() {
         setSavingReminderId(null);
 
         if (!result.ok) {
-            Alert.alert(t('participantDashboard.saveErrorTitle'), t(REMINDER_ERROR_TRANSLATION_KEYS[result.kind]));
+            showAlertOnce(t('participantDashboard.saveErrorTitle'), t(REMINDER_ERROR_TRANSLATION_KEYS[result.kind]));
             return;
         }
 
@@ -412,7 +485,7 @@ export default function RecipientDashboard() {
                 showsVerticalScrollIndicator={false}
                 refreshControl={
                     <RefreshControl
-                        refreshing={loading}
+                        refreshing={refreshing}
                         onRefresh={loadReminders}
                         tintColor={C.primary}
                         colors={[C.primary]}
@@ -483,7 +556,8 @@ export default function RecipientDashboard() {
                     </View>
                 )}
 
-                {/* Loading state */}
+                {/* Loading state — first load only; a background refresh
+                    never replaces the already-visible list with this. */}
                 {loading && (
                     <View style={[styles.emptyCard, SHADOW.xs]}>
                         <View style={styles.emptyIconWrap}>
@@ -494,8 +568,49 @@ export default function RecipientDashboard() {
                     </View>
                 )}
 
-                {/* Empty state — not connected to any organizer yet */}
-                {!loading && reminders.length === 0 && hasConnection === false && (
+                {/* Load error — a compact, retryable notice that never
+                    replaces or clears an already-visible reminder list
+                    (reminders/hasConnection are left untouched on failure). */}
+                {!loading && loadError === 'network' && !offlineDismissed && (
+                    <OfflineBanner onDismiss={() => setOfflineDismissed(true)} />
+                )}
+                {!loading && loadError && loadError !== 'network' && (
+                    <SectionErrorState
+                        text={t(ERROR_CATEGORY_TRANSLATION_KEYS[loadError])}
+                        onRetry={loadReminders}
+                        retrying={refreshing}
+                    />
+                )}
+
+                {/* Empty state — a connection existed and has since ended
+                    (by either party). Distinct from "never connected" so a
+                    recipient isn't left wondering what happened to their
+                    organizer with no acknowledgment anything changed. */}
+                {!loading && !loadError && reminders.length === 0 && hasConnection === false && connectionEnded && (
+                    <View style={[styles.emptyCard, SHADOW.xs]}>
+                        <View style={styles.emptyIconWrap}>
+                            <Ionicons name="link-outline" size={32} color={C.textMuted} />
+                        </View>
+                        <Text style={styles.emptyTitle}>{t('participantDashboard.connectionEndedTitle')}</Text>
+                        <Text style={styles.emptyText}>
+                            {t('participantDashboard.connectionEndedText')}
+                        </Text>
+                        <TouchableOpacity
+                            style={styles.emptyActionButton}
+                            onPress={() => router.push('/join-invite')}
+                            activeOpacity={0.88}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('participantDashboard.notConnectedAction')}
+                        >
+                            <Text style={styles.emptyActionButtonText}>{t('participantDashboard.notConnectedAction')}</Text>
+                        </TouchableOpacity>
+                    </View>
+                )}
+
+                {/* Empty state — not connected to any organizer yet.
+                    Suppressed while loadError is set so a failed fetch is
+                    never misread as "genuinely not connected." */}
+                {!loading && !loadError && reminders.length === 0 && hasConnection === false && !connectionEnded && (
                     <View style={[styles.emptyCard, SHADOW.xs]}>
                         <View style={styles.emptyIconWrap}>
                             <Ionicons name="link-outline" size={32} color={C.primary} />
@@ -516,8 +631,24 @@ export default function RecipientDashboard() {
                     </View>
                 )}
 
-                {/* Empty state — connected, nothing due right now */}
-                {!loading && reminders.length === 0 && hasConnection !== false && (
+                {/* Empty state — connected, organizer hasn't created any
+                    reminders at all yet (distinct from "nothing due today"
+                    below, which implies reminders exist but aren't
+                    scheduled for right now). */}
+                {!loading && !loadError && reminders.length === 0 && hasConnection !== false && !hasAnyReminders && (
+                    <View style={[styles.emptyCard, SHADOW.xs]}>
+                        <View style={styles.emptyIconWrap}>
+                            <Text style={styles.emptyEmoji}>🕊️</Text>
+                        </View>
+                        <Text style={styles.emptyTitle}>{t('participantDashboard.noRemindersSetUpTitle')}</Text>
+                        <Text style={styles.emptyText}>
+                            {t('participantDashboard.noRemindersSetUpText')}
+                        </Text>
+                    </View>
+                )}
+
+                {/* Empty state — connected, reminders exist, nothing due today */}
+                {!loading && !loadError && reminders.length === 0 && hasConnection !== false && hasAnyReminders && (
                     <View style={[styles.emptyCard, SHADOW.xs]}>
                         <View style={styles.emptyIconWrap}>
                             <Text style={styles.emptyEmoji}>🕊️</Text>
@@ -647,6 +778,7 @@ export default function RecipientDashboard() {
             <SettingsSheet
                 visible={settingsVisible}
                 onClose={() => setSettingsVisible(false)}
+                onConnectionEnded={loadReminders}
             />
         </SafeAreaView>
     );

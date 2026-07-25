@@ -132,6 +132,7 @@ export const es: typeof en = {
         network: 'No pudimos conectar. Verifica tu conexión e inténtalo de nuevo.',
         expiredSession: 'Tu sesión expiró. Inicia sesión de nuevo.',
         accountDeleted: 'Esta cuenta de Tavora ya no está activa.',
+        rateLimited: 'Demasiados intentos. Espera unos minutos e inténtalo de nuevo.',
         unexpected: 'Algo salió mal. Inténtalo de nuevo.',
     },
 
@@ -233,6 +234,10 @@ export const es: typeof en = {
         notConnectedTitle: 'Aún sin conexión',
         notConnectedText: 'Necesitas un código de invitación de tu organizador para conectarte.',
         notConnectedAction: 'Ingresar código de invitación',
+        connectionEndedTitle: 'Conexión finalizada',
+        connectionEndedText: 'Tu conexión con tu organizador ha finalizado. Necesitarás un nuevo código de invitación para reconectarte.',
+        noRemindersSetUpTitle: 'Aún no hay recordatorios',
+        noRemindersSetUpText: 'Tu organizador aún no ha configurado ningún recordatorio. Los verás aquí en cuanto lo haga.',
         noNotesFromOrganizer: 'Tu organizador no dejó notas.',
         todaysStatus: 'Estado de hoy',
         saving: 'Guardando…',
@@ -351,6 +356,8 @@ export const es: typeof en = {
         connectionLabel: 'Conexión',
         checkingConnection: 'Verificando conexión…',
         noParticipantLinked: 'Ningún participante vinculado',
+        participantNoLongerAvailableTitle: 'Participante ya no disponible',
+        participantNoLongerAvailableMessage: 'Este participante ya no está disponible. Su conexión finalizó mientras no estabas en esta pantalla.',
         sendInviteHint: 'Envía una invitación para que puedan recibir recordatorios.',
         invite: 'Invitar participante',
         inviteShort: 'Invitar',
@@ -403,6 +410,7 @@ export const es: typeof en = {
         allParticipantsTaken: '{{n}} completados',
         allParticipantsMissed: '{{n}} perdidos',
         allParticipantsPending: '{{n}} pendientes',
+        analyticsUnavailable: 'Los recordatorios de hoy se muestran abajo, pero las analíticas y el historial no se pudieron cargar.',
     },
 
     reminderForm: {
@@ -553,6 +561,26 @@ export const es: typeof en = {
         notFound: 'Esta conexión ya no existe.',
         network: 'No pudimos completar esto. Verifica tu conexión e inténtalo de nuevo.',
         unexpected: 'Algo salió mal. Inténtalo de nuevo.',
+    },
+
+    stateErrors: {
+        network: 'No pudimos conectar. Verifica tu conexión e inténtalo de nuevo.',
+        sessionExpired: 'Tu sesión expiró. Inicia sesión de nuevo.',
+        unauthorized: 'No tienes acceso a esto. Inténtalo de nuevo.',
+        noLongerActive: 'Esto ya no está activo.',
+        alreadyCompleted: 'Esto ya se completó.',
+        validation: 'Verifica tu información e inténtalo de nuevo.',
+        rateLimited: 'Demasiados intentos. Espera unos minutos e inténtalo de nuevo.',
+        unexpected: 'Algo salió mal. Inténtalo de nuevo.',
+    },
+
+    stateViews: {
+        retry: 'Reintentar',
+        dismiss: 'Descartar',
+        offlineBannerText: 'Estás sin conexión. Mostrando la última información guardada.',
+        loadingGeneric: 'Cargando…',
+        refreshingGeneric: 'Actualizando…',
+        backToNormal: 'De vuelta en línea. Mostrando la información más reciente.',
     },
 
     settings: {
