@@ -1,9 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
+    AppState,
     Platform,
     RefreshControl,
     ScrollView,
@@ -16,10 +17,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { SettingsSheet } from '@/components/settings-sheet';
 import { RADIUS, SHADOW, SPACING, ThemeColors } from '@/constants/theme';
+import { clearAccountScopedLocalState } from '@/lib/accountCleanup';
+import { categorizeConnection } from '@/lib/connectionStateCore';
 import { formatFrequency as formatFrequencyDays } from '@/lib/frequency';
 import { useStatusLabel, useTranslation } from '@/lib/i18n/context';
-import { MAX_FREE_PARTICIPANTS } from '@/lib/limits';
+import { MAX_STANDARD_PARTICIPANTS } from '@/lib/limits';
 import { registerPushToken } from '@/lib/notifications';
+import { getRoleLabelKeys, isUseCase, UseCase } from '@/lib/onboarding';
 import { getZonedComputedStatus, isoWeekdayOfDateString, isReminderEligibleOnZonedDate } from '@/lib/reminderStatus';
 import { getStoredSelectedConnectionId, setStoredSelectedConnectionId } from '@/lib/selected-participant';
 import { supabase } from '@/lib/supabase';
@@ -499,6 +503,15 @@ export default function CaregiverDashboard() {
     // All accepted participants for the horizontal selector — MVP shows one
     // participant's data at a time (the selected one), never mixed.
     const [participants, setParticipants]           = useState<ConnectionSummary[]>([]);
+    // Non-expired pending invitations that don't already have a dedicated
+    // "none accepted yet" screen to appear on (i.e. surfaced even once
+    // there's >=1 accepted participant) — see the fetch comment above.
+    const [pendingInviteCount, setPendingInviteCount] = useState(0);
+    // This organizer's own onboarding use_case — display-only, used to
+    // pick a short relationship label ("Loved One", "Athlete", ...) for
+    // the participant chips. null = unset/older account, falls back to
+    // the neutral "Participant" label via getRoleLabelKeys.
+    const [organizerUseCase, setOrganizerUseCase] = useState<UseCase | null>(null);
     const [todayData, setTodayData]                 = useState<DayData | null>(null);
     const [weeklyData, setWeeklyData]               = useState<DayData[]>([]);
     const [monthData, setMonthData]                 = useState<DayData[]>([]);
@@ -518,9 +531,18 @@ export default function CaregiverDashboard() {
     // closure below, which must not go stale across renders.
     const selectedConnectionIdRef = useRef<string>('');
 
+    // Incremented on every loadReminderData() call — a slow in-flight
+    // request (e.g. Participant A's fetch, still pending when the
+    // caregiver switches to Participant B) checks this before writing any
+    // state; if a newer call has since started, the stale one silently
+    // discards its result instead of overwriting B's screen with A's
+    // data. See PHASE 8 in docs/participant-management-model.md.
+    const loadGenerationRef = useRef(0);
+
     const { connectionId: routeConnectionId } = useLocalSearchParams<{ connectionId?: string }>();
 
     async function loadReminderData(connectionId: string, acceptedAt: string) {
+        const myGeneration = ++loadGenerationRef.current;
         setDashboardLoading(true);
         const caregiverId = caregiverIdRef.current;
         if (!caregiverId) { setDashboardLoading(false); return; }
@@ -548,6 +570,10 @@ export default function CaregiverDashboard() {
                 .maybeSingle();
             if (recipientProfile?.timezone) recipientTz = recipientProfile.timezone;
         }
+        // A newer switch has since started — abandon this stale in-flight
+        // load entirely rather than writing even the timezone for a
+        // participant that's no longer selected.
+        if (loadGenerationRef.current !== myGeneration) return;
         setRecipientTimeZone(recipientTz);
 
         const { data: remindersData, error: remindersError } = await supabase
@@ -558,6 +584,8 @@ export default function CaregiverDashboard() {
             .eq('caregiver_id', caregiverId)
             .eq('connection_id', connectionId)
             .order('time_of_day', { ascending: true });
+
+        if (loadGenerationRef.current !== myGeneration) return;
 
         if (remindersError) {
             console.error('[caregiver-dashboard] reminders fetch failed:', remindersError.message);
@@ -594,6 +622,12 @@ export default function CaregiverDashboard() {
             else logs = (logsData || []) as ReminderLog[];
         }
 
+        // Final check before committing this batch of analytics state —
+        // the most consequential point, since this is what would otherwise
+        // visibly flash Participant A's breakdown under Participant B's
+        // name if A's request happened to resolve last.
+        if (loadGenerationRef.current !== myGeneration) return;
+
         const todayDayData = buildDayData(today, reminders, logs, acceptedAt, recipientTz);
         const weekDayData  = weekDates.map((d) => buildDayData(d, reminders, logs, acceptedAt, recipientTz));
         const monthDayData = monthDates.map((d) => buildDayData(d, reminders, logs, acceptedAt, recipientTz));
@@ -611,7 +645,7 @@ export default function CaregiverDashboard() {
         if (p.id === selectedConnectionIdRef.current) return;
         selectedConnectionIdRef.current = p.id;
         setConnectionSummary(p);
-        setStoredSelectedConnectionId(p.id);
+        if (caregiverIdRef.current) setStoredSelectedConnectionId(caregiverIdRef.current, p.id);
         loadReminderData(p.id, p.acceptedAt ?? new Date().toISOString());
     }
 
@@ -631,16 +665,21 @@ export default function CaregiverDashboard() {
         // A tombstoned account must never reach connection/reminder data,
         // even if a technically-valid session slipped through (e.g. Auth
         // deletion partially failed upstream but the profile tombstone is
-        // already in place).
+        // already in place). use_case rides along on the same round trip
+        // (display-only — see docs/onboarding-model.md — used here just to
+        // pick a short relationship label like "Loved One" for the
+        // participant chips below).
         const { data: statusRow } = await supabase
             .from('profiles')
-            .select('account_status')
+            .select('account_status, use_case')
             .eq('id', user.id)
             .maybeSingle();
+        if (isUseCase(statusRow?.use_case)) setOrganizerUseCase(statusRow.use_case);
 
         if (statusRow?.account_status === 'deleted') {
             setConnectionLoading(false);
             setDashboardLoading(false);
+            await clearAccountScopedLocalState().catch(() => {});
             await supabase.auth.signOut().catch(() => {});
             router.replace('/signin');
             return;
@@ -661,7 +700,7 @@ export default function CaregiverDashboard() {
 
         const { data: connections, error: connectionError } = await supabase
             .from('connections')
-            .select('id, invite_code, status, recipient_id, created_at, accepted_at')
+            .select('id, invite_code, status, recipient_id, created_at, accepted_at, expires_at')
             .eq('caregiver_id', user.id)
             .order('created_at', { ascending: false })
             .limit(50);
@@ -676,9 +715,20 @@ export default function CaregiverDashboard() {
         const acceptedConnections = (connections ?? []).filter(
             (c) => c.status === 'accepted' && c.recipient_id
         );
+        // Non-expired pending invitations — counted the same way the
+        // server does (see lib/connectionStateCore.ts), so this indicator
+        // can never disagree with what create_invite_code() will actually
+        // allow. Surfaced even when there are already accepted
+        // participants — previously a caregiver with >=1 accepted
+        // connection had no way to see a separate outstanding pending
+        // invite anywhere on this screen.
+        const pendingConnections = (connections ?? []).filter(
+            (c) => categorizeConnection(c) === 'pending'
+        );
+        setPendingInviteCount(pendingConnections.length);
 
         if (acceptedConnections.length === 0) {
-            const pendingConnection = connections?.find((c) => c.status === 'pending');
+            const pendingConnection = pendingConnections[0];
             setParticipants([]);
             setConnectionSummary(
                 pendingConnection
@@ -728,7 +778,7 @@ export default function CaregiverDashboard() {
         let selected = byParam ?? byInMemory;
 
         if (!selected) {
-            const storedId = await getStoredSelectedConnectionId();
+            const storedId = await getStoredSelectedConnectionId(user.id);
             selected = nextParticipants.find((p) => p.id === storedId);
         }
 
@@ -737,12 +787,51 @@ export default function CaregiverDashboard() {
         selectedConnectionIdRef.current = selected.id;
         setConnectionSummary(selected);
         setConnectionLoading(false);
-        setStoredSelectedConnectionId(selected.id);
+        setStoredSelectedConnectionId(user.id, selected.id);
 
         await loadReminderData(selected.id, selected.acceptedAt ?? new Date().toISOString());
     }
 
     useFocusEffect(useCallback(() => { loadDashboardData(); }, [routeConnectionId]));
+
+    // Tracks screen focus AND app-foreground state for the poll below,
+    // without re-subscribing it on every change — see that effect's own
+    // comment. useFocusEffect's blur only fires on navigating away, never
+    // on the OS backgrounding the whole app, so AppState is tracked
+    // separately (otherwise the interval would keep firing network
+    // requests while backgrounded).
+    const isFocusedRef = useRef(true);
+    const isAppActiveRef = useRef(true);
+    useFocusEffect(useCallback(() => {
+        isFocusedRef.current = true;
+        return () => { isFocusedRef.current = false; };
+    }, []));
+    useEffect(() => {
+        const sub = AppState.addEventListener('change', (state) => {
+            isAppActiveRef.current = state === 'active';
+        });
+        return () => sub.remove();
+    }, []);
+
+    // Live-ish connection refresh (PHASE 11): no Supabase Realtime
+    // subscription exists anywhere in this codebase yet (confirmed by
+    // audit), so introducing one here — the first anywhere — would be a
+    // materially riskier change than a bounded, self-limiting poll. This
+    // interval only EXISTS while there is a genuine pending invitation to
+    // wait on (never continuous/unconditional background polling), only
+    // does work while this screen is focused AND the app is foregrounded,
+    // and stops itself the moment pendingInviteCount returns to 0 (e.g.
+    // the invite was accepted, or expired) since that recomputes and
+    // re-runs this effect with a fresh dependency. See
+    // docs/participant-management-model.md.
+    useEffect(() => {
+        if (pendingInviteCount === 0) return;
+        const interval = setInterval(() => {
+            if (isFocusedRef.current && isAppActiveRef.current) loadDashboardData();
+        }, 20000);
+        return () => clearInterval(interval);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [pendingInviteCount]);
 
     function handleCreateReminder() {
         if (Platform.OS === 'ios') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -839,15 +928,50 @@ export default function CaregiverDashboard() {
     function ParticipantSelector() {
         if (participants.length === 0) return null;
 
-        const atFreeLimit = participants.length >= MAX_FREE_PARTICIPANTS;
+        const slotsUsed = participants.length + pendingInviteCount;
+        const atStandardLimit = slotsUsed >= MAX_STANDARD_PARTICIPANTS;
+        const roleLabelKeys = getRoleLabelKeys(organizerUseCase);
+        const participantRoleLabel = t(roleLabelKeys.participantTitle);
 
         return (
-            <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                style={styles.participantSelector}
-                contentContainerStyle={styles.participantSelectorContent}
-            >
+            <View>
+                <View style={styles.participantSelectorHeader}>
+                    <Text style={styles.participantSelectorCount}>
+                        {t('inviteParticipant.participantsOfLimit', { count: participants.length, limit: MAX_STANDARD_PARTICIPANTS })}
+                    </Text>
+                    <TouchableOpacity
+                        onPress={() => router.push('/participants')}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('organizerDashboard.manageParticipants')}
+                    >
+                        <Text style={styles.participantSelectorManageLink}>{t('organizerDashboard.manageParticipants')}</Text>
+                    </TouchableOpacity>
+                </View>
+
+                {pendingInviteCount > 0 && (
+                    <TouchableOpacity
+                        style={styles.pendingInviteBanner}
+                        onPress={() => router.push('/participants')}
+                        activeOpacity={0.8}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('organizerDashboard.pendingInvitesBanner', { count: pendingInviteCount, plural: pendingInviteCount === 1 ? '' : 's' })}
+                    >
+                        <Ionicons name="time-outline" size={16} color={C.primary} />
+                        <Text style={styles.pendingInviteBannerText}>
+                            {t('organizerDashboard.pendingInvitesBanner', { count: pendingInviteCount, plural: pendingInviteCount === 1 ? '' : 's' })}
+                        </Text>
+                        <Ionicons name="chevron-forward" size={16} color={C.primary} />
+                    </TouchableOpacity>
+                )}
+
+                <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    style={styles.participantSelector}
+                    contentContainerStyle={styles.participantSelectorContent}
+                    accessibilityRole="tablist"
+                >
                 {participants.map((p) => {
                     const selected = p.id === connectionSummary.id;
                     return (
@@ -856,11 +980,20 @@ export default function CaregiverDashboard() {
                             style={[styles.participantChip, selected && styles.participantChipActive]}
                             onPress={() => selectParticipant(p)}
                             activeOpacity={0.8}
+                            accessibilityRole="tab"
+                            accessibilityState={{ selected }}
+                            accessibilityLabel={`${p.recipientName || t('common.participant')}, ${participantRoleLabel}`}
+                            accessibilityHint={selected ? undefined : t('organizerDashboard.switchToParticipantHint')}
                         >
                             <View style={[styles.participantAvatar, selected && styles.participantAvatarActive]}>
                                 <Text style={[styles.participantAvatarText, selected && styles.participantAvatarTextActive]}>
                                     {(p.recipientName || '?').charAt(0).toUpperCase()}
                                 </Text>
+                                {selected && (
+                                    <View style={styles.participantSelectedDot}>
+                                        <Ionicons name="checkmark" size={10} color={C.textInverse} />
+                                    </View>
+                                )}
                             </View>
                             <Text
                                 style={[styles.participantChipText, selected && styles.participantChipTextActive]}
@@ -876,15 +1009,19 @@ export default function CaregiverDashboard() {
                     style={styles.addParticipantChip}
                     onPress={() => router.push('/invite-recipient')}
                     activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('organizerDashboard.add')}
+                    accessibilityHint={atStandardLimit ? t('inviteParticipant.limitReachedTitle') : undefined}
                 >
                     <Ionicons
-                        name={atFreeLimit ? 'lock-closed-outline' : 'add'}
+                        name={atStandardLimit ? 'lock-closed-outline' : 'add'}
                         size={18}
                         color={C.primary}
                     />
                     <Text style={styles.addParticipantChipText}>{t('organizerDashboard.add')}</Text>
                 </TouchableOpacity>
-            </ScrollView>
+                </ScrollView>
+            </View>
         );
     }
 
@@ -1423,6 +1560,38 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
     connectionCardAccepted: { backgroundColor: C.successLight, borderColor: '#A7F3D0' },
 
     // ── Participant selector ──────────────────────────────────────────────────
+    participantSelectorHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 10,
+    },
+    participantSelectorCount: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: C.textMuted,
+    },
+    participantSelectorManageLink: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: C.primary,
+    },
+    pendingInviteBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        backgroundColor: C.primaryLight,
+        borderRadius: RADIUS.md,
+        paddingVertical: 10,
+        paddingHorizontal: 14,
+        marginBottom: 12,
+    },
+    pendingInviteBannerText: {
+        flex: 1,
+        fontSize: 13,
+        fontWeight: '600',
+        color: C.primary,
+    },
     participantSelector: {
         marginBottom: 16,
     },
@@ -1442,6 +1611,7 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
         borderWidth: 1.5,
         borderColor: C.border,
         maxWidth: 180,
+        minHeight: 44,
     },
     participantChipActive: {
         backgroundColor: C.primaryLight,
@@ -1454,6 +1624,20 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
         backgroundColor: C.bgAlt,
         alignItems: 'center',
         justifyContent: 'center',
+        position: 'relative',
+    },
+    participantSelectedDot: {
+        position: 'absolute',
+        bottom: -3,
+        right: -3,
+        width: 12,
+        height: 12,
+        borderRadius: RADIUS.full,
+        backgroundColor: C.success,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1.5,
+        borderColor: C.bgSurface,
     },
     participantAvatarActive: {
         backgroundColor: C.primary,

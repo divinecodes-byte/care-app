@@ -238,6 +238,17 @@ export default function CreateReminderScreen() {
         setLoading(false);
 
         if (error || !inserted) {
+            // RLS ("Caregivers can create reminders for accepted
+            // connections") is the real enforcement point for "this
+            // connection ended/was never accepted" — it fails closed with
+            // a generic Postgres row-level-security message rather than a
+            // typed result, so detect that specific case here for a
+            // friendly message instead of surfacing the raw string.
+            if (error?.message?.toLowerCase().includes('row-level security')) {
+                Alert.alert(t('reminderForm.connectionEndedTitle'), t('reminderForm.connectionEndedMessage'));
+                router.replace('/participants');
+                return;
+            }
             Alert.alert(t('reminderForm.errorTitle'), error?.message ?? t('reminderForm.errorTitle'));
             return;
         }

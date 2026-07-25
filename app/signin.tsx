@@ -16,6 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
+import { clearAccountScopedLocalState } from '@/lib/accountCleanup';
 import { AUTH_ERROR_TRANSLATION_KEYS, classifyAuthError } from '@/lib/authErrors';
 import { useAuthSession } from '@/lib/authSession';
 import { useTranslation } from '@/lib/i18n/context';
@@ -106,6 +107,7 @@ export default function SigninScreen() {
             // central auth controller will also independently catch and
             // sign this out; this is the immediate, synchronous check on
             // the explicit sign-in action itself.
+            await clearAccountScopedLocalState().catch(() => {});
             await supabase.auth.signOut().catch(() => {});
             Alert.alert(t('signin.failedTitle'), t('authErrors.accountDeleted'));
             return;

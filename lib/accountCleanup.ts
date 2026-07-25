@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { cancelAllTavoraNotifications, deactivateCurrentUserPushTokens } from '@/lib/notifications';
+import { clearStoredSelectedConnectionId } from '@/lib/selected-participant';
 import { supabase } from '@/lib/supabase';
 
 // ─── Central local cleanup for logout and account switching ─────────────────
@@ -20,18 +21,31 @@ import { supabase } from '@/lib/supabase';
 // gate.
 const ACCOUNT_SCOPED_KEYS = [
     'tavora.legacyLocalReminderNotificationsCleanedUp.v1', // notification migration flag
-    'tavora.selectedParticipantConnectionId',              // caregiver's selected-recipient cache
 ] as const;
 
 /**
  * Clears every account-scoped AsyncStorage key. Safe to call on its own
  * (e.g. defensively right after detecting an account-switch) or as part of
  * the full logout() sequence below.
+ *
+ * The selected-participant cache (lib/selected-participant.ts) is keyed by
+ * userId, not a fixed key, so it's cleared here by looking up whichever
+ * account is still signed in at the moment this runs (logout() calls this
+ * BEFORE signOut(), while that lookup is still possible) — a failed lookup
+ * (e.g. already signed out, or offline) is harmless: a stale per-user key
+ * left behind is never read by a different account regardless, since each
+ * account only ever reads its own key.
  */
 export async function clearAccountScopedLocalState(): Promise<void> {
     await AsyncStorage.multiRemove([...ACCOUNT_SCOPED_KEYS]).catch((err) =>
         console.warn('[accountCleanup] AsyncStorage clear failed:', err)
     );
+    try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) await clearStoredSelectedConnectionId(user.id);
+    } catch (err) {
+        console.warn('[accountCleanup] selected-participant clear failed:', err);
+    }
 }
 
 export type LogoutResult = { tokenCleanupOk: boolean };

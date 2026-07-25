@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    AppState,
     Platform,
     ScrollView,
     Share,
@@ -16,8 +17,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
+import { fetchOrganizerConnections } from '@/lib/connections';
 import { useTranslation } from '@/lib/i18n/context';
-import { MAX_FREE_PARTICIPANTS } from '@/lib/limits';
+import { MAX_STANDARD_PARTICIPANTS } from '@/lib/limits';
 import { logOnboardingEvent } from '@/lib/onboarding';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
@@ -34,8 +36,12 @@ export default function InviteRecipientScreen() {
     ];
     const [inviteCode, setInviteCode]       = useState('');
     const [loading, setLoading]             = useState(false);
-    // null while loading; once resolved, the Free-plan limit gate uses this.
-    const [acceptedCount, setAcceptedCount] = useState<number | null>(null);
+    // null while loading; once resolved, the participant-limit gate uses
+    // this. Matches the server's own count exactly (accepted + non-expired
+    // pending — see lib/connectionStateCore.ts / create_invite_code()),
+    // not just accepted, since an outstanding pending invite already
+    // occupies a slot even before it's accepted.
+    const [slotsUsed, setSlotsUsed] = useState<number | null>(null);
     // The pending connection row created by *this* screen visit. Regenerating
     // the code while still here updates this same row; it is intentionally
     // never restored from a previous visit — each "Add Participant" action
@@ -47,53 +53,64 @@ export default function InviteRecipientScreen() {
     // the name is unavailable for some reason).
     const [joinedName, setJoinedName] = useState<string | null>(null);
 
+    const checkDraftAcceptance = useCallback(async () => {
+        if (!draftConnectionId) return;
+        const { data: connectionRow } = await supabase
+            .from('connections')
+            .select('status, recipient_id')
+            .eq('id', draftConnectionId)
+            .maybeSingle();
+
+        if (connectionRow?.status !== 'accepted' || !connectionRow.recipient_id) return;
+
+        const { data: recipientProfile } = await supabase
+            .from('profiles')
+            .select('full_name')
+            .eq('id', connectionRow.recipient_id)
+            .maybeSingle();
+
+        setJoinedName(recipientProfile?.full_name ?? '');
+    }, [draftConnectionId]);
+
     // Re-checks the draft connection's status every time this screen
     // regains focus (e.g. the caregiver backgrounds Tavora while their
     // participant enters the code, then returns) — the success state with
     // the participant's name is shown only once the server confirms
     // acceptance, never guessed client-side.
-    useFocusEffect(
-        useCallback(() => {
-            if (!draftConnectionId) return;
-            (async () => {
-                const { data: connectionRow } = await supabase
-                    .from('connections')
-                    .select('status, recipient_id')
-                    .eq('id', draftConnectionId)
-                    .maybeSingle();
+    useFocusEffect(useCallback(() => { checkDraftAcceptance(); }, [checkDraftAcceptance]));
 
-                if (connectionRow?.status !== 'accepted' || !connectionRow.recipient_id) return;
+    // PHASE 11 live refresh: this is the screen a caregiver is most likely
+    // to be staring at right after sharing a code, so poll while waiting —
+    // bounded to exactly the window where it matters (a code exists and
+    // hasn't been accepted yet), never continuous/unconditional, and
+    // paused while the app is backgrounded (AppState, not just navigation
+    // focus — useFocusEffect alone doesn't fire on OS backgrounding).
+    useEffect(() => {
+        if (!draftConnectionId || joinedName !== null) return;
+        const interval = setInterval(() => {
+            if (AppState.currentState === 'active') checkDraftAcceptance();
+        }, 8000);
+        return () => clearInterval(interval);
+    }, [draftConnectionId, joinedName, checkDraftAcceptance]);
 
-                const { data: recipientProfile } = await supabase
-                    .from('profiles')
-                    .select('full_name')
-                    .eq('id', connectionRow.recipient_id)
-                    .maybeSingle();
-
-                setJoinedName(recipientProfile?.full_name ?? '');
-            })();
-        }, [draftConnectionId])
-    );
-
-    // Check how many accepted participants this organizer already has, to
-    // gate against the Free plan limit — creating another invite that later
-    // gets accepted would push them over it.
+    // Check how many participant slots this organizer already occupies, to
+    // gate against the standard-account limit — an outstanding pending
+    // invite already occupies a slot even before it's accepted, so this
+    // must match the server's own accepted+pending count exactly (a
+    // client that only counted accepted connections could show the
+    // generator right up until the server's authoritative check rejects
+    // it — see PHASE 4 in the task, and create_invite_code() itself).
     useEffect(() => {
         (async () => {
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) return;
 
-            const { count } = await supabase
-                .from('connections')
-                .select('id', { count: 'exact', head: true })
-                .eq('caregiver_id', user.id)
-                .eq('status', 'accepted')
-                .not('recipient_id', 'is', null);
-            setAcceptedCount(count ?? 0);
+            const { slotsUsed: used } = await fetchOrganizerConnections(user.id);
+            setSlotsUsed(used);
         })();
     }, []);
 
-    const atFreeLimit = acceptedCount !== null && acceptedCount >= MAX_FREE_PARTICIPANTS;
+    const atStandardLimit = slotsUsed !== null && slotsUsed >= MAX_STANDARD_PARTICIPANTS;
 
     async function createInviteCode() {
         if (Platform.OS === 'ios') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -120,6 +137,20 @@ export default function InviteRecipientScreen() {
         setLoading(false);
 
         if (error || !result) {
+            // Fails closed with a stable, classifiable message when the
+            // server's own authoritative count (re-checked here even
+            // though the client already gated on slotsUsed above, since a
+            // second device/tab or a stale in-memory count could still
+            // race past the client-side gate — the server is the real
+            // enforcement point).
+            if (error?.message?.includes('participant_limit_reached')) {
+                setSlotsUsed(MAX_STANDARD_PARTICIPANTS); // re-gate this screen immediately without a second round trip
+                Alert.alert(
+                    t('inviteParticipant.limitReachedTitle'),
+                    t('inviteParticipant.limitReachedMessage', { limit: MAX_STANDARD_PARTICIPANTS })
+                );
+                return;
+            }
             Alert.alert(
                 t('inviteParticipant.saveErrorTitle'),
                 t('inviteParticipant.saveErrorMessage')
@@ -147,7 +178,7 @@ export default function InviteRecipientScreen() {
 
     const hasCode = inviteCode.length > 0;
 
-    if (atFreeLimit) {
+    if (atStandardLimit) {
         return (
             <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
                 <ScrollView
@@ -170,7 +201,7 @@ export default function InviteRecipientScreen() {
                     </View>
                     <Text style={styles.heading}>{t('inviteParticipant.plusTitle')}</Text>
                     <Text style={styles.subheading}>
-                        {t('inviteParticipant.plusSubtitle', { limit: MAX_FREE_PARTICIPANTS })}
+                        {t('inviteParticipant.plusSubtitle', { limit: MAX_STANDARD_PARTICIPANTS })}
                     </Text>
 
                     <View style={[styles.upgradeCard, SHADOW.sm]}>

@@ -19,6 +19,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { RADIUS, ThemeColors } from '@/constants/theme';
 import { logout } from '@/lib/accountCleanup';
+import { CONNECTION_ERROR_TRANSLATION_KEYS } from '@/lib/connectionErrors';
+import { endConnection } from '@/lib/connections';
 import { useLanguage } from '@/lib/i18n/context';
 import { LanguageMode } from '@/lib/i18n/storage';
 import { registerPushToken } from '@/lib/notifications';
@@ -105,6 +107,11 @@ export function SettingsSheet({ visible, onClose }: Props) {
     const [useCase, setUseCase] = useState<UseCase | null>(null);
     const [savingUseCase, setSavingUseCase] = useState(false);
 
+    // Recipient-side only: every accepted organizer, so "End connection"
+    // can target a specific one when there's more than one.
+    const [organizerConnections, setOrganizerConnections] = useState<{ connectionId: string; name: string }[]>([]);
+    const [endingConnectionId, setEndingConnectionId] = useState<string | null>(null);
+
     useEffect(() => {
         if (visible) fetchProfile();
     }, [visible]);
@@ -181,25 +188,37 @@ export function SettingsSheet({ visible, onClose }: Props) {
             syncCurrentUserTimezone().catch(() => {});
             registerPushToken(user.id).catch(() => {});
 
-            const { data: conn } = await supabase
+            // A participant can have more than one accepted organizer
+            // (structurally supported — see docs/participant-management-model.md)
+            // — batch-fetch every one of them, never just the first
+            // arbitrary row, so a second/third organizer is never silently
+            // invisible here.
+            const { data: conns } = await supabase
                 .from('connections')
-                .select('caregiver_id')
+                .select('id, caregiver_id')
                 .eq('recipient_id', user.id)
-                .eq('status', 'accepted')
-                .limit(1)
-                .maybeSingle();
+                .eq('status', 'accepted');
 
-            if (conn?.caregiver_id) {
-                const { data: caregiverProfile } = await supabase
+            const rows = (conns ?? []).filter((c): c is { id: string; caregiver_id: string } => !!c.caregiver_id);
+            const caregiverIds = rows.map((c) => c.caregiver_id);
+
+            if (rows.length > 0) {
+                const { data: caregiverProfiles } = await supabase
                     .from('profiles')
-                    .select('full_name')
-                    .eq('id', conn.caregiver_id)
-                    .maybeSingle();
-                connectionStatus = t('settings.connectedToOne', {
-                    name: caregiverProfile?.full_name ?? t('settings.organizerRole'),
-                });
+                    .select('id, full_name')
+                    .in('id', caregiverIds);
+                const nameById = new Map((caregiverProfiles ?? []).map((p) => [p.id, p.full_name]));
+                setOrganizerConnections(
+                    rows.map((r) => ({ connectionId: r.id, name: nameById.get(r.caregiver_id) || t('settings.organizerRole') }))
+                );
+                const names = rows.map((r) => nameById.get(r.caregiver_id)).filter(Boolean);
+                connectionStatus =
+                    rows.length === 1
+                        ? t('settings.connectedToOne', { name: names[0] ?? t('settings.organizerRole') })
+                        : t('settings.connectedToManyOrganizers', { count: rows.length });
                 connectionOk     = true;
             } else {
+                setOrganizerConnections([]);
                 connectionStatus = t('settings.noOrganizerConnected');
             }
         }
@@ -307,6 +326,48 @@ export function SettingsSheet({ visible, onClose }: Props) {
             setUseCase(previous);
             Alert.alert(t('settings.useCaseSavingErrorTitle'), t('settings.useCaseSavingErrorMessage'));
         }
+    }
+
+    async function runEndConnection(connectionId: string) {
+        setEndingConnectionId(connectionId);
+        const result = await endConnection(connectionId);
+        setEndingConnectionId(null);
+
+        if (!result.ok) {
+            Alert.alert(t('participants.actionErrorTitle'), t(CONNECTION_ERROR_TRANSLATION_KEYS[result.kind]));
+            return;
+        }
+        await fetchProfile();
+    }
+
+    function confirmEndConnection(connectionId: string, name: string) {
+        Alert.alert(
+            t('participants.endConnectionConfirmTitle'),
+            t('participants.endConnectionConfirmMessage', { name }),
+            [
+                { text: t('common.cancel'), style: 'cancel' },
+                { text: t('participants.endConnectionConfirmAction'), style: 'destructive', onPress: () => runEndConnection(connectionId) },
+            ]
+        );
+    }
+
+    function handleEndConnectionPress() {
+        if (organizerConnections.length === 0) return;
+        if (organizerConnections.length === 1) {
+            confirmEndConnection(organizerConnections[0].connectionId, organizerConnections[0].name);
+            return;
+        }
+        Alert.alert(
+            t('settings.chooseOrganizerToEndTitle'),
+            undefined,
+            [
+                ...organizerConnections.map((o) => ({
+                    text: o.name,
+                    onPress: () => confirmEndConnection(o.connectionId, o.name),
+                })),
+                { text: t('common.cancel'), style: 'cancel' as const },
+            ]
+        );
     }
 
     async function handleSignOut() {
@@ -541,6 +602,26 @@ export function SettingsSheet({ visible, onClose }: Props) {
                                     value={profile.connectionStatus}
                                     valueStyle={profile.connectionOk ? styles.valConnected : undefined}
                                 />
+                                {profile.role === 'recipient' && organizerConnections.length > 0 && (
+                                    <>
+                                        <Sep />
+                                        <TouchableOpacity
+                                            style={styles.row}
+                                            onPress={handleEndConnectionPress}
+                                            disabled={endingConnectionId !== null}
+                                            activeOpacity={0.6}
+                                            accessibilityRole="button"
+                                            accessibilityLabel={t('participants.endConnectionAction')}
+                                            accessibilityState={{ disabled: endingConnectionId !== null, busy: endingConnectionId !== null }}
+                                        >
+                                            <Ionicons name="close-circle-outline" size={17} color={C.error} style={styles.rowIcon} />
+                                            <View style={styles.rowBody}>
+                                                <Text style={[styles.rowLabel, { color: C.error }]}>{t('participants.endConnectionAction')}</Text>
+                                            </View>
+                                            {endingConnectionId !== null && <ActivityIndicator size="small" color={C.textMuted} />}
+                                        </TouchableOpacity>
+                                    </>
+                                )}
                             </Card>
 
                             {/* ── How you use Tavora ─────────────────────────── */}

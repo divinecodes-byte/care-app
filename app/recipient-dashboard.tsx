@@ -20,6 +20,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { SettingsSheet } from '@/components/settings-sheet';
 import { RADIUS, SHADOW, SPACING, ThemeColors } from '@/constants/theme';
+import { clearAccountScopedLocalState } from '@/lib/accountCleanup';
 import { useLanguage, useStatusLabel } from '@/lib/i18n/context';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
@@ -203,6 +204,7 @@ export default function RecipientDashboard() {
 
         if (statusRow?.account_status === 'deleted') {
             setLoading(false);
+            await clearAccountScopedLocalState().catch(() => {});
             await supabase.auth.signOut().catch(() => {});
             router.replace('/signin');
             return;
