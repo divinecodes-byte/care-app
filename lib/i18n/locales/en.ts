@@ -8,6 +8,7 @@ export const en = {
         optional: 'optional',
         participant: 'Participant',
         organizer: 'Organizer',
+        close: 'Close',
     },
 
     selectLanguage: {
@@ -499,6 +500,7 @@ export const en = {
         step4: 'Their reminders and responses become linked to your dashboard.',
         done: 'Done — go to dashboard',
         shareMessage: 'Use this invite code to connect with me on Tavora: {{code}}',
+        shareSuccessAnnouncement: 'Invite shared',
         noCodeTitle: 'No invite code',
         noCodeMessage: 'Generate an invite code first.',
         notSignedInTitle: 'Not signed in',
@@ -635,6 +637,8 @@ export const en = {
         sectionAccount: 'Account',
         deleteAccountLabel: 'Delete Account',
         deleteAccountCaption: 'Permanently delete your account and data',
+        deleteAccountHint: 'Opens the account deletion screen. This action cannot be undone.',
+        endConnectionHint: 'Ends this connection permanently. You will need a new invite code to reconnect.',
     },
     deleteAccount: {
         title: 'Delete your account?',
@@ -650,5 +654,8 @@ export const en = {
         wrongPassword: 'That password is incorrect. Your account has not been deleted.',
         deletionFailed: 'Something went wrong and your account was not deleted. Please try again.',
         sessionExpired: 'Your session has expired. Please sign in again before deleting your account.',
+        confirmHint: 'This confirms you understand account deletion is permanent.',
+        finalButtonHint: 'This immediately and permanently deletes your account. This cannot be undone.',
+        deletingInProgress: 'Deleting your account',
     },
 };

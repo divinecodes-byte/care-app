@@ -3,6 +3,7 @@ import * as Haptics from 'expo-haptics';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+    AccessibilityInfo,
     ActivityIndicator,
     AppState,
     Platform,
@@ -195,9 +196,17 @@ export default function InviteRecipientScreen() {
             return;
         }
 
-        await Share.share({
+        const result = await Share.share({
             message: t('inviteParticipant.shareMessage', { code: inviteCode }),
         });
+        // The native share sheet gives sighted users its own visual
+        // confirmation; VoiceOver users get nothing unless we announce it
+        // ourselves — 'dismissedAction' (iOS-only) means the sheet was
+        // closed without picking a target, so that case is deliberately
+        // silent rather than falsely announcing a share that didn't happen.
+        if (result.action === Share.sharedAction) {
+            AccessibilityInfo.announceForAccessibility?.(t('inviteParticipant.shareSuccessAnnouncement'));
+        }
     }
 
     const hasCode = inviteCode.length > 0;
@@ -213,7 +222,7 @@ export default function InviteRecipientScreen() {
                     <TouchableOpacity
                         style={styles.backButton}
                         onPress={() => router.back()}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                     >
                         <Ionicons name="chevron-back" size={22} color={C.primary} />
                         <Text style={styles.backText}>{t('inviteParticipant.back')}</Text>
@@ -270,7 +279,7 @@ export default function InviteRecipientScreen() {
                 <TouchableOpacity
                     style={styles.backButton}
                     onPress={() => router.back()}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                     accessibilityRole="button"
                     accessibilityLabel={t('inviteParticipant.back')}
                 >

@@ -28,6 +28,8 @@ import { supabase } from '@/lib/supabase';
 import { syncCurrentUserTimezone } from '@/lib/timezone';
 import { AppearanceMode, useThemeColors, useThemeMode } from '@/lib/theme';
 import { showAlertOnce } from '@/lib/alertGuard';
+import { useReduceMotion } from '@/lib/useReduceMotion';
+import { AccessibleModalHeader } from '@/components/AccessiblePrimitives';
 import { useRequestGeneration } from '@/lib/useRequestGeneration';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -92,6 +94,7 @@ export function SettingsSheet({ visible, onClose, onConnectionEnded }: Props) {
     const styles = useMemo(() => createStyles(C), [C]);
     const { mode: appearanceMode, setMode: setAppearanceMode } = useThemeMode();
     const { languageMode, setLanguageMode, t } = useLanguage();
+    const reduceMotion = useReduceMotion();
 
     const [loading,    setLoading]    = useState(true);
     const [signingOut, setSigningOut] = useState(false);
@@ -453,6 +456,7 @@ export function SettingsSheet({ visible, onClose, onConnectionEnded }: Props) {
                     trackColor={{ false: C.border, true: C.primaryMid }}
                     thumbColor={value ? C.primary : C.bgSurface}
                     ios_backgroundColor={C.border}
+                    accessibilityLabel={label}
                 />
             </View>
         );
@@ -463,9 +467,17 @@ export function SettingsSheet({ visible, onClose, onConnectionEnded }: Props) {
         label,
         caption,
         onPress,
-    }: { icon: string; label: string; caption: string; onPress: () => void }) {
+        hint,
+    }: { icon: string; label: string; caption: string; onPress: () => void; hint?: string }) {
         return (
-            <TouchableOpacity style={styles.row} onPress={onPress} activeOpacity={0.6}>
+            <TouchableOpacity
+                style={styles.row}
+                onPress={onPress}
+                activeOpacity={0.6}
+                accessibilityRole="button"
+                accessibilityLabel={label}
+                accessibilityHint={hint ?? caption}
+            >
                 <Ionicons name={icon as any} size={17} color={C.textMuted} style={styles.rowIcon} />
                 <View style={styles.rowBody}>
                     <Text style={styles.rowLabel}>{label}</Text>
@@ -516,7 +528,7 @@ export function SettingsSheet({ visible, onClose, onConnectionEnded }: Props) {
     return (
         <Modal
             visible={visible}
-            animationType="slide"
+            animationType={reduceMotion ? 'none' : 'slide'}
             transparent
             onRequestClose={onClose}
         >
@@ -530,24 +542,26 @@ export function SettingsSheet({ visible, onClose, onConnectionEnded }: Props) {
              * steal the touch responder for scrolling.
              */}
             <View style={styles.backdrop}>
-                <Pressable style={styles.backdropTap} onPress={onClose} />
+                <Pressable
+                    style={styles.backdropTap}
+                    onPress={onClose}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('common.close')}
+                />
                 <View style={[styles.sheet, { height: SHEET_HEIGHT }]}>
-                    {/* Decorative handle */}
-                    <View style={styles.handleRow}>
+                    {/* Purely decorative — there is no drag-to-dismiss gesture
+                        in this component (dismissal is the backdrop tap, the
+                        header close button below, or the Android back
+                        button via onRequestClose), so this is never a
+                        functional control needing its own accessible
+                        affordance; hidden from AT so it can't appear as an
+                        inert/unlabeled focusable stop. */}
+                    <View style={styles.handleRow} importantForAccessibility="no-hide-descendants">
                         <View style={styles.handle} />
                     </View>
 
                     {/* Header */}
-                    <View style={styles.header}>
-                        <Text style={styles.title}>{t('settings.title')}</Text>
-                        <TouchableOpacity
-                            style={styles.closeBtn}
-                            onPress={onClose}
-                            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                        >
-                            <Ionicons name="close" size={18} color={C.textSecondary} />
-                        </TouchableOpacity>
-                    </View>
+                    <AccessibleModalHeader title={t('settings.title')} onClose={onClose} closeLabel={t('common.close')} />
 
                     {/* Content */}
                     {loading ? (
@@ -629,6 +643,7 @@ export function SettingsSheet({ visible, onClose, onConnectionEnded }: Props) {
                                             activeOpacity={0.6}
                                             accessibilityRole="button"
                                             accessibilityLabel={t('participants.endConnectionAction')}
+                                            accessibilityHint={t('settings.endConnectionHint')}
                                             accessibilityState={{ disabled: endingConnectionId !== null, busy: endingConnectionId !== null }}
                                         >
                                             <Ionicons name="close-circle-outline" size={17} color={C.error} style={styles.rowIcon} />
@@ -760,6 +775,9 @@ export function SettingsSheet({ visible, onClose, onConnectionEnded }: Props) {
                                                 style={[styles.appearanceChip, active && styles.appearanceChipActive]}
                                                 onPress={() => setAppearanceMode(option.value)}
                                                 activeOpacity={0.75}
+                                                accessibilityRole="radio"
+                                                accessibilityLabel={t(option.labelKey)}
+                                                accessibilityState={{ selected: active }}
                                             >
                                                 <Ionicons
                                                     name={option.icon as any}
@@ -769,6 +787,7 @@ export function SettingsSheet({ visible, onClose, onConnectionEnded }: Props) {
                                                 <Text style={[styles.appearanceChipText, active && styles.appearanceChipTextActive]}>
                                                     {t(option.labelKey)}
                                                 </Text>
+                                                {active ? <Ionicons name="checkmark" size={14} color={C.primary} /> : null}
                                             </TouchableOpacity>
                                         );
                                     })}
@@ -787,6 +806,9 @@ export function SettingsSheet({ visible, onClose, onConnectionEnded }: Props) {
                                                 style={[styles.appearanceChip, active && styles.appearanceChipActive]}
                                                 onPress={() => setLanguageMode(option.value)}
                                                 activeOpacity={0.75}
+                                                accessibilityRole="radio"
+                                                accessibilityLabel={t(option.labelKey)}
+                                                accessibilityState={{ selected: active }}
                                             >
                                                 <Ionicons
                                                     name={option.icon as any}
@@ -796,6 +818,7 @@ export function SettingsSheet({ visible, onClose, onConnectionEnded }: Props) {
                                                 <Text style={[styles.appearanceChipText, active && styles.appearanceChipTextActive]}>
                                                     {t(option.labelKey)}
                                                 </Text>
+                                                {active ? <Ionicons name="checkmark" size={14} color={C.primary} /> : null}
                                             </TouchableOpacity>
                                         );
                                     })}
@@ -827,6 +850,7 @@ export function SettingsSheet({ visible, onClose, onConnectionEnded }: Props) {
                                     icon="trash-outline"
                                     label={t('settings.deleteAccountLabel')}
                                     caption={t('settings.deleteAccountCaption')}
+                                    hint={t('settings.deleteAccountHint')}
                                     onPress={() => {
                                         onClose();
                                         router.push('/delete-account');
@@ -840,6 +864,9 @@ export function SettingsSheet({ visible, onClose, onConnectionEnded }: Props) {
                                 onPress={handleSignOut}
                                 disabled={signingOut}
                                 activeOpacity={0.8}
+                                accessibilityRole="button"
+                                accessibilityLabel={t('settings.signOut')}
+                                accessibilityState={{ disabled: signingOut, busy: signingOut }}
                             >
                                 {signingOut ? (
                                     <ActivityIndicator color={C.error} />
@@ -1010,6 +1037,7 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
         justifyContent:    'center',
         gap:               6,
         paddingVertical:   10,
+        minHeight:         44,
         borderRadius:      RADIUS.lg,
     },
     appearanceChipActive: {

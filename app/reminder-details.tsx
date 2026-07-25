@@ -386,19 +386,23 @@ export default function ReminderDetailsScreen() {
                 <TouchableOpacity
                     style={styles.backBtn}
                     onPress={() => router.back()}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('reminderDetails.dashboard')}
                 >
                     <Ionicons name="chevron-back" size={20} color={C.primary} />
                     <Text style={styles.backText}>{t('reminderDetails.dashboard')}</Text>
                 </TouchableOpacity>
-                <Text style={styles.navTitle}>{t('reminderDetails.navTitle')}</Text>
+                <Text style={styles.navTitle} accessibilityRole="header">{t('reminderDetails.navTitle')}</Text>
                 {reminderId && (!reminder || reminder.is_active) ? (
                     <TouchableOpacity
                         style={styles.editNavBtn}
                         onPress={() =>
                             router.push({ pathname: '/edit-reminder', params: { reminderId } })
                         }
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('reminderDetails.edit')}
                     >
                         <Ionicons name="pencil-outline" size={16} color={C.primary} />
                         <Text style={styles.editNavText}>{t('reminderDetails.edit')}</Text>

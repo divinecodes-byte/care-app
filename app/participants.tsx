@@ -195,7 +195,10 @@ export default function ParticipantsScreen() {
     }
 
     async function shareCode(code: string) {
-        await Share.share({ message: t('inviteParticipant.shareMessage', { code }) });
+        const result = await Share.share({ message: t('inviteParticipant.shareMessage', { code }) });
+        if (result.action === Share.sharedAction) {
+            announceStateChange(t('inviteParticipant.shareSuccessAnnouncement'));
+        }
     }
 
     async function replaceCode(connectionId: string) {
@@ -226,7 +229,7 @@ export default function ParticipantsScreen() {
                 <TouchableOpacity
                     style={styles.backButton}
                     onPress={() => router.back()}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                     accessibilityRole="button"
                     accessibilityLabel={t('participants.back')}
                 >

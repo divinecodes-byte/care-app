@@ -19,6 +19,7 @@ import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
 import { useTranslation } from '@/lib/i18n/context';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
+import { useFocusOnChange } from '@/lib/useAccessibilityFocus';
 
 // The app's own deep-link scheme (see app.json's "scheme": "tavora"),
 // caught by app/reset-password.tsx, which exchanges the recovery tokens/
@@ -35,6 +36,7 @@ export default function ForgotPasswordScreen() {
     const [email, setEmail] = useState('');
     const [loading, setLoading] = useState(false);
     const [sent, setSent] = useState(false);
+    const confirmHeadingRef = useFocusOnChange<Text>(sent);
 
     async function handleSubmit() {
         if (!email.trim()) return;
@@ -55,18 +57,29 @@ export default function ForgotPasswordScreen() {
         <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
             <KeyboardAvoidingView style={styles.kav} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
                 <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-                    <TouchableOpacity style={styles.backButton} onPress={() => router.back()} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <TouchableOpacity
+                        style={styles.backButton}
+                        onPress={() => router.back()}
+                        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('common.back')}
+                    >
                         <Ionicons name="chevron-back" size={22} color={C.primary} />
                         <Text style={styles.backText}>{t('common.back')}</Text>
                     </TouchableOpacity>
 
-                    <Text style={styles.heading}>{t('forgotPassword.heading')}</Text>
+                    <Text style={styles.heading} accessibilityRole="header">{t('forgotPassword.heading')}</Text>
 
                     {sent ? (
                         <View style={styles.confirmCard}>
-                            <Ionicons name="mail-outline" size={28} color={C.primary} style={{ marginBottom: 10 }} />
-                            <Text style={styles.confirmText}>{t('forgotPassword.sentMessage')}</Text>
-                            <TouchableOpacity style={styles.secondaryButton} onPress={() => router.replace('/signin')}>
+                            <Ionicons name="mail-outline" size={28} color={C.primary} style={{ marginBottom: 10 }} importantForAccessibility="no-hide-descendants" />
+                            <Text ref={confirmHeadingRef} style={styles.confirmText} accessibilityRole="header">{t('forgotPassword.sentMessage')}</Text>
+                            <TouchableOpacity
+                                style={styles.secondaryButton}
+                                onPress={() => router.replace('/signin')}
+                                accessibilityRole="button"
+                                accessibilityLabel={t('forgotPassword.backToSignin')}
+                            >
                                 <Text style={styles.secondaryButtonText}>{t('forgotPassword.backToSignin')}</Text>
                             </TouchableOpacity>
                         </View>
@@ -83,10 +96,13 @@ export default function ForgotPasswordScreen() {
                                     keyboardType="email-address"
                                     autoCapitalize="none"
                                     autoCorrect={false}
+                                    textContentType="username"
+                                    autoComplete="email"
                                     value={email}
                                     onChangeText={setEmail}
                                     returnKeyType="done"
                                     onSubmitEditing={handleSubmit}
+                                    accessibilityLabel={t('signin.emailLabel')}
                                 />
                             </View>
 
@@ -95,6 +111,9 @@ export default function ForgotPasswordScreen() {
                                 onPress={handleSubmit}
                                 disabled={loading || !email.trim()}
                                 activeOpacity={0.88}
+                                accessibilityRole="button"
+                                accessibilityLabel={t('forgotPassword.submit')}
+                                accessibilityState={{ disabled: loading || !email.trim(), busy: loading }}
                             >
                                 {loading ? <ActivityIndicator color={C.textInverse} /> : <Text style={styles.buttonText}>{t('forgotPassword.submit')}</Text>}
                             </TouchableOpacity>
@@ -139,6 +158,6 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
         borderColor: C.border,
     },
     confirmText: { fontSize: 15, color: C.textSecondary, textAlign: 'center', lineHeight: 22, marginBottom: 20 },
-    secondaryButton: { paddingVertical: 12, paddingHorizontal: 20 },
+    secondaryButton: { paddingVertical: 12, paddingHorizontal: 20, minHeight: 44, justifyContent: 'center', alignItems: 'center' },
     secondaryButtonText: { fontSize: 15, fontWeight: '700', color: C.primary },
 });

@@ -10,6 +10,7 @@ export const es: typeof en = {
         optional: 'opcional',
         participant: 'Participante',
         organizer: 'Organizador',
+        close: 'Cerrar',
     },
 
     selectLanguage: {
@@ -501,6 +502,7 @@ export const es: typeof en = {
         step4: 'Sus recordatorios y respuestas quedan vinculados a tu panel.',
         done: 'Listo — ir al panel',
         shareMessage: 'Usa este código de invitación para conectarte conmigo en Tavora: {{code}}',
+        shareSuccessAnnouncement: 'Invitación compartida',
         noCodeTitle: 'Sin código de invitación',
         noCodeMessage: 'Genera primero un código de invitación.',
         notSignedInTitle: 'No has iniciado sesión',
@@ -633,6 +635,8 @@ export const es: typeof en = {
         sectionAccount: 'Cuenta',
         deleteAccountLabel: 'Eliminar cuenta',
         deleteAccountCaption: 'Eliminar permanentemente tu cuenta y tus datos',
+        deleteAccountHint: 'Abre la pantalla de eliminación de cuenta. Esta acción no se puede deshacer.',
+        endConnectionHint: 'Finaliza esta conexión de forma permanente. Necesitarás un nuevo código de invitación para reconectarte.',
     },
     deleteAccount: {
         title: '¿Eliminar tu cuenta?',
@@ -648,5 +652,8 @@ export const es: typeof en = {
         wrongPassword: 'Esa contraseña es incorrecta. Tu cuenta no se ha eliminado.',
         deletionFailed: 'Algo salió mal y tu cuenta no se eliminó. Inténtalo de nuevo.',
         sessionExpired: 'Tu sesión ha expirado. Inicia sesión de nuevo antes de eliminar tu cuenta.',
+        confirmHint: 'Esto confirma que entiendes que la eliminación de la cuenta es permanente.',
+        finalButtonHint: 'Esto elimina tu cuenta de forma inmediata y permanente. No se puede deshacer.',
+        deletingInProgress: 'Eliminando tu cuenta',
     },
 };

@@ -506,6 +506,8 @@ export default function RecipientDashboard() {
                         style={styles.alertIconButton}
                         onPress={() => setSettingsVisible(true)}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('settings.title')}
                     >
                         <Ionicons name="settings-outline" size={22} color={C.primary} />
                     </TouchableOpacity>
@@ -666,6 +668,8 @@ export default function RecipientDashboard() {
                     const statusInfo = getStatusColors(reminder.today_status, C);
                     const typeIcon   = TYPE_ICONS[reminder.reminder_type] ?? '•';
 
+                    const cardLabel = `${TYPE_LABEL_KEYS[reminder.reminder_type] ? t(TYPE_LABEL_KEYS[reminder.reminder_type]) : reminder.reminder_type}, ${reminder.title}, ${formatTime(reminder.time_of_day)}, ${formatStatus(reminder.today_status ?? 'pending')}`;
+
                     return (
                         <TouchableOpacity
                             key={reminder.id}
@@ -676,6 +680,8 @@ export default function RecipientDashboard() {
                                 }
                             }}
                             activeOpacity={0.95}
+                            accessibilityRole="button"
+                            accessibilityLabel={cardLabel}
                         >
                             {/* Top accent bar — color-coded by status */}
                             <View style={[styles.cardAccentBar, { backgroundColor: statusInfo.accent }]} />
@@ -723,7 +729,13 @@ export default function RecipientDashboard() {
 
                             {/* Action buttons */}
                             {isSaving ? (
-                                <View style={[styles.savingBox, SHADOW.xs]}>
+                                <View
+                                    style={[styles.savingBox, SHADOW.xs]}
+                                    accessible
+                                    accessibilityRole="progressbar"
+                                    accessibilityLabel={t('participantDashboard.saving')}
+                                    accessibilityLiveRegion="polite"
+                                >
                                     <ActivityIndicator color={C.primary} />
                                     <Text style={styles.savingText}>{t('participantDashboard.saving')}</Text>
                                 </View>
@@ -744,6 +756,8 @@ export default function RecipientDashboard() {
                                         style={[styles.takenButton, SHADOW.sm]}
                                         onPress={() => saveReminderAction(reminder, 'taken')}
                                         activeOpacity={0.88}
+                                        accessibilityRole="button"
+                                        accessibilityLabel={t('participantDashboard.done')}
                                     >
                                         <Ionicons name="checkmark-circle" size={22} color="#FFFFFF" />
                                         <Text style={styles.takenButtonText}>{t('participantDashboard.done')}</Text>
@@ -755,6 +769,8 @@ export default function RecipientDashboard() {
                                             style={styles.laterButton}
                                             onPress={() => saveReminderAction(reminder, 'snoozed')}
                                             activeOpacity={0.8}
+                                            accessibilityRole="button"
+                                            accessibilityLabel={t('participantDashboard.later')}
                                         >
                                             <Ionicons name="time-outline" size={18} color="#92400E" />
                                             <Text style={styles.laterButtonText}>{t('participantDashboard.later')}</Text>
@@ -764,6 +780,8 @@ export default function RecipientDashboard() {
                                             style={styles.skipButton}
                                             onPress={() => saveReminderAction(reminder, 'skipped')}
                                             activeOpacity={0.7}
+                                            accessibilityRole="button"
+                                            accessibilityLabel={t('participantDashboard.skip')}
                                         >
                                             <Text style={styles.skipButtonText}>{t('participantDashboard.skip')}</Text>
                                         </TouchableOpacity>

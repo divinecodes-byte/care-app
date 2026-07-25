@@ -1,6 +1,6 @@
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     KeyboardAvoidingView,
@@ -31,6 +31,8 @@ export default function SignupScreen() {
     const [password, setPassword] = useState('');
     const [loading, setLoading]   = useState(false);
     const [focused, setFocused]   = useState<string | null>(null);
+    const emailRef = useRef<TextInput>(null);
+    const passwordRef = useRef<TextInput>(null);
 
     async function handleSignup() {
         if (!fullName || !email || !password) {
@@ -113,39 +115,54 @@ export default function SignupScreen() {
                                 onBlur={() => setFocused(null)}
                                 returnKeyType="next"
                                 autoCorrect={false}
+                                textContentType="name"
+                                autoComplete="name"
+                                onSubmitEditing={() => emailRef.current?.focus()}
+                                accessibilityLabel={t('signup.fullNameLabel')}
                             />
                         </View>
 
                         <View style={styles.formGroup}>
                             <Text style={styles.label}>{t('signup.emailLabel')}</Text>
                             <TextInput
+                                ref={emailRef}
                                 style={inputStyle('email')}
                                 placeholder={t('signup.emailPlaceholder')}
                                 placeholderTextColor={C.textMuted}
                                 keyboardType="email-address"
                                 autoCapitalize="none"
                                 autoCorrect={false}
+                                textContentType="username"
+                                autoComplete="email"
                                 value={email}
                                 onChangeText={setEmail}
                                 onFocus={() => setFocused('email')}
                                 onBlur={() => setFocused(null)}
                                 returnKeyType="next"
+                                onSubmitEditing={() => passwordRef.current?.focus()}
+                                accessibilityLabel={t('signup.emailLabel')}
                             />
                         </View>
 
                         <View style={styles.formGroup}>
                             <Text style={styles.label}>{t('signup.passwordLabel')}</Text>
                             <TextInput
+                                ref={passwordRef}
                                 style={inputStyle('password')}
                                 placeholder={t('signup.passwordPlaceholder')}
                                 placeholderTextColor={C.textMuted}
                                 secureTextEntry
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                textContentType="newPassword"
+                                autoComplete="new-password"
                                 value={password}
                                 onChangeText={setPassword}
                                 onFocus={() => setFocused('password')}
                                 onBlur={() => setFocused(null)}
                                 returnKeyType="done"
                                 onSubmitEditing={handleSignup}
+                                accessibilityLabel={t('signup.passwordLabel')}
                             />
                         </View>
                     </View>
@@ -159,6 +176,9 @@ export default function SignupScreen() {
                         onPress={handleSignup}
                         disabled={loading}
                         activeOpacity={0.88}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('signup.submit')}
+                        accessibilityState={{ disabled: loading, busy: loading }}
                     >
                         {loading ? (
                             <ActivityIndicator color={C.textInverse} />
@@ -170,6 +190,9 @@ export default function SignupScreen() {
                     <TouchableOpacity
                         style={styles.footerLink}
                         onPress={() => router.push('/signin')}
+                        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${t('signup.haveAccount')} ${t('signup.haveAccountAction')}`}
                     >
                         <Text style={styles.footerText}>
                             {t('signup.haveAccount')}{' '}

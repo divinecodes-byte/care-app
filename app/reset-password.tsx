@@ -21,6 +21,7 @@ import { AUTH_ERROR_TRANSLATION_KEYS, classifyAuthError } from '@/lib/authErrors
 import { useTranslation } from '@/lib/i18n/context';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
+import { useFocusOnChange } from '@/lib/useAccessibilityFocus';
 
 // This screen is reachable only two ways: the tavora://reset-password deep
 // link from a password-recovery email (the intended path), or direct
@@ -70,8 +71,15 @@ export default function ResetPasswordScreen() {
     const [stage, setStage] = useState<Stage>('resolving');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
+    const newPasswordRef = useRef<TextInput>(null);
+    const confirmPasswordRef = useRef<TextInput>(null);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
     const resolvedRef = useRef(false);
+    // Moves VoiceOver focus to this screen's own heading each time the
+    // stage changes (resolving -> form/invalid/success) — this screen
+    // fully swaps its rendered tree on every transition with nothing else
+    // to anchor focus to.
+    const headingRef = useFocusOnChange<Text>(stage);
 
     useEffect(() => {
         async function handleUrl(url: string | null) {
@@ -158,9 +166,14 @@ export default function ResetPasswordScreen() {
         return (
             <SafeAreaView style={styles.container}>
                 <View style={styles.centered}>
-                    <Ionicons name="alert-circle-outline" size={32} color={C.error} style={{ marginBottom: 14 }} />
-                    <Text style={styles.invalidText}>{t('resetPassword.invalidLink')}</Text>
-                    <TouchableOpacity style={styles.secondaryButton} onPress={() => router.replace('/forgot-password')}>
+                    <Ionicons name="alert-circle-outline" size={32} color={C.error} style={{ marginBottom: 14 }} importantForAccessibility="no-hide-descendants" />
+                    <Text ref={headingRef} style={styles.invalidText} accessibilityRole="header">{t('resetPassword.invalidLink')}</Text>
+                    <TouchableOpacity
+                        style={styles.secondaryButton}
+                        onPress={() => router.replace('/forgot-password')}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('resetPassword.requestNewLink')}
+                    >
                         <Text style={styles.secondaryButtonText}>{t('resetPassword.requestNewLink')}</Text>
                     </TouchableOpacity>
                 </View>
@@ -172,9 +185,14 @@ export default function ResetPasswordScreen() {
         return (
             <SafeAreaView style={styles.container}>
                 <View style={styles.centered}>
-                    <Ionicons name="checkmark-circle-outline" size={36} color={C.success} style={{ marginBottom: 14 }} />
-                    <Text style={styles.invalidText}>{t('resetPassword.successMessage')}</Text>
-                    <TouchableOpacity style={styles.secondaryButton} onPress={() => router.replace('/signin')}>
+                    <Ionicons name="checkmark-circle-outline" size={36} color={C.success} style={{ marginBottom: 14 }} importantForAccessibility="no-hide-descendants" />
+                    <Text ref={headingRef} style={styles.invalidText} accessibilityRole="header">{t('resetPassword.successMessage')}</Text>
+                    <TouchableOpacity
+                        style={styles.secondaryButton}
+                        onPress={() => router.replace('/signin')}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('forgotPassword.backToSignin')}
+                    >
                         <Text style={styles.secondaryButtonText}>{t('forgotPassword.backToSignin')}</Text>
                     </TouchableOpacity>
                 </View>
@@ -186,12 +204,13 @@ export default function ResetPasswordScreen() {
         <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
             <KeyboardAvoidingView style={styles.kav} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
                 <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-                    <Text style={styles.heading}>{t('resetPassword.heading')}</Text>
+                    <Text ref={headingRef} style={styles.heading} accessibilityRole="header">{t('resetPassword.heading')}</Text>
                     <Text style={styles.subheading}>{t('resetPassword.subheading')}</Text>
 
                     <View style={styles.formGroup}>
                         <Text style={styles.label}>{t('resetPassword.newPasswordLabel')}</Text>
                         <TextInput
+                            ref={newPasswordRef}
                             style={styles.input}
                             secureTextEntry
                             value={password}
@@ -200,12 +219,18 @@ export default function ResetPasswordScreen() {
                             placeholderTextColor={C.textMuted}
                             autoCapitalize="none"
                             autoCorrect={false}
+                            textContentType="newPassword"
+                            autoComplete="new-password"
+                            returnKeyType="next"
+                            onSubmitEditing={() => confirmPasswordRef.current?.focus()}
+                            accessibilityLabel={t('resetPassword.newPasswordLabel')}
                         />
                     </View>
 
                     <View style={styles.formGroup}>
                         <Text style={styles.label}>{t('resetPassword.confirmPasswordLabel')}</Text>
                         <TextInput
+                            ref={confirmPasswordRef}
                             style={styles.input}
                             secureTextEntry
                             value={confirmPassword}
@@ -214,18 +239,28 @@ export default function ResetPasswordScreen() {
                             placeholderTextColor={C.textMuted}
                             autoCapitalize="none"
                             autoCorrect={false}
+                            textContentType="newPassword"
+                            autoComplete="new-password"
                             onSubmitEditing={handleSubmit}
                             returnKeyType="done"
+                            accessibilityLabel={t('resetPassword.confirmPasswordLabel')}
                         />
                     </View>
 
-                    {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+                    {errorMessage ? (
+                        <Text style={styles.errorText} accessibilityRole="alert" accessibilityLiveRegion="assertive">
+                            {errorMessage}
+                        </Text>
+                    ) : null}
 
                     <TouchableOpacity
                         style={[styles.button, SHADOW.primary, (!passwordsValid || stage === 'submitting') && styles.buttonDisabled]}
                         onPress={handleSubmit}
                         disabled={!passwordsValid || stage === 'submitting'}
                         activeOpacity={0.88}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('resetPassword.submit')}
+                        accessibilityState={{ disabled: !passwordsValid || stage === 'submitting', busy: stage === 'submitting' }}
                     >
                         {stage === 'submitting' ? (
                             <ActivityIndicator color={C.textInverse} />
@@ -264,6 +299,6 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
     buttonText: { color: C.textInverse, fontSize: 17, fontWeight: '700' },
     errorText: { fontSize: 13, color: C.error, fontWeight: '600', marginBottom: 12 },
     invalidText: { fontSize: 16, color: C.textSecondary, textAlign: 'center', lineHeight: 23, marginBottom: 20 },
-    secondaryButton: { paddingVertical: 12, paddingHorizontal: 20 },
+    secondaryButton: { paddingVertical: 12, paddingHorizontal: 20, minHeight: 44, justifyContent: 'center', alignItems: 'center' },
     secondaryButtonText: { fontSize: 15, fontWeight: '700', color: C.primary },
 });

@@ -326,13 +326,15 @@ export default function EditReminderScreen() {
                             style={styles.backButton}
                             onPress={() => router.back()}
                             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('reminderForm.back')}
                         >
                             <Ionicons name="chevron-back" size={22} color={C.primary} />
                             <Text style={styles.backText}>{t('reminderForm.back')}</Text>
                         </TouchableOpacity>
 
                         {/* Header */}
-                        <Text style={styles.heading}>{t('reminderForm.editHeading')}</Text>
+                        <Text style={styles.heading} accessibilityRole="header">{t('reminderForm.editHeading')}</Text>
                         <Text style={styles.subheading}>
                             {t('reminderForm.editSubheading')}
                         </Text>
@@ -370,6 +372,7 @@ export default function EditReminderScreen() {
                                 onFocus={() => setFocused('title')}
                                 onBlur={() => setFocused(null)}
                                 returnKeyType="next"
+                                accessibilityLabel={t('reminderForm.nameLabel')}
                             />
 
                             <Text style={[styles.label, { marginTop: 18 }]}>{t('reminderForm.typeLabel')}</Text>
@@ -383,6 +386,9 @@ export default function EditReminderScreen() {
                                         ]}
                                         onPress={() => setReminderType(type)}
                                         activeOpacity={0.75}
+                                        accessibilityRole="radio"
+                                        accessibilityLabel={t(TYPE_LABEL_KEYS[type])}
+                                        accessibilityState={{ selected: reminderType === type }}
                                     >
                                         <Ionicons
                                             name={TYPE_ICON_NAMES[type] as any}
@@ -426,6 +432,9 @@ export default function EditReminderScreen() {
                                         ]}
                                         onPress={() => setFrequency(item)}
                                         activeOpacity={0.75}
+                                        accessibilityRole="radio"
+                                        accessibilityLabel={t(FREQUENCY_LABEL_KEYS[item])}
+                                        accessibilityState={{ selected: frequency === item }}
                                     >
                                         <Text
                                             style={[
@@ -450,6 +459,9 @@ export default function EditReminderScreen() {
                                             ]}
                                             onPress={() => toggleDay(day.iso)}
                                             activeOpacity={0.75}
+                                            accessibilityRole="checkbox"
+                                            accessibilityLabel={day.short}
+                                            accessibilityState={{ checked: selectedDays.includes(day.iso) }}
                                         >
                                             <Text
                                                 style={[
@@ -488,6 +500,9 @@ export default function EditReminderScreen() {
                                                     ]}
                                                     onPress={() => setNoResponseMinutes(opt)}
                                                     activeOpacity={0.75}
+                                                    accessibilityRole="radio"
+                                                    accessibilityLabel={formatResponseMinutes(opt)}
+                                                    accessibilityState={{ selected: noResponseMinutes === opt }}
                                                 >
                                                     <Text
                                                         style={[
@@ -520,6 +535,7 @@ export default function EditReminderScreen() {
                                 onBlur={() => setFocused(null)}
                                 multiline
                                 textAlignVertical="top"
+                                accessibilityLabel={`${t('reminderForm.notesLabel')} (${t('reminderForm.notesOptional')})`}
                             />
                         </View>
 
@@ -533,6 +549,9 @@ export default function EditReminderScreen() {
                             onPress={saveChanges}
                             disabled={saving || deactivating}
                             activeOpacity={0.88}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('reminderForm.saveChanges')}
+                            accessibilityState={{ disabled: saving || deactivating, busy: saving }}
                         >
                             {saving ? (
                                 <ActivityIndicator color={C.textInverse} />
@@ -558,6 +577,10 @@ export default function EditReminderScreen() {
                                 onPress={confirmDeactivate}
                                 disabled={saving || deactivating}
                                 activeOpacity={0.75}
+                                accessibilityRole="button"
+                                accessibilityLabel={t('reminderForm.deactivateReminder')}
+                                accessibilityHint={t('reminderForm.deactivateHint')}
+                                accessibilityState={{ disabled: saving || deactivating, busy: deactivating }}
                             >
                                 {deactivating ? (
                                     <ActivityIndicator color={C.error} size="small" />

@@ -76,7 +76,7 @@ export default function RootLayout() {
 
 function RootLayoutNav() {
     const { resolvedScheme } = useThemeMode();
-    const { status } = useAuthSession();
+    const { status, passwordRecovery } = useAuthSession();
     const pathname = usePathname();
 
     // Dedup guard — the cold-launch path and the live listener can both fire for
@@ -96,6 +96,22 @@ function RootLayoutNav() {
     const lastNavAtRef = useRef(0);
     const NOTIF_NAV_DEBOUNCE_MS = 1000;
 
+    // addNotificationResponseReceivedListener below is registered exactly
+    // once (empty-deps mount effect) so it keeps working across the
+    // listener's whole lifetime without being torn down and re-subscribed
+    // on every render — but that means the closure it captures is frozen
+    // at whatever `status`/`passwordRecovery` were AT MOUNT time
+    // ('initializing'/false) if read directly. These refs are kept in
+    // sync via effects below so processNotification always reads the
+    // live, current value regardless of when the listener itself was
+    // registered — without them, a notification tapped any time after the
+    // very first render would see a permanently-stale 'initializing'
+    // status.
+    const statusRef = useRef(status);
+    useEffect(() => { statusRef.current = status; }, [status]);
+    const passwordRecoveryRef = useRef(passwordRecovery);
+    useEffect(() => { passwordRecoveryRef.current = passwordRecovery; }, [passwordRecovery]);
+
     function processNotification(response: Notifications.NotificationResponse) {
         const notifId = response.notification.request.identifier;
         if (handledNotifRef.current === notifId) return;
@@ -112,9 +128,19 @@ function RootLayoutNav() {
         // pointed at is never itself trusted as authorization either way —
         // every destination screen re-fetches its own data under RLS,
         // scoped to whichever account ends up signed in.
-        if (status === 'unauthenticated' || status === 'account_deleted' || status === 'profile_missing') {
+        const currentStatus = statusRef.current;
+        if (currentStatus === 'unauthenticated' || currentStatus === 'account_deleted' || currentStatus === 'profile_missing') {
             return;
         }
+
+        // A password-recovery session is scoped to exactly one action
+        // (setting a new password) — it must never be used to open a
+        // reminder or dashboard screen, even via a legitimately-queued
+        // notification tap. Dropped rather than deferred: once reset
+        // completes the session ends (see reset-password.tsx's signOut),
+        // so there is no later moment where replaying this would make
+        // sense either.
+        if (passwordRecoveryRef.current) return;
 
         const data = (response.notification.request.content.data ?? {}) as Record<string, unknown>;
         const reminderId = data.reminderId as string | undefined;
@@ -134,7 +160,7 @@ function RootLayoutNav() {
     }
 
     function routeNotification(response: Notifications.NotificationResponse) {
-        if (status === 'initializing') {
+        if (statusRef.current === 'initializing') {
             pendingNotificationRef.current = response;
             return;
         }
@@ -159,7 +185,6 @@ function RootLayoutNav() {
         if (!pending) return;
         pendingNotificationRef.current = null;
         processNotification(pending);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [status]);
 
     // Global protected-route enforcement. Deliberately narrow: only ever
@@ -170,6 +195,22 @@ function RootLayoutNav() {
     // user land" decision-maker).
     useEffect(() => {
         if (status === 'initializing') return;
+
+        // A password-recovery session exists for exactly one purpose —
+        // setting a new password — and must never be used to browse any
+        // other screen, including a dashboard the session would otherwise
+        // be perfectly "authenticated" for. Checked before the public-
+        // routes early return below: /signin and /reset-password are both
+        // public, but only /reset-password is acceptable while this
+        // specific session is a recovery session. This also closes the
+        // gap where a recovery session lands while some other screen is
+        // already open (e.g. the app was already running) rather than via
+        // a fresh cold-launch deep link straight into /reset-password.
+        if (passwordRecovery && pathname !== '/reset-password') {
+            router.replace('/reset-password');
+            return;
+        }
+
         if (PUBLIC_ROUTES.has(pathname)) return;
 
         if (status === 'profile_missing') {
@@ -180,7 +221,7 @@ function RootLayoutNav() {
         if (status === 'unauthenticated' || status === 'account_deleted') {
             router.replace('/signin');
         }
-    }, [status, pathname]);
+    }, [status, pathname, passwordRecovery]);
 
     return (
         <>

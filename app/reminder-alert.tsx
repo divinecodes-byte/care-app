@@ -31,6 +31,9 @@ import { getFirstEligibleDateString, isPastNoResponseWindow } from '@/lib/remind
 import { supabase } from '@/lib/supabase';
 import { showAlertOnce } from '@/lib/alertGuard';
 import { useRequestGeneration } from '@/lib/useRequestGeneration';
+import { useReduceMotion } from '@/lib/useReduceMotion';
+import { useFocusOnChange } from '@/lib/useAccessibilityFocus';
+import { AccessibleIconButton } from '@/components/AccessiblePrimitives';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -114,13 +117,25 @@ export default function ReminderAlertScreen() {
     const [justRecorded, setJustRecorded] = useState<{ status: 'taken' | 'snoozed' | 'skipped'; showAllSet: boolean } | null>(null);
     const [isOverdue, setIsOverdue]     = useState(false);
     const { start: startLoad, isCurrent: isLoadCurrent } = useRequestGeneration();
+    const recordedHeadingRef = useFocusOnChange<Text>(justRecorded);
     const isMountedRef = useRef(true);
     useEffect(() => () => { isMountedRef.current = false; }, []);
 
     const pulseScale   = useRef(new Animated.Value(1)).current;
     const pulseOpacity = useRef(new Animated.Value(0.35)).current;
+    const reduceMotion = useReduceMotion();
 
     useEffect(() => {
+        // Purely decorative (a glow ring behind the reminder icon) — an
+        // infinite Animated.loop is exactly the "rapid pulsing" pattern
+        // Reduce Motion exists to suppress. A static ring (fixed at its
+        // mid-cycle scale/opacity) preserves the same visual composition
+        // without the movement.
+        if (reduceMotion) {
+            pulseScale.setValue(1);
+            pulseOpacity.setValue(0.2);
+            return;
+        }
         const animation = Animated.loop(
             Animated.parallel([
                 Animated.sequence([
@@ -135,7 +150,7 @@ export default function ReminderAlertScreen() {
         );
         animation.start();
         return () => animation.stop();
-    }, []);
+    }, [reduceMotion]);
 
     useEffect(() => {
         loadReminder();
@@ -358,7 +373,7 @@ export default function ReminderAlertScreen() {
                     <View style={styles.inactiveIconWrap}>
                         <Ionicons name="moon-outline" size={36} color="rgba(255,255,255,0.55)" />
                     </View>
-                    <Text style={styles.inactiveTitle}>{t('reminderAlert.noLongerActiveTitle')}</Text>
+                    <Text style={styles.inactiveTitle} accessibilityRole="header">{t('reminderAlert.noLongerActiveTitle')}</Text>
                     <Text style={styles.inactiveText}>
                         {t('reminderAlert.noLongerActiveText')}
                     </Text>
@@ -366,6 +381,8 @@ export default function ReminderAlertScreen() {
                         style={styles.errorButton}
                         onPress={() => router.replace('/recipient-dashboard')}
                         activeOpacity={0.8}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('reminderAlert.backToToday')}
                     >
                         <Text style={styles.errorButtonText}>{t('reminderAlert.backToToday')}</Text>
                     </TouchableOpacity>
@@ -386,12 +403,14 @@ export default function ReminderAlertScreen() {
                     <View style={styles.errorIconWrap}>
                         <Ionicons name="alert-circle" size={40} color="#F87171" />
                     </View>
-                    <Text style={styles.errorTitle}>{t('reminderAlert.unableToLoad')}</Text>
+                    <Text style={styles.errorTitle} accessibilityRole="header">{t('reminderAlert.unableToLoad')}</Text>
                     <Text style={styles.errorText}>{error ?? t('reminderAlert.unexpectedError')}</Text>
                     <TouchableOpacity
                         style={styles.errorButton}
                         onPress={() => router.replace('/recipient-dashboard')}
                         activeOpacity={0.8}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('reminderAlert.goBack')}
                     >
                         <Text style={styles.errorButtonText}>{t('reminderAlert.goBack')}</Text>
                     </TouchableOpacity>
@@ -413,7 +432,7 @@ export default function ReminderAlertScreen() {
                     <View style={styles.inactiveIconWrap}>
                         <Ionicons name={icon as never} size={36} color="#4ADE80" />
                     </View>
-                    <Text style={styles.inactiveTitle} accessibilityRole="header">{t('reminderAlert.recordedTitle')}</Text>
+                    <Text ref={recordedHeadingRef} style={styles.inactiveTitle} accessibilityRole="header">{t('reminderAlert.recordedTitle')}</Text>
                     <Text style={styles.inactiveText}>{t('reminderAlert.recordedSubtitle')}</Text>
 
                     {justRecorded.showAllSet && (
@@ -450,14 +469,13 @@ export default function ReminderAlertScreen() {
 
             {/* Back / dismiss */}
             <View style={styles.headerRow}>
-                <TouchableOpacity
-                    style={styles.backButton}
+                <AccessibleIconButton
+                    icon="chevron-down"
+                    label={t('stateViews.dismiss')}
                     onPress={handleDismiss}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    activeOpacity={0.7}
-                >
-                    <Ionicons name="chevron-down" size={22} color="rgba(255,255,255,0.4)" />
-                </TouchableOpacity>
+                    size={22}
+                    color="rgba(255,255,255,0.4)"
+                />
             </View>
 
             {/* Scrollable content area */}
@@ -523,7 +541,13 @@ export default function ReminderAlertScreen() {
             {/* Action buttons — pinned to bottom */}
             <View style={[styles.buttonArea, { paddingBottom: Math.max(insets.bottom + 8, 32) }]}>
                 {saving ? (
-                    <View style={styles.savingBox}>
+                    <View
+                        style={styles.savingBox}
+                        accessible
+                        accessibilityRole="progressbar"
+                        accessibilityLabel={t('reminderAlert.saving')}
+                        accessibilityLiveRegion="polite"
+                    >
                         <ActivityIndicator color="#93C5FD" />
                         <Text style={styles.savingText}>{t('reminderAlert.saving')}</Text>
                     </View>

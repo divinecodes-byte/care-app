@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { RADIUS, T } from '@/constants/theme';
 import { useTranslation } from '@/lib/i18n/context';
+import { useReduceMotion } from '@/lib/useReduceMotion';
 
 // ─── Shared helpers (exported for screens) ────────────────────────────────────
 
@@ -60,6 +61,7 @@ export function TimePickerField({ value, onChange }: Props) {
     const [draftMinute,   setDraftMinute]   = useState(0);
     const [draftMeridiem, setDraftMeridiem] = useState<'AM' | 'PM'>('AM');
     const insets = useSafeAreaInsets();
+    const reduceMotion = useReduceMotion();
 
     // ── Open ──────────────────────────────────────────────────────────────────
 
@@ -107,7 +109,14 @@ export function TimePickerField({ value, onChange }: Props) {
     return (
         <>
             {/* ── Compact form row ──────────────────────────────────────── */}
-            <TouchableOpacity style={s.row} onPress={open} activeOpacity={0.72}>
+            <TouchableOpacity
+                style={s.row}
+                onPress={open}
+                activeOpacity={0.72}
+                accessibilityRole="button"
+                accessibilityLabel={`${t('reminderForm.timeOfDayLabel')}, ${format12Hour(value)}`}
+                accessibilityHint="Tap to change"
+            >
                 <View style={s.rowLeft}>
                     <Ionicons name="time-outline" size={18} color={T.primary} />
                     <Text style={s.timeText}>{format12Hour(value)}</Text>
@@ -121,19 +130,19 @@ export function TimePickerField({ value, onChange }: Props) {
             {/* ── Bottom-sheet modal ────────────────────────────────────── */}
             <Modal
                 visible={visible}
-                animationType="slide"
+                animationType={reduceMotion ? 'none' : 'slide'}
                 transparent
                 statusBarTranslucent
                 onRequestClose={cancel}
             >
-                <Pressable style={s.backdrop} onPress={cancel}>
+                <Pressable style={s.backdrop} onPress={cancel} accessibilityRole="button" accessibilityLabel={t('common.cancel')}>
                     {/* Stop taps inside the sheet from dismissing the modal */}
                     <View
                         style={[s.sheet, { paddingBottom: insets.bottom + 20 }]}
                         onStartShouldSetResponder={() => true}
                     >
-                        {/* Handle bar */}
-                        <View style={s.handleRow}>
+                        {/* Handle bar — purely decorative, no drag gesture attached */}
+                        <View style={s.handleRow} importantForAccessibility="no-hide-descendants">
                             <View style={s.handle} />
                         </View>
 
@@ -142,31 +151,47 @@ export function TimePickerField({ value, onChange }: Props) {
                             <TouchableOpacity
                                 onPress={cancel}
                                 hitSlop={{ top: 12, bottom: 12, left: 16, right: 16 }}
+                                accessibilityRole="button"
+                                accessibilityLabel={t('common.cancel')}
                             >
                                 <Text style={s.cancelText}>{t('common.cancel')}</Text>
                             </TouchableOpacity>
-                            <Text style={s.headerTitle}>{t('reminderForm.timeOfDayLabel')}</Text>
+                            <Text style={s.headerTitle} accessibilityRole="header">{t('reminderForm.timeOfDayLabel')}</Text>
                             <TouchableOpacity
                                 onPress={confirm}
                                 hitSlop={{ top: 12, bottom: 12, left: 16, right: 16 }}
+                                accessibilityRole="button"
+                                accessibilityLabel={t('common.done')}
                             >
                                 <Text style={s.doneText}>{t('common.done')}</Text>
                             </TouchableOpacity>
                         </View>
 
                         {/* Large live-preview of the current draft */}
-                        <Text style={s.preview}>{preview}</Text>
+                        <Text style={s.preview} accessibilityLiveRegion="polite">{preview}</Text>
 
                         {/* ── Spinner controls ─────────────────────────── */}
                         <View style={s.controlsRow}>
 
                             {/* Hour spinner */}
                             <View style={s.spinnerCol}>
-                                <TouchableOpacity style={s.arrowBtn} onPress={incHour} activeOpacity={0.6}>
+                                <TouchableOpacity
+                                    style={s.arrowBtn}
+                                    onPress={incHour}
+                                    activeOpacity={0.6}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="Increase hour"
+                                >
                                     <Ionicons name="chevron-up" size={28} color={T.primary} />
                                 </TouchableOpacity>
                                 <Text style={s.spinnerValue}>{String(draftHour)}</Text>
-                                <TouchableOpacity style={s.arrowBtn} onPress={decHour} activeOpacity={0.6}>
+                                <TouchableOpacity
+                                    style={s.arrowBtn}
+                                    onPress={decHour}
+                                    activeOpacity={0.6}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="Decrease hour"
+                                >
                                     <Ionicons name="chevron-down" size={28} color={T.primary} />
                                 </TouchableOpacity>
                                 <Text style={s.spinnerLabel}>hour</Text>
@@ -177,11 +202,23 @@ export function TimePickerField({ value, onChange }: Props) {
 
                             {/* Minute spinner */}
                             <View style={s.spinnerCol}>
-                                <TouchableOpacity style={s.arrowBtn} onPress={() => incMinute(1)} activeOpacity={0.6}>
+                                <TouchableOpacity
+                                    style={s.arrowBtn}
+                                    onPress={() => incMinute(1)}
+                                    activeOpacity={0.6}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="Increase minutes"
+                                >
                                     <Ionicons name="chevron-up" size={28} color={T.primary} />
                                 </TouchableOpacity>
                                 <Text style={s.spinnerValue}>{String(draftMinute).padStart(2, '0')}</Text>
-                                <TouchableOpacity style={s.arrowBtn} onPress={() => decMinute(1)} activeOpacity={0.6}>
+                                <TouchableOpacity
+                                    style={s.arrowBtn}
+                                    onPress={() => decMinute(1)}
+                                    activeOpacity={0.6}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="Decrease minutes"
+                                >
                                     <Ionicons name="chevron-down" size={28} color={T.primary} />
                                 </TouchableOpacity>
                                 <Text style={s.spinnerLabel}>min</Text>
@@ -193,6 +230,9 @@ export function TimePickerField({ value, onChange }: Props) {
                                     style={[s.meridiemBtn, draftMeridiem === 'AM' && s.meridiemBtnActive]}
                                     onPress={() => setDraftMeridiem('AM')}
                                     activeOpacity={0.7}
+                                    accessibilityRole="radio"
+                                    accessibilityLabel="AM"
+                                    accessibilityState={{ selected: draftMeridiem === 'AM' }}
                                 >
                                     <Text style={[s.meridiemText, draftMeridiem === 'AM' && s.meridiemTextActive]}>
                                         AM
@@ -202,6 +242,9 @@ export function TimePickerField({ value, onChange }: Props) {
                                     style={[s.meridiemBtn, draftMeridiem === 'PM' && s.meridiemBtnActive]}
                                     onPress={() => setDraftMeridiem('PM')}
                                     activeOpacity={0.7}
+                                    accessibilityRole="radio"
+                                    accessibilityLabel="PM"
+                                    accessibilityState={{ selected: draftMeridiem === 'PM' }}
                                 >
                                     <Text style={[s.meridiemText, draftMeridiem === 'PM' && s.meridiemTextActive]}>
                                         PM
@@ -212,11 +255,23 @@ export function TimePickerField({ value, onChange }: Props) {
 
                         {/* ── Quick ±5 min row ──────────────────────────── */}
                         <View style={s.quickRow}>
-                            <TouchableOpacity style={s.quickBtn} onPress={() => decMinute(5)} activeOpacity={0.7}>
+                            <TouchableOpacity
+                                style={s.quickBtn}
+                                onPress={() => decMinute(5)}
+                                activeOpacity={0.7}
+                                accessibilityRole="button"
+                                accessibilityLabel="Subtract 5 minutes"
+                            >
                                 <Text style={s.quickText}>−5 min</Text>
                             </TouchableOpacity>
                             <View style={s.quickDivider} />
-                            <TouchableOpacity style={s.quickBtn} onPress={() => incMinute(5)} activeOpacity={0.7}>
+                            <TouchableOpacity
+                                style={s.quickBtn}
+                                onPress={() => incMinute(5)}
+                                activeOpacity={0.7}
+                                accessibilityRole="button"
+                                accessibilityLabel="Add 5 minutes"
+                            >
                                 <Text style={s.quickText}>+5 min</Text>
                             </TouchableOpacity>
                         </View>

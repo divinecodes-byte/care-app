@@ -3,6 +3,7 @@ import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import {
+    AccessibilityInfo,
     ActivityIndicator,
     Platform,
     StyleSheet,
@@ -51,6 +52,9 @@ export default function ChooseRoleScreen() {
 
         if (Platform.OS === 'ios') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         setLoadingRole(role);
+        AccessibilityInfo.announceForAccessibility?.(
+            t(role === 'caregiver' ? labels.organizerTitle : labels.participantTitle)
+        );
 
         const {
             data: { user },

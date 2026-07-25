@@ -20,6 +20,7 @@ import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
 import { useTranslation } from '@/lib/i18n/context';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
+import { useFocusOnChange } from '@/lib/useAccessibilityFocus';
 
 const CONFIRM_WORD = 'DELETE';
 
@@ -34,6 +35,7 @@ export default function DeleteAccountScreen() {
     const [password, setPassword]       = useState('');
     const [stage, setStage]             = useState<Stage>('form');
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
+    const errorRef = useFocusOnChange<Text>(errorMessage);
 
     const confirmMatches = confirmText.trim() === CONFIRM_WORD;
     const canSubmit = confirmMatches && password.length > 0 && stage !== 'submitting';
@@ -89,7 +91,13 @@ export default function DeleteAccountScreen() {
     if (stage === 'success') {
         return (
             <SafeAreaView style={styles.container}>
-                <View style={styles.centered}>
+                <View
+                    style={styles.centered}
+                    accessible
+                    accessibilityRole="progressbar"
+                    accessibilityLabel={t('deleteAccount.deletingInProgress')}
+                    accessibilityLiveRegion="polite"
+                >
                     <ActivityIndicator color={C.primary} size="large" />
                 </View>
             </SafeAreaView>
@@ -98,7 +106,7 @@ export default function DeleteAccountScreen() {
 
     return (
         <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-            <KeyboardAvoidingView style={styles.kav} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+            <KeyboardAvoidingView style={styles.kav} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
                 <ScrollView
                     contentContainerStyle={styles.content}
                     keyboardShouldPersistTaps="handled"
@@ -109,16 +117,19 @@ export default function DeleteAccountScreen() {
                         onPress={() => router.back()}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                         disabled={stage === 'submitting'}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('reminderForm.back')}
+                        accessibilityState={{ disabled: stage === 'submitting' }}
                     >
                         <Ionicons name="chevron-back" size={22} color={C.primary} />
                         <Text style={styles.backText}>{t('reminderForm.back')}</Text>
                     </TouchableOpacity>
 
-                    <View style={styles.warningIconWrap}>
+                    <View style={styles.warningIconWrap} importantForAccessibility="no-hide-descendants">
                         <Ionicons name="warning" size={28} color={C.error} />
                     </View>
 
-                    <Text style={styles.heading}>{t('deleteAccount.title')}</Text>
+                    <Text style={styles.heading} accessibilityRole="header">{t('deleteAccount.title')}</Text>
 
                     <View style={[styles.sectionCard, SHADOW.xs]}>
                         {[
@@ -127,7 +138,7 @@ export default function DeleteAccountScreen() {
                             t('deleteAccount.pointRemindersStop'),
                             t('deleteAccount.pointHistoryLost'),
                         ].map((line, i) => (
-                            <View key={i} style={styles.bulletRow}>
+                            <View key={i} style={styles.bulletRow} accessible accessibilityLabel={line}>
                                 <Text style={styles.bulletDot}>•</Text>
                                 <Text style={styles.bulletText}>{line}</Text>
                             </View>
@@ -146,6 +157,8 @@ export default function DeleteAccountScreen() {
                             placeholder={CONFIRM_WORD}
                             placeholderTextColor={C.textMuted}
                             editable={stage !== 'submitting'}
+                            accessibilityLabel={t('deleteAccount.confirmLabel', { word: CONFIRM_WORD })}
+                            accessibilityHint={t('deleteAccount.confirmHint')}
                         />
 
                         <Text style={[styles.label, { marginTop: 18 }]}>{t('deleteAccount.passwordLabel')}</Text>
@@ -156,12 +169,24 @@ export default function DeleteAccountScreen() {
                             secureTextEntry
                             autoCapitalize="none"
                             autoCorrect={false}
+                            textContentType="password"
+                            autoComplete="current-password"
                             placeholder={t('deleteAccount.passwordPlaceholder')}
                             placeholderTextColor={C.textMuted}
                             editable={stage !== 'submitting'}
+                            accessibilityLabel={t('deleteAccount.passwordLabel')}
                         />
 
-                        {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+                        {errorMessage ? (
+                            <Text
+                                ref={errorRef}
+                                style={styles.errorText}
+                                accessibilityRole="alert"
+                                accessibilityLiveRegion="assertive"
+                            >
+                                {errorMessage}
+                            </Text>
+                        ) : null}
                     </View>
 
                     <TouchableOpacity
@@ -169,6 +194,10 @@ export default function DeleteAccountScreen() {
                         onPress={handleDelete}
                         disabled={!canSubmit}
                         activeOpacity={0.88}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('deleteAccount.finalButton')}
+                        accessibilityHint={t('deleteAccount.finalButtonHint')}
+                        accessibilityState={{ disabled: !canSubmit, busy: stage === 'submitting' }}
                     >
                         {stage === 'submitting' ? (
                             <ActivityIndicator color="#FFFFFF" />

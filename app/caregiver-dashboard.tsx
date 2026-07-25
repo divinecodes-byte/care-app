@@ -361,6 +361,19 @@ export default function CaregiverDashboard() {
         return `${Math.max(day.adherence, 6)}%`;
     }
 
+    // The bar chart and month heatmap otherwise communicate a day's status
+    // purely through bar height/background color — this is the textual
+    // equivalent VoiceOver needs (PHASE 12), read once per cell rather than
+    // requiring a user to separately open the day-detail card just to know
+    // what happened that day.
+    function dayAccessibilitySummary(day: DayData): string {
+        if (day.isFuture) return `${day.dateLabel}, upcoming`;
+        if (!day.hasData) return `${day.dateLabel}, no reminders scheduled`;
+        if (day.countableCount === 0 && day.pendingCount > 0) return `${day.dateLabel}, ${day.pendingCount} pending, no results yet`;
+        if (day.countableCount === 0) return `${day.dateLabel}, no data`;
+        return `${day.dateLabel}, ${day.adherence}% adherence, ${day.takenCount} taken, ${day.missedCount} missed, ${day.skippedCount} skipped, ${day.snoozedCount} snoozed, ${day.pendingCount} pending`;
+    }
+
     function ReminderRow({ reminder }: { reminder: ReminderDisplay }) {
         return (
             <View style={[styles.reminderRow, !reminder.isActive && styles.reminderRowInactive]}>
@@ -423,6 +436,8 @@ export default function CaregiverDashboard() {
             summaryText = t('organizerDashboard.takenOfScheduled', { completed: item.completed, scheduled: item.scheduled });
         }
 
+        const cardLabel = `${item.name}${!item.isActive ? `, ${t('organizerDashboard.deleted')}` : ''}, ${hasCountable ? `${item.adherence}% ${t('organizerDashboard.adherence')}` : t('organizerDashboard.adherence')}, ${summaryText}`;
+
         return (
             <TouchableOpacity
                 style={[styles.bcCard, SHADOW.xs]}
@@ -430,6 +445,9 @@ export default function CaregiverDashboard() {
                     router.push({ pathname: '/reminder-details', params: { reminderId: item.id } })
                 }
                 activeOpacity={0.75}
+                accessibilityRole="button"
+                accessibilityLabel={cardLabel}
+                accessibilityHint={t('organizerDashboard.details')}
             >
                 <View style={styles.bcHeader}>
                     <View style={{ flex: 1 }}>
@@ -1160,13 +1178,16 @@ export default function CaregiverDashboard() {
         return (
             <>
                 {/* Range tabs */}
-                <View style={[styles.tabContainer, SHADOW.xs]}>
+                <View style={[styles.tabContainer, SHADOW.xs]} accessibilityRole="tablist">
                     {(['Today', 'Week', 'Month'] as const).map((range) => (
                         <TouchableOpacity
                             key={range}
                             style={[styles.tab, selectedRange === range && styles.activeTab]}
                             onPress={() => setSelectedRange(range)}
                             activeOpacity={0.75}
+                            accessibilityRole="tab"
+                            accessibilityLabel={t(RANGE_LABEL_KEYS[range])}
+                            accessibilityState={{ selected: selectedRange === range }}
                         >
                             <Text style={[styles.tabText, selectedRange === range && styles.activeTabText]}>
                                 {t(RANGE_LABEL_KEYS[range])}
@@ -1315,13 +1336,16 @@ export default function CaregiverDashboard() {
                             {t('organizerDashboard.tapDayHint')}
                         </Text>
 
-                        <View style={styles.chart}>
+                        <View style={styles.chart} accessibilityRole="tablist">
                             {weeklyData.map((day, index) => (
                                 <TouchableOpacity
                                     key={day.dateString}
                                     style={styles.barWrapper}
                                     onPress={() => setSelectedWeekIndex(index)}
                                     activeOpacity={0.7}
+                                    accessibilityRole="tab"
+                                    accessibilityLabel={dayAccessibilitySummary(day)}
+                                    accessibilityState={{ selected: selectedWeekIndex === index }}
                                 >
                                     <View style={styles.barTrack}>
                                         <View
@@ -1377,6 +1401,10 @@ export default function CaregiverDashboard() {
                                     ]}
                                     onPress={() => setSelectedMonthIndex(index)}
                                     activeOpacity={0.75}
+                                    hitSlop={{ top: 3, bottom: 3, left: 3, right: 3 }}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={dayAccessibilitySummary(day)}
+                                    accessibilityState={{ selected: selectedMonthIndex === index }}
                                 >
                                     <Text style={styles.heatmapText}>{day.monthDay}</Text>
                                 </TouchableOpacity>
@@ -1502,7 +1530,9 @@ export default function CaregiverDashboard() {
                         <TouchableOpacity
                             style={styles.iconButton}
                             onPress={() => setSettingsVisible(true)}
-                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('settings.title')}
                         >
                             <Ionicons name="settings-outline" size={19} color={C.textSecondary} />
                         </TouchableOpacity>
@@ -1520,6 +1550,9 @@ export default function CaregiverDashboard() {
                                 style={styles.inviteButton}
                                 onPress={() => router.push('/invite-recipient')}
                                 activeOpacity={0.75}
+                                hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+                                accessibilityRole="button"
+                                accessibilityLabel={t('organizerDashboard.invite')}
                             >
                                 <Ionicons name="person-add-outline" size={14} color={C.textSecondary} />
                                 <Text style={styles.inviteButtonText} numberOfLines={1}>
@@ -1531,6 +1564,9 @@ export default function CaregiverDashboard() {
                                 style={[styles.createButton, SHADOW.primary]}
                                 onPress={handleCreateReminder}
                                 activeOpacity={0.88}
+                                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                                accessibilityRole="button"
+                                accessibilityLabel={t('participants.createReminderAction')}
                             >
                                 <Ionicons name="add" size={22} color={C.textInverse} />
                             </TouchableOpacity>

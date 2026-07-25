@@ -26,6 +26,7 @@ import { getExampleReminderTitleKey, isUseCase, logOnboardingEvent, UseCase } fr
 import { assertValidNoResponseMinutes, DEFAULT_NO_RESPONSE_MINUTES, NO_RESPONSE_OPTIONS } from '@/lib/reminderOptions';
 import { supabase } from '@/lib/supabase';
 import { showAlertOnce } from '@/lib/alertGuard';
+import { useFocusOnChange } from '@/lib/useAccessibilityFocus';
 
 type ReminderType = 'medication' | 'hydration' | 'appointment' | 'meal' | 'exercise' | 'other';
 
@@ -104,6 +105,7 @@ export default function CreateReminderScreen() {
         reminderId: string;
         connectionId: string;
     } | null>(null);
+    const confirmHeadingRef = useFocusOnChange<Text>(savedSummary);
 
     useEffect(() => {
         (async () => {
@@ -285,7 +287,7 @@ export default function CreateReminderScreen() {
                     <View style={styles.confirmIconWrap}>
                         <Ionicons name="checkmark-circle" size={48} color={C.success} />
                     </View>
-                    <Text style={styles.heading} accessibilityRole="header">{t('firstReminder.confirmTitle')}</Text>
+                    <Text ref={confirmHeadingRef} style={styles.heading} accessibilityRole="header">{t('firstReminder.confirmTitle')}</Text>
                     <Text style={styles.subheading}>
                         {t('firstReminder.confirmSubtitle', { name: savedSummary.recipientName })}
                     </Text>
@@ -414,6 +416,9 @@ export default function CreateReminderScreen() {
                                         ]}
                                         onPress={() => setSelectedConnectionId(p.connectionId)}
                                         activeOpacity={0.75}
+                                        accessibilityRole="radio"
+                                        accessibilityLabel={p.recipientName}
+                                        accessibilityState={{ selected: selectedConnectionId === p.connectionId }}
                                     >
                                         <View style={styles.participantAvatar}>
                                             <Text style={styles.participantAvatarText}>
@@ -428,6 +433,9 @@ export default function CreateReminderScreen() {
                                         >
                                             {p.recipientName}
                                         </Text>
+                                        {selectedConnectionId === p.connectionId ? (
+                                            <Ionicons name="checkmark-circle" size={15} color={C.primary} />
+                                        ) : null}
                                     </TouchableOpacity>
                                 ))}
                             </View>
@@ -474,6 +482,9 @@ export default function CreateReminderScreen() {
                                     ]}
                                     onPress={() => setReminderType(type)}
                                     activeOpacity={0.75}
+                                    accessibilityRole="radio"
+                                    accessibilityLabel={t(TYPE_LABEL_KEYS[type])}
+                                    accessibilityState={{ selected: reminderType === type }}
                                 >
                                     <Ionicons
                                         name={TYPE_ICON_NAMES[type] as any}
@@ -517,6 +528,9 @@ export default function CreateReminderScreen() {
                                     ]}
                                     onPress={() => setFrequency(item)}
                                     activeOpacity={0.75}
+                                    accessibilityRole="radio"
+                                    accessibilityLabel={t(FREQUENCY_LABEL_KEYS[item])}
+                                    accessibilityState={{ selected: frequency === item }}
                                 >
                                     <Text
                                         style={[
@@ -541,6 +555,9 @@ export default function CreateReminderScreen() {
                                         ]}
                                         onPress={() => toggleDay(day.iso)}
                                         activeOpacity={0.75}
+                                        accessibilityRole="checkbox"
+                                        accessibilityLabel={day.short}
+                                        accessibilityState={{ checked: selectedDays.includes(day.iso) }}
                                     >
                                         <Text
                                             style={[
@@ -579,6 +596,9 @@ export default function CreateReminderScreen() {
                                                 ]}
                                                 onPress={() => setNoResponseMinutes(opt)}
                                                 activeOpacity={0.75}
+                                                accessibilityRole="radio"
+                                                accessibilityLabel={formatResponseMinutes(opt)}
+                                                accessibilityState={{ selected: noResponseMinutes === opt }}
                                             >
                                                 <Text
                                                     style={[
@@ -609,6 +629,7 @@ export default function CreateReminderScreen() {
                             onBlur={() => setFocused(null)}
                             multiline
                             textAlignVertical="top"
+                            accessibilityLabel={`${t('reminderForm.notesLabel')} (${t('reminderForm.notesOptional')})`}
                         />
                     </View>
 
@@ -618,6 +639,9 @@ export default function CreateReminderScreen() {
                         onPress={saveReminder}
                         disabled={loading}
                         activeOpacity={0.88}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('reminderForm.saveReminder')}
+                        accessibilityState={{ disabled: loading, busy: loading }}
                     >
                         {loading ? (
                             <ActivityIndicator color={C.textInverse} />

@@ -24,6 +24,7 @@ import { showAlertOnce } from '@/lib/alertGuard';
 import { classifyScreenError } from '@/lib/asyncStateCore';
 import { ERROR_CATEGORY_TRANSLATION_KEYS } from '@/lib/errorClassification';
 import { useRequestGeneration } from '@/lib/useRequestGeneration';
+import { useFocusOnChange } from '@/lib/useAccessibilityFocus';
 
 export default function JoinInviteScreen() {
     const C = useThemeColors();
@@ -38,6 +39,7 @@ export default function JoinInviteScreen() {
     // requirement not to reveal who a code belongs to before acceptance.
     const [connectedName, setConnectedName] = useState<string | null>(null);
     const { start: startLoad, isCurrent: isLoadCurrent } = useRequestGeneration();
+    const connectedHeadingRef = useFocusOnChange<Text>(connectedName !== null);
 
     async function joinInvite() {
         // Guards both the button (already disabled via `disabled={loading}`)
@@ -152,7 +154,7 @@ export default function JoinInviteScreen() {
                     <View style={styles.connectedIconWrap}>
                         <Ionicons name="checkmark-circle" size={48} color={C.success} />
                     </View>
-                    <Text style={styles.heading} accessibilityRole="header">
+                    <Text ref={connectedHeadingRef} style={styles.heading} accessibilityRole="header">
                         {t('joinInvite.connectedTitle')}
                     </Text>
                     <Text style={styles.subheading}>
@@ -194,7 +196,7 @@ export default function JoinInviteScreen() {
                     <TouchableOpacity
                         style={styles.backButton}
                         onPress={() => router.back()}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                         accessibilityRole="button"
                         accessibilityLabel={t('joinInvite.back')}
                     >

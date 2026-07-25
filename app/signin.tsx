@@ -1,6 +1,6 @@
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     KeyboardAvoidingView,
@@ -34,6 +34,7 @@ export default function SigninScreen() {
     const [password, setPassword] = useState('');
     const [loading, setLoading]   = useState(false);
     const [focused, setFocused]   = useState<string | null>(null);
+    const passwordRef = useRef<TextInput>(null);
 
     // A one-time neutral banner for a session that ended because the
     // account was tombstoned or the session was no longer valid — read
@@ -167,33 +168,46 @@ export default function SigninScreen() {
                                 keyboardType="email-address"
                                 autoCapitalize="none"
                                 autoCorrect={false}
+                                textContentType="username"
+                                autoComplete="email"
                                 value={email}
                                 onChangeText={setEmail}
                                 onFocus={() => setFocused('email')}
                                 onBlur={() => setFocused(null)}
                                 returnKeyType="next"
+                                onSubmitEditing={() => passwordRef.current?.focus()}
+                                accessibilityLabel={t('signin.emailLabel')}
                             />
                         </View>
 
                         <View style={styles.formGroup}>
                             <Text style={styles.label}>{t('signin.passwordLabel')}</Text>
                             <TextInput
+                                ref={passwordRef}
                                 style={inputStyle('password')}
                                 placeholder={t('signin.passwordPlaceholder')}
                                 placeholderTextColor={C.textMuted}
                                 secureTextEntry
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                textContentType="password"
+                                autoComplete="current-password"
                                 value={password}
                                 onChangeText={setPassword}
                                 onFocus={() => setFocused('password')}
                                 onBlur={() => setFocused(null)}
                                 returnKeyType="done"
                                 onSubmitEditing={handleSignin}
+                                accessibilityLabel={t('signin.passwordLabel')}
                             />
                         </View>
 
                         <TouchableOpacity
                             style={styles.forgotPasswordLink}
                             onPress={() => router.push('/forgot-password')}
+                            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('signin.forgotPassword')}
                         >
                             <Text style={styles.forgotPasswordText}>{t('signin.forgotPassword')}</Text>
                         </TouchableOpacity>
@@ -208,6 +222,9 @@ export default function SigninScreen() {
                         onPress={handleSignin}
                         disabled={loading}
                         activeOpacity={0.88}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('signin.submit')}
+                        accessibilityState={{ disabled: loading, busy: loading }}
                     >
                         {loading ? (
                             <ActivityIndicator color={C.textInverse} />
@@ -219,6 +236,9 @@ export default function SigninScreen() {
                     <TouchableOpacity
                         style={styles.footerLink}
                         onPress={() => router.push('/signup')}
+                        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${t('signin.noAccount')} ${t('signin.noAccountAction')}`}
                     >
                         <Text style={styles.footerText}>
                             {t('signin.noAccount')}{' '}
