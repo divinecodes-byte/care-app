@@ -282,6 +282,17 @@ async function main() {
         await editSchedule(caregiverA.client, reminderT, { timeOfDay: utcTimeString(30) });
         const tDeliveries = dbQuery(`select count(*) as c, max(schedule_version) as version, max(status) as status from public.reminder_notification_deliveries where reminder_id = '${reminderT}' and delivery_type = 'reminder';`)[0] as any;
         record('T', 'a stale unsent delivery claim is requeued in place (still exactly one row) after a schedule-affecting edit', Number(tDeliveries.c) === 1 && Number(tDeliveries.version) === 2 && tDeliveries.status === 'pending', JSON.stringify(tDeliveries));
+        // This scenario is the only one in this suite that INSERTs directly into
+        // reminder_notification_deliveries, bypassing the claim functions'
+        // server_push_enabled gate. Left in place, this synthetic 'pending' row
+        // is indistinguishable from a real one to send-due-recipient-reminders'
+        // retry query (which has no scheduled_for/provenance check) — the real
+        // production cron (ticking every 30s against this same linked project)
+        // will claim it, find no push token for the synthetic recipient, and
+        // write a genuine status='failed' row that pollutes real ops-health
+        // metrics for as long as this row survives. Delete it immediately
+        // rather than waiting for this suite's end-of-run cleanup.
+        dbQuery(`delete from public.reminder_notification_deliveries where reminder_id = '${reminderT}';`);
 
         // ── U: delete during snooze (no snooze delivery claimed for an inactive reminder) ──
         const reminderU = await createReminder(connA, caregiverA.id, recipientA.id, { daysOfWeek: [1, 2, 3, 4, 5, 6, 7], scheduledOffsetMinutes: -5 });

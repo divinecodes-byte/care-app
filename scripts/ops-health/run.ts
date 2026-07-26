@@ -22,6 +22,12 @@ const RETRY_EXHAUSTED_WARN = Number(process.env.OPS_RETRY_EXHAUSTED_WARN ?? 1);
 const RETRY_EXHAUSTED_FAIL = Number(process.env.OPS_RETRY_EXHAUSTED_FAIL ?? 10);
 const FAILURE_RATE_WARN = Number(process.env.OPS_FAILURE_RATE_WARN ?? 0.1); // 10%
 const FAILURE_RATE_FAIL = Number(process.env.OPS_FAILURE_RATE_FAIL ?? 0.3); // 30%
+// Below this many deliveries in the window, a percentage is statistically
+// meaningless (a single failure among 1-2 due reads as "100% FAIL"). Below
+// the floor, fall back to an absolute count so a lone pre-launch/test-noise
+// failure can't page anyone, while a genuine cluster still can.
+const FAILURE_RATE_MIN_SAMPLE = Number(process.env.OPS_FAILURE_RATE_MIN_SAMPLE ?? 5);
+const FAILURE_RATE_MIN_SAMPLE_ABS_WARN = Number(process.env.OPS_FAILURE_RATE_MIN_SAMPLE_ABS_WARN ?? 3);
 const OLD_PG_NET_ROWS_WARN = Number(process.env.OPS_OLD_PG_NET_WARN ?? 500); // rows older than retention window still present
 
 // Expected cadence in seconds, used only to judge "is the last run stale" —
@@ -99,16 +105,35 @@ function main() {
 
     const sent = num(deliveryMetricsRecord, 'sent');
     const failed = num(deliveryMetricsRecord, 'failed');
+    const failedTokenAbsence = num(deliveryMetricsRecord, 'failed_token_absence');
+    const failedOther = num(deliveryMetricsRecord, 'failed_other');
     const dueInWindow = num(deliveryMetricsRecord, 'due_in_window');
-    const failureRate = dueInWindow > 0 ? failed / dueInWindow : 0;
 
-    if (failureRate >= FAILURE_RATE_FAIL) {
-        check('recipient_pushes:failure_rate', 'FAIL', `${(failureRate * 100).toFixed(1)}% of ${dueInWindow} due in last 24h`);
-    } else if (failureRate >= FAILURE_RATE_WARN) {
-        check('recipient_pushes:failure_rate', 'WARNING', `${(failureRate * 100).toFixed(1)}% of ${dueInWindow} due in last 24h`);
+    // failedOther (pipeline errors) drives the alarm-worthy rate.
+    // failedTokenAbsence (no recipient device registered yet) is expected
+    // during pre-launch rollout and is reported separately, never folded
+    // into this threshold on its own.
+    if (dueInWindow < FAILURE_RATE_MIN_SAMPLE) {
+        if (failedOther >= FAILURE_RATE_MIN_SAMPLE_ABS_WARN) {
+            check('recipient_pushes:failure_rate', 'WARNING', `${failedOther} genuine failure(s) of ${dueInWindow} due in last 24h — sample too small for a rate, but the raw count crosses ${FAILURE_RATE_MIN_SAMPLE_ABS_WARN}`);
+        } else {
+            check('recipient_pushes:failure_rate', 'PASS', `${dueInWindow} due in last 24h (sent=${sent}, failed=${failed}, of which ${failedTokenAbsence} no-token) — sample below ${FAILURE_RATE_MIN_SAMPLE}, rate not computed`);
+        }
     } else {
-        check('recipient_pushes:failure_rate', 'PASS', `${(failureRate * 100).toFixed(1)}% of ${dueInWindow} due in last 24h (sent=${sent}, failed=${failed})`);
+        const failureRate = failedOther / dueInWindow;
+        if (failureRate >= FAILURE_RATE_FAIL) {
+            check('recipient_pushes:failure_rate', 'FAIL', `${(failureRate * 100).toFixed(1)}% genuine-failure of ${dueInWindow} due in last 24h (excludes ${failedTokenAbsence} no-token)`);
+        } else if (failureRate >= FAILURE_RATE_WARN) {
+            check('recipient_pushes:failure_rate', 'WARNING', `${(failureRate * 100).toFixed(1)}% genuine-failure of ${dueInWindow} due in last 24h (excludes ${failedTokenAbsence} no-token)`);
+        } else {
+            check('recipient_pushes:failure_rate', 'PASS', `${(failureRate * 100).toFixed(1)}% genuine-failure of ${dueInWindow} due in last 24h (sent=${sent}, failed=${failed}, of which ${failedTokenAbsence} no-token)`);
+        }
     }
+
+    // Informational only — never alarms on its own. Distinguishes "no real
+    // recipient device has registered a push token yet" (expected pre-
+    // launch state) from an actual pipeline defect.
+    check('recipient_pushes:no_recipient_token', 'PASS', `${failedTokenAbsence} delivery attempt(s) in last 24h had no active recipient push token (expected pre-launch — server_push_enabled is not yet on for any real recipient, and no real recipient device has registered a token)`);
 
     const stuckPending = num(deliveryMetricsRecord, 'stuck_pending');
     if (stuckPending >= STUCK_PENDING_FAIL) {
