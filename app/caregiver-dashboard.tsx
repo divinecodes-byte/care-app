@@ -23,7 +23,7 @@ import { showAlertOnce } from '@/lib/alertGuard';
 import { classifyScreenError, ErrorCategory } from '@/lib/asyncStateCore';
 import { categorizeConnection } from '@/lib/connectionStateCore';
 import { ERROR_CATEGORY_TRANSLATION_KEYS } from '@/lib/errorClassification';
-import { formatFrequency as formatFrequencyDays } from '@/lib/frequency';
+import { buildFrequencyLabels, formatFrequency as formatFrequencyDays } from '@/lib/frequency';
 import { useStatusLabel, useTranslation } from '@/lib/i18n/context';
 import { MAX_STANDARD_PARTICIPANTS } from '@/lib/limits';
 import { registerPushToken } from '@/lib/notifications';
@@ -167,10 +167,6 @@ function formatTime(time: string): string {
     if (h === 0) h = 12;
     else if (h > 12) h -= 12;
     return `${h}:${mStr} ${suffix}`;
-}
-
-function formatFrequency(freq: Reminder['frequency'], daysOfWeek: number[]): string {
-    return formatFrequencyDays(freq, daysOfWeek);
 }
 
 // ─── Analytics helpers ────────────────────────────────────────────────────────
@@ -461,7 +457,7 @@ export default function CaregiverDashboard() {
                         </View>
                         <Text style={styles.bcMeta}>
                             {item.isActive
-                                ? `${formatTime(item.time_of_day)} · ${formatFrequency(item.frequency, item.days_of_week)}`
+                                ? `${formatTime(item.time_of_day)} · ${formatFrequencyDays(item.frequency, item.days_of_week, buildFrequencyLabels(t))}`
                                 : t('organizerDashboard.noLongerScheduled')}
                         </Text>
                     </View>
@@ -1247,7 +1243,7 @@ export default function CaregiverDashboard() {
                                 </Text>
                                 {connectionSummary.status === 'accepted' ? (
                                     <TouchableOpacity
-                                        style={styles.firstReminderButton}
+                                        style={[styles.firstReminderButton, SHADOW.primary]}
                                         onPress={handleCreateReminder}
                                         activeOpacity={0.88}
                                         accessibilityRole="button"
@@ -1521,8 +1517,7 @@ export default function CaregiverDashboard() {
                         <Text
                             style={styles.heading}
                             numberOfLines={2}
-                            adjustsFontSizeToFit
-                            minimumFontScale={0.85}
+                            accessibilityRole="header"
                         >
                             {t('organizerDashboard.heading')}
                         </Text>
@@ -1862,7 +1857,7 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
     connectionButton: {
         backgroundColor: C.primary,
         paddingVertical: 14,
-        borderRadius: RADIUS.lg,
+        borderRadius: RADIUS.xl,
         alignItems: 'center',
         marginTop: 14,
     },
@@ -2039,7 +2034,7 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
         justifyContent: 'center',
         gap: 8,
         backgroundColor: C.primary,
-        borderRadius: RADIUS.lg,
+        borderRadius: RADIUS.xl,
         paddingVertical: 14,
         marginTop: 4,
         minHeight: 44,

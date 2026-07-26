@@ -14,7 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
 import { classifyScreenError } from '@/lib/asyncStateCore';
 import { ERROR_CATEGORY_TRANSLATION_KEYS } from '@/lib/errorClassification';
-import { formatFrequency as formatFrequencyDays } from '@/lib/frequency';
+import { buildFrequencyLabels, formatFrequency as formatFrequencyDays } from '@/lib/frequency';
 import { useLanguage, useStatusLabel } from '@/lib/i18n/context';
 import { getZonedAnalyticsStartDateString, getZonedComputedStatus, isReminderEligibleOnZonedDate } from '@/lib/reminderStatus';
 import { useThemeColors } from '@/lib/theme';
@@ -104,10 +104,6 @@ function formatTime(time: string): string {
     if (h === 0) h = 12;
     else if (h > 12) h -= 12;
     return `${h}:${mStr} ${suffix}`;
-}
-
-function formatFrequency(freq: Reminder['frequency'], daysOfWeek: number[]): string {
-    return formatFrequencyDays(freq, daysOfWeek);
 }
 
 function formatDateLabel(date: Date, locale: string): string {
@@ -459,7 +455,7 @@ export default function ReminderDetailsScreen() {
                         <Text style={styles.reminderTitle}>{reminder.title}</Text>
                         <Text style={styles.reminderMeta}>
                             {reminder.is_active
-                                ? `${formatTime(reminder.time_of_day)} · ${formatFrequency(reminder.frequency, reminder.days_of_week)}`
+                                ? `${formatTime(reminder.time_of_day)} · ${formatFrequencyDays(reminder.frequency, reminder.days_of_week, buildFrequencyLabels(t))}`
                                 : t('reminderDetails.noLongerScheduled')}
                         </Text>
                         {reminder.is_active && showsTimeZoneContext ? (

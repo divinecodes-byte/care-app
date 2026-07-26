@@ -21,7 +21,7 @@ import { useThemeColors } from '@/lib/theme';
 import { buildTimeString, parseTimeString, TimePickerField } from '@/components/TimePickerField';
 import { classifyScreenError } from '@/lib/asyncStateCore';
 import { ERROR_CATEGORY_TRANSLATION_KEYS } from '@/lib/errorClassification';
-import { DAY_OPTIONS, daysForFrequency, Frequency, frequencyForDays } from '@/lib/frequency';
+import { DAY_ISO_TO_KEY, DAY_OPTIONS, daysForFrequency, Frequency, frequencyForDays } from '@/lib/frequency';
 import { REMINDER_ERROR_TRANSLATION_KEYS } from '@/lib/reminderErrors';
 import { updateReminderSchedule } from '@/lib/reminderLifecycle';
 import {
@@ -460,7 +460,7 @@ export default function EditReminderScreen() {
                                             onPress={() => toggleDay(day.iso)}
                                             activeOpacity={0.75}
                                             accessibilityRole="checkbox"
-                                            accessibilityLabel={day.short}
+                                            accessibilityLabel={t(`reminderForm.day${DAY_ISO_TO_KEY[day.iso]}`)}
                                             accessibilityState={{ checked: selectedDays.includes(day.iso) }}
                                         >
                                             <Text
@@ -469,7 +469,7 @@ export default function EditReminderScreen() {
                                                     selectedDays.includes(day.iso) && styles.chipTextActive,
                                                 ]}
                                             >
-                                                {day.short}
+                                                {t(`reminderForm.day${DAY_ISO_TO_KEY[day.iso]}`)}
                                             </Text>
                                         </TouchableOpacity>
                                     ))}

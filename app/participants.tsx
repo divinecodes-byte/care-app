@@ -301,7 +301,7 @@ export default function ParticipantsScreen() {
                         <Text style={styles.stateTitle}>{t('participants.emptyTitle')}</Text>
                         <Text style={styles.stateText}>{t('participants.emptyText')}</Text>
                         <TouchableOpacity
-                            style={styles.primaryButton}
+                            style={[styles.primaryButton, SHADOW.primary]}
                             onPress={() => router.push('/invite-recipient')}
                             accessibilityRole="button"
                             accessibilityLabel={t('participants.inviteFirst')}

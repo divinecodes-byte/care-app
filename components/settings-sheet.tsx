@@ -961,30 +961,6 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
         borderRadius:    RADIUS.full,
     },
 
-    // ── Header ────────────────────────────────────────────────────────────────
-    header: {
-        flexDirection:     'row',
-        alignItems:        'center',
-        justifyContent:    'space-between',
-        paddingHorizontal: 20,
-        paddingTop:        4,
-        paddingBottom:     14,
-    },
-    title: {
-        fontSize:      19,
-        fontWeight:    '800',
-        color:         C.textPrimary,
-        letterSpacing: -0.4,
-    },
-    closeBtn: {
-        width:           28,
-        height:          28,
-        borderRadius:    RADIUS.full,
-        backgroundColor: C.bgAlt,
-        alignItems:      'center',
-        justifyContent:  'center',
-    },
-
     // ── Loading ───────────────────────────────────────────────────────────────
     loadingBox: {
         flex:            1,

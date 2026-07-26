@@ -190,7 +190,7 @@ export default function DeleteAccountScreen() {
                     </View>
 
                     <TouchableOpacity
-                        style={[styles.deleteButton, (!canSubmit) && styles.deleteButtonDisabled]}
+                        style={[styles.deleteButton, SHADOW.md, (!canSubmit) && styles.deleteButtonDisabled]}
                         onPress={handleDelete}
                         disabled={!canSubmit}
                         activeOpacity={0.88}
@@ -200,7 +200,7 @@ export default function DeleteAccountScreen() {
                         accessibilityState={{ disabled: !canSubmit, busy: stage === 'submitting' }}
                     >
                         {stage === 'submitting' ? (
-                            <ActivityIndicator color="#FFFFFF" />
+                            <ActivityIndicator color={C.textInverse} />
                         ) : (
                             <Text style={styles.deleteButtonText}>{t('deleteAccount.finalButton')}</Text>
                         )}
@@ -322,7 +322,7 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
     },
     deleteButtonDisabled: { opacity: 0.4 },
     deleteButtonText: {
-        color: '#FFFFFF',
+        color: C.textInverse,
         fontSize: 17,
         fontWeight: '700',
         letterSpacing: -0.2,

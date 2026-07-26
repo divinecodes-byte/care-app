@@ -74,7 +74,7 @@ async function main() {
     const chipSelectedCount = (content: string) => [...content.matchAll(/accessibilityState=\{\{\s*selected:/g)].length;
     record('B', 'create-reminder.tsx chips (participant/type/frequency/no-response) expose accessibilityState.selected', chipSelectedCount(createReminder) >= 4);
     record('B', 'edit-reminder.tsx chips expose accessibilityState.selected', chipSelectedCount(editReminder) >= 3);
-    record('B', 'day-of-week chips expose accessibilityState.checked (checkbox semantics, not single-select)', has(createReminder, /accessibilityRole="checkbox"[\s\S]{0,120}?accessibilityState=\{\{ checked:/) && has(editReminder, /accessibilityRole="checkbox"[\s\S]{0,120}?accessibilityState=\{\{ checked:/));
+    record('B', 'day-of-week chips expose accessibilityState.checked (checkbox semantics, not single-select)', has(createReminder, /accessibilityRole="checkbox"[\s\S]{0,250}?accessibilityState=\{\{ checked:/) && has(editReminder, /accessibilityRole="checkbox"[\s\S]{0,250}?accessibilityState=\{\{ checked:/));
     record('B', 'settings-sheet.tsx appearance/language chips expose accessibilityState.selected', chipSelectedCount(settingsSheet) >= 2);
     record('B', 'caregiver-dashboard.tsx range tabs (Today/Week/Month) expose accessibilityState.selected', has(caregiverDash, /accessibilityRole="tab"[\s\S]{0,150}?accessibilityState=\{\{ selected: selectedRange === range \}\}/));
     record('B', 'weekly bar chart + month heatmap cells expose accessibilityState.selected', has(caregiverDash, /accessibilityState=\{\{ selected: selectedWeekIndex === index \}\}/) && has(caregiverDash, /accessibilityState=\{\{ selected: selectedMonthIndex === index \}\}/));
@@ -95,8 +95,13 @@ async function main() {
     const iconButtonMinSize = has(primitives, /minWidth:\s*MIN_TOUCH,\s*minHeight:\s*MIN_TOUCH,/);
     const selectionCardMinHeight = has(primitives, /selectionCard:\s*\{[\s\S]{0,200}?minHeight:\s*MIN_TOUCH,/);
     const formFieldMinHeight = has(primitives, /fieldInput:\s*\{[\s\S]{0,200}?minHeight:\s*MIN_TOUCH,/);
-    const minTouchIs44 = has(primitives, /const MIN_TOUCH = 44;/);
-    record('D', 'MIN_TOUCH constant is 44pt', minTouchIs44);
+    // MIN_TOUCH now sources from lib/designTokens.ts's LAYOUT.minControlHeight
+    // (consolidated in the visual-consistency task so there's one 44
+    // defined once, not two identical literals) -- still resolves to 44,
+    // just no longer a literal in this file.
+    const minTouchIs44 = has(primitives, /const MIN_TOUCH = LAYOUT\.minControlHeight;/) &&
+        has(read('lib/designTokens.ts'), /minControlHeight:\s*44,/);
+    record('D', 'MIN_TOUCH constant is 44pt (via lib/designTokens.ts LAYOUT.minControlHeight)', minTouchIs44);
     record('D', 'AccessibleIconButton enforces a real 44x44 touch target', iconButtonMinSize);
     record('D', 'SelectionCard enforces minHeight 44', selectionCardMinHeight);
     record('D', 'FormField input enforces minHeight 44', formFieldMinHeight);

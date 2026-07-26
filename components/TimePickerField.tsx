@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
     Modal,
     Platform,
@@ -11,9 +11,10 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { RADIUS, T } from '@/constants/theme';
+import { RADIUS, ThemeColors } from '@/constants/theme';
 import { useTranslation } from '@/lib/i18n/context';
 import { useReduceMotion } from '@/lib/useReduceMotion';
+import { useThemeColors } from '@/lib/theme';
 
 // ─── Shared helpers (exported for screens) ────────────────────────────────────
 
@@ -56,6 +57,8 @@ type Props = {
  */
 export function TimePickerField({ value, onChange }: Props) {
     const t = useTranslation();
+    const C = useThemeColors();
+    const s = useMemo(() => createStyles(C), [C]);
     const [visible,       setVisible]       = useState(false);
     const [draftHour,     setDraftHour]     = useState(12);
     const [draftMinute,   setDraftMinute]   = useState(0);
@@ -115,15 +118,15 @@ export function TimePickerField({ value, onChange }: Props) {
                 activeOpacity={0.72}
                 accessibilityRole="button"
                 accessibilityLabel={`${t('reminderForm.timeOfDayLabel')}, ${format12Hour(value)}`}
-                accessibilityHint="Tap to change"
+                accessibilityHint={t('reminderForm.tapToChange')}
             >
                 <View style={s.rowLeft}>
-                    <Ionicons name="time-outline" size={18} color={T.primary} />
+                    <Ionicons name="time-outline" size={18} color={C.primary} />
                     <Text style={s.timeText}>{format12Hour(value)}</Text>
                 </View>
                 <View style={s.rowRight}>
-                    <Text style={s.tapHint}>Tap to change</Text>
-                    <Ionicons name="chevron-forward" size={15} color={T.textMuted} />
+                    <Text style={s.tapHint}>{t('reminderForm.tapToChange')}</Text>
+                    <Ionicons name="chevron-forward" size={15} color={C.textMuted} />
                 </View>
             </TouchableOpacity>
 
@@ -180,9 +183,9 @@ export function TimePickerField({ value, onChange }: Props) {
                                     onPress={incHour}
                                     activeOpacity={0.6}
                                     accessibilityRole="button"
-                                    accessibilityLabel="Increase hour"
+                                    accessibilityLabel={t('reminderForm.increaseHour')}
                                 >
-                                    <Ionicons name="chevron-up" size={28} color={T.primary} />
+                                    <Ionicons name="chevron-up" size={28} color={C.primary} />
                                 </TouchableOpacity>
                                 <Text style={s.spinnerValue}>{String(draftHour)}</Text>
                                 <TouchableOpacity
@@ -190,11 +193,11 @@ export function TimePickerField({ value, onChange }: Props) {
                                     onPress={decHour}
                                     activeOpacity={0.6}
                                     accessibilityRole="button"
-                                    accessibilityLabel="Decrease hour"
+                                    accessibilityLabel={t('reminderForm.decreaseHour')}
                                 >
-                                    <Ionicons name="chevron-down" size={28} color={T.primary} />
+                                    <Ionicons name="chevron-down" size={28} color={C.primary} />
                                 </TouchableOpacity>
-                                <Text style={s.spinnerLabel}>hour</Text>
+                                <Text style={s.spinnerLabel}>{t('reminderForm.hourUnit')}</Text>
                             </View>
 
                             {/* Colon — aligned to the value row via paddingBottom */}
@@ -207,9 +210,9 @@ export function TimePickerField({ value, onChange }: Props) {
                                     onPress={() => incMinute(1)}
                                     activeOpacity={0.6}
                                     accessibilityRole="button"
-                                    accessibilityLabel="Increase minutes"
+                                    accessibilityLabel={t('reminderForm.increaseMinutes')}
                                 >
-                                    <Ionicons name="chevron-up" size={28} color={T.primary} />
+                                    <Ionicons name="chevron-up" size={28} color={C.primary} />
                                 </TouchableOpacity>
                                 <Text style={s.spinnerValue}>{String(draftMinute).padStart(2, '0')}</Text>
                                 <TouchableOpacity
@@ -217,11 +220,11 @@ export function TimePickerField({ value, onChange }: Props) {
                                     onPress={() => decMinute(1)}
                                     activeOpacity={0.6}
                                     accessibilityRole="button"
-                                    accessibilityLabel="Decrease minutes"
+                                    accessibilityLabel={t('reminderForm.decreaseMinutes')}
                                 >
-                                    <Ionicons name="chevron-down" size={28} color={T.primary} />
+                                    <Ionicons name="chevron-down" size={28} color={C.primary} />
                                 </TouchableOpacity>
-                                <Text style={s.spinnerLabel}>min</Text>
+                                <Text style={s.spinnerLabel}>{t('reminderForm.minuteUnit')}</Text>
                             </View>
 
                             {/* AM / PM chips */}
@@ -260,9 +263,9 @@ export function TimePickerField({ value, onChange }: Props) {
                                 onPress={() => decMinute(5)}
                                 activeOpacity={0.7}
                                 accessibilityRole="button"
-                                accessibilityLabel="Subtract 5 minutes"
+                                accessibilityLabel={t('reminderForm.subtractFiveMinutes')}
                             >
-                                <Text style={s.quickText}>−5 min</Text>
+                                <Text style={s.quickText}>{t('reminderForm.minusFiveMin')}</Text>
                             </TouchableOpacity>
                             <View style={s.quickDivider} />
                             <TouchableOpacity
@@ -270,9 +273,9 @@ export function TimePickerField({ value, onChange }: Props) {
                                 onPress={() => incMinute(5)}
                                 activeOpacity={0.7}
                                 accessibilityRole="button"
-                                accessibilityLabel="Add 5 minutes"
+                                accessibilityLabel={t('reminderForm.addFiveMinutes')}
                             >
-                                <Text style={s.quickText}>+5 min</Text>
+                                <Text style={s.quickText}>{t('reminderForm.plusFiveMin')}</Text>
                             </TouchableOpacity>
                         </View>
                     </View>
@@ -283,15 +286,19 @@ export function TimePickerField({ value, onChange }: Props) {
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
+// Theme-aware (previously hardcoded to light-mode colors with a comment
+// claiming that was intentional — but every other bottom sheet in the app
+// (settings-sheet.tsx) already adapts to dark mode, so this was a real
+// inconsistency, not a deliberate exception).
 
-const s = StyleSheet.create({
+const createStyles = (C: ThemeColors) => StyleSheet.create({
 
     // ── Compact form row ──────────────────────────────────────────────────────
     row: {
         flexDirection:     'row',
         alignItems:        'center',
         justifyContent:    'space-between',
-        backgroundColor:   T.bgAlt,
+        backgroundColor:   C.bgAlt,
         borderRadius:      RADIUS.lg,
         paddingHorizontal: 14,
         paddingVertical:   Platform.OS === 'ios' ? 14 : 12,
@@ -303,10 +310,10 @@ const s = StyleSheet.create({
     timeText: {
         fontSize:      17,
         fontWeight:    '700',
-        color:         T.textPrimary,
+        color:         C.textPrimary,
         letterSpacing: -0.2,
     },
-    tapHint: { fontSize: 12, color: T.textMuted, fontWeight: '500' },
+    tapHint: { fontSize: 12, color: C.textMuted, fontWeight: '500' },
 
     // ── Modal ─────────────────────────────────────────────────────────────────
     backdrop: {
@@ -315,8 +322,7 @@ const s = StyleSheet.create({
         justifyContent:  'flex-end',
     },
     sheet: {
-        // Explicit white so the picker is never affected by dark-mode theming
-        backgroundColor:      '#FFFFFF',
+        backgroundColor:      C.bgSurface,
         borderTopLeftRadius:  RADIUS.xxl,
         borderTopRightRadius: RADIUS.xxl,
         paddingTop:           8,
@@ -331,7 +337,7 @@ const s = StyleSheet.create({
         width:           36,
         height:          4,
         borderRadius:    RADIUS.full,
-        backgroundColor: T.border,
+        backgroundColor: C.border,
     },
     header: {
         flexDirection:     'row',
@@ -340,23 +346,23 @@ const s = StyleSheet.create({
         paddingHorizontal: 20,
         paddingVertical:   10,
         borderBottomWidth: 1,
-        borderBottomColor: T.border,
+        borderBottomColor: C.border,
     },
     headerTitle: {
         fontSize:      16,
         fontWeight:    '700',
-        color:         '#0F172A',
+        color:         C.textPrimary,
         letterSpacing: -0.2,
     },
-    cancelText: { fontSize: 16, fontWeight: '500', color: T.textMuted  },
-    doneText:   { fontSize: 16, fontWeight: '700', color: T.primary    },
+    cancelText: { fontSize: 16, fontWeight: '500', color: C.textMuted  },
+    doneText:   { fontSize: 16, fontWeight: '700', color: C.primary    },
 
     // ── Live preview ──────────────────────────────────────────────────────────
     preview: {
         textAlign:     'center',
         fontSize:      44,
         fontWeight:    '800',
-        color:         '#0F172A',
+        color:         C.textPrimary,
         letterSpacing: -1.5,
         marginTop:     24,
         marginBottom:  24,
@@ -380,12 +386,12 @@ const s = StyleSheet.create({
         alignItems:     'center',
         justifyContent: 'center',
         borderRadius:   RADIUS.lg,
-        backgroundColor: T.bgAlt,
+        backgroundColor: C.bgAlt,
     },
     spinnerValue: {
         fontSize:      42,
         fontWeight:    '800',
-        color:         '#0F172A',
+        color:         C.textPrimary,
         letterSpacing: -1.5,
         textAlign:     'center',
         minWidth:      72,
@@ -394,7 +400,7 @@ const s = StyleSheet.create({
     spinnerLabel: {
         fontSize:   11,
         fontWeight: '600',
-        color:      T.textMuted,
+        color:      C.textMuted,
         textTransform: 'uppercase',
         letterSpacing:  0.6,
         marginTop:  4,
@@ -402,7 +408,7 @@ const s = StyleSheet.create({
     colon: {
         fontSize:     42,
         fontWeight:   '800',
-        color:        '#0F172A',
+        color:        C.textPrimary,
         // Push down to align with the spinnerValue (sits between two arrowBtns)
         // arrowBtn height = 52, so colon centre needs to clear 52 + labelRow
         marginBottom: 28,
@@ -421,20 +427,20 @@ const s = StyleSheet.create({
         paddingVertical:   14,
         paddingHorizontal: 18,
         borderRadius:      RADIUS.lg,
-        backgroundColor:   T.bgAlt,
+        backgroundColor:   C.bgAlt,
         alignItems:        'center',
         minWidth:          62,
     },
     meridiemBtnActive: {
-        backgroundColor: T.primary,
+        backgroundColor: C.primary,
     },
     meridiemText: {
         fontSize:   15,
         fontWeight: '700',
-        color:      T.textSecondary,
+        color:      C.textSecondary,
     },
     meridiemTextActive: {
-        color: '#FFFFFF',
+        color: C.textInverse,
     },
 
     // ── Quick ±5 min row ──────────────────────────────────────────────────────
@@ -444,7 +450,7 @@ const s = StyleSheet.create({
         justifyContent:    'center',
         marginTop:         20,
         marginHorizontal:  20,
-        backgroundColor:   T.bgAlt,
+        backgroundColor:   C.bgAlt,
         borderRadius:      RADIUS.lg,
         overflow:          'hidden',
     },
@@ -456,12 +462,12 @@ const s = StyleSheet.create({
     quickDivider: {
         width:           1,
         height:          20,
-        backgroundColor: T.border,
+        backgroundColor: C.border,
         alignSelf:       'center',
     },
     quickText: {
         fontSize:   15,
         fontWeight: '700',
-        color:      T.primary,
+        color:      C.primary,
     },
 });

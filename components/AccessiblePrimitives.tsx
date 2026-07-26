@@ -19,9 +19,10 @@ import {
 } from 'react-native';
 
 import { RADIUS, ThemeColors } from '@/constants/theme';
+import { LAYOUT } from '@/lib/designTokens';
 import { useThemeColors } from '@/lib/theme';
 
-const MIN_TOUCH = 44;
+const MIN_TOUCH = LAYOUT.minControlHeight;
 const DEFAULT_HIT_SLOP = { top: 8, bottom: 8, left: 8, right: 8 };
 
 // ─── AccessiblePressable ────────────────────────────────────────────────────

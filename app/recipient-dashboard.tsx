@@ -495,7 +495,7 @@ export default function RecipientDashboard() {
                 {/* Header */}
                 <View style={styles.header}>
                     <View style={styles.headerTextBlock}>
-                        <Text style={styles.heading} numberOfLines={2} adjustsFontSizeToFit minimumFontScale={0.85}>
+                        <Text style={styles.heading} numberOfLines={2} accessibilityRole="header">
                             {getGreeting(t)}
                         </Text>
                         <Text style={styles.subheading} numberOfLines={1}>
@@ -598,7 +598,7 @@ export default function RecipientDashboard() {
                             {t('participantDashboard.connectionEndedText')}
                         </Text>
                         <TouchableOpacity
-                            style={styles.emptyActionButton}
+                            style={[styles.emptyActionButton, SHADOW.primary]}
                             onPress={() => router.push('/join-invite')}
                             activeOpacity={0.88}
                             accessibilityRole="button"
@@ -622,7 +622,7 @@ export default function RecipientDashboard() {
                             {t('participantDashboard.notConnectedText')}
                         </Text>
                         <TouchableOpacity
-                            style={styles.emptyActionButton}
+                            style={[styles.emptyActionButton, SHADOW.primary]}
                             onPress={() => router.push('/join-invite')}
                             activeOpacity={0.88}
                             accessibilityRole="button"

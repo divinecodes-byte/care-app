@@ -108,7 +108,7 @@ export const en = {
     forgotPassword: {
         heading: 'Reset your password',
         subheading: "Enter the email on your account and we'll send you a link to reset your password.",
-        submit: 'Send reset link',
+        submit: 'Send Reset Link',
         sentMessage: "If an account exists for that email, we've sent instructions to reset your password.",
         backToSignin: 'Back to sign in',
     },
@@ -118,7 +118,7 @@ export const en = {
         subheading: 'Enter a new password for your account.',
         newPasswordLabel: 'New password',
         confirmPasswordLabel: 'Confirm new password',
-        submit: 'Update password',
+        submit: 'Update Password',
         invalidLink: 'This reset link is no longer valid. Request a new one to continue.',
         requestNewLink: 'Request new link',
         successMessage: "Your password has been updated. Please sign in with your new password.",
@@ -170,7 +170,7 @@ export const en = {
 
     joinInvite: {
         back: 'Back',
-        heading: 'Join Care Circle',
+        heading: 'Connect Your Account',
         subheading: 'Enter the invite code your organizer shared with you to link accounts.',
         codeLabel: 'Invite Code',
         codePlaceholder: 'ABC123',
@@ -450,6 +450,32 @@ export const en = {
         freqWeekdays: 'Mon–Fri',
         freqWeekends: 'Sat–Sun',
         freqCustom: 'Custom days',
+        // Summary-line labels (e.g. "8:00 AM · Every day" on the dashboard/
+        // details screens) -- kept separate from the chip labels above
+        // since those read differently ("Mon–Fri" vs "Weekdays") and
+        // changing the summary line's wording to match the chips would be
+        // a copy change beyond this task's localization-only scope.
+        summaryEveryDay: 'Every day',
+        summaryWeekdays: 'Weekdays',
+        summaryWeekends: 'Weekends',
+        dayMon: 'Mon',
+        dayTue: 'Tue',
+        dayWed: 'Wed',
+        dayThu: 'Thu',
+        dayFri: 'Fri',
+        daySat: 'Sat',
+        daySun: 'Sun',
+        tapToChange: 'Tap to change',
+        increaseHour: 'Increase hour',
+        decreaseHour: 'Decrease hour',
+        increaseMinutes: 'Increase minutes',
+        decreaseMinutes: 'Decrease minutes',
+        hourUnit: 'hour',
+        minuteUnit: 'min',
+        subtractFiveMinutes: 'Subtract 5 minutes',
+        addFiveMinutes: 'Add 5 minutes',
+        minusFiveMin: '−5 min',
+        plusFiveMin: '+5 min',
         sectionAlerts: 'Alerts',
         missedAfterLabel: 'Mark as missed after',
         missedAfterHelper: 'Reminder is marked as missed if no response arrives within this window.',
@@ -544,7 +570,7 @@ export const en = {
         endConnectionConfirmTitle: 'End this connection?',
         endConnectionConfirmMessage: 'You will no longer be connected with {{name}}. Their reminders will stop, but their history is kept. This cannot be undone — reconnecting requires a new invite.',
         endConnectionConfirmAction: 'End Connection',
-        endConnectionAction: 'End connection',
+        endConnectionAction: 'End Connection',
         actionErrorTitle: 'Something went wrong',
         waitingStatus: 'Waiting to be accepted',
         replaceCodeAction: 'Replace code',

@@ -1,0 +1,172 @@
+# Tavora product terminology model
+
+Week 2 product-polish task #5: visual-system consistency, layout
+responsiveness, interaction polish, copy consistency, and premium
+launch-quality refinement. This document is the canonical terminology
+reference — the vocabulary every screen's copy should draw from, and the
+record of what was found inconsistent and fixed (or deliberately left as an
+accepted, contextual variation) during this task's full copy audit of
+`lib/i18n/locales/en.ts` and `es.ts`.
+
+## Generic product vocabulary (always available, use-case-agnostic)
+
+| Concept | Term |
+|---|---|
+| The person who invites/manages | **Organizer** |
+| The person being cared for/coordinated | **Participant** |
+| A reminder occurrence | **Reminder** |
+| The link between an organizer and a participant | **Connection** |
+| A reminder marked done | **Completed** (status noun) / **Done** (button verb — see "Action verb vs. status noun," below) |
+| A reminder deferred | **Snoozed** |
+| A reminder explicitly declined | **Skipped** |
+| A reminder whose window passed with no response | **Missed** |
+| A reminder awaiting a response | **Pending** |
+
+These five status words (`status.taken/pending/missed/skipped/snoozed` in
+both locale files) are the single source of truth for status vocabulary —
+`organizerDashboard.chipCompleted/chipMissed/chipSkipped/chipSnoozed/chipPending`
+and `settings.notifyMissed/notifySkipped/notifySnoozed/notifyCompleted` all
+reuse them verbatim. Confirmed consistent everywhere except the "taken"
+concept — see below.
+
+## Contextual relationship labels
+
+Defined in `lib/onboardingCore.ts`'s `ROLE_LABEL_KEYS_BY_USE_CASE`, resolved
+via `getRoleLabelKeys(useCase)` — display-only, never affects authorization
+(the underlying `role` column is always `caregiver`/`recipient`; see
+`docs/onboarding-model.md`):
+
+| `use_case` | Organizer-side | Participant-side |
+|---|---|---|
+| `care` | Caregiver | Loved One |
+| `coaching` | Coach | Athlete |
+| `team` | Manager | Team Member |
+| `family` / `personal` / `other` / unset | Organizer | Participant |
+
+`getRoleLabelKeys` is the **only** approved source for a contextual
+relationship label. It's consumed correctly by `choose-role.tsx`,
+`caregiver-dashboard.tsx`'s participant chips, and `participants.tsx`'s
+role-label heading. Two places bypass it and always show the neutral noun
+regardless of `use_case` — found by this task's audit, **not fixed**
+(changing them means threading `use_case` into two more screens, a real
+scope increase for a copy-consistency pass, not a one-line fix):
+
+- `firstReminder.confirmParticipantLabel` ("Participant") on the
+  create-reminder confirmation screen.
+- `reminderForm.forLabel` ("For") on the edit-reminder banner — a third,
+  different word for the same "who is this reminder for" field.
+
+Documented here as a known, accepted gap rather than silently left
+unmentioned — see Known Limitations in `docs/visual-design-model.md`.
+
+## Action verb vs. status noun (intentional, not a bug)
+
+The audit flagged four different words for "this reminder was taken":
+**"Done"** (dashboard/alert action buttons), **"Completed"** (status
+badges/chips), **"Marked as completed"** (post-action toast), and lowercase
+**"taken"** (organizer analytics sentences, e.g. "3 of 5 taken"). This is
+kept as-is deliberately: a button showing the *verb you're about to
+perform* ("Done") and a badge showing the *resulting state* ("Completed")
+serving different grammatical roles is a normal, common pattern — forcing
+both to read "Completed" would make the button read oddly ("Tap
+Completed" is worse than "Tap Done"). The lowercase "taken" in analytics
+sentences is likewise a normal mid-sentence verb form, not a separate
+concept. **No change made.**
+
+Snooze/Skip have a similar short-button vs. full-sentence pattern that's
+also kept: **"Later"**/**"Skip"** (compact dashboard buttons) vs. **"Remind
+Me Later"**/**"Skip this reminder"** (full-screen alert, more room for a
+complete phrase). Same underlying action, appropriately different verbosity
+for the available space — not a defect.
+
+## Fixed inconsistencies (this task)
+
+- **"Join Care Circle"** — the one truly stray phrase in the entire audit:
+  a one-off brand phrase ("Care Circle") that appeared nowhere else in the
+  app and didn't tie to either the neutral or contextual vocabulary above.
+  Changed to **"Connect Your Account"** (EN) / **"Conecta tu cuenta"**
+  (ES) — matching the screen's own submit button, which already said
+  "Connect Account."
+- **"End Connection" vs. "End connection"** — the confirm-dialog button and
+  the row-level action label used different capitalization for the
+  identical action. Unified to Title Case ("End Connection") in both
+  places; Spanish was already consistent ("Terminar conexión") and
+  untouched.
+- **Auth submit-button capitalization** — "Sign In" and "Create Account"
+  were Title Case while "Send reset link" and "Update password" (same
+  functional slot: primary CTA at the bottom of an auth form) were sentence
+  case. Unified all four to Title Case in English. Spanish equivalents were
+  already consistently sentence-case (linguistically correct for Spanish
+  UI copy) and were left untouched — this is a language-appropriate
+  difference, not an inconsistency to fix.
+- **Spanish Focus-mode terminology** — `reminderDetails.timeSensitiveNote`
+  said "modo No molestar" (Do Not Disturb, a different, older iOS feature)
+  while `notificationPermission.timeSensitiveNote` correctly said "modos de
+  enfoque" (Focus modes, matching Apple's actual Spanish terminology).
+  Both English sources say "Focus" — the Spanish `reminderDetails` string
+  was corrected to match.
+- **Day-of-week and time-picker labels were hardcoded English** (a known
+  issue carried over from the accessibility task) — "Mon"–"Sun",
+  "hour"/"min", "Tap to change", and every increase/decrease/±5-minute
+  control label in `TimePickerField.tsx` are now translated
+  (`reminderForm.day*`, `.tapToChange`, `.hourUnit`, `.minuteUnit`,
+  `.increaseHour`, etc.) via a new `buildFrequencyLabels(t)` helper in
+  `lib/frequency.ts` that keeps the underlying pure, zero-import module
+  callable with no i18n context (its own non-UI callers, like
+  `scripts/reminder-audit/run.ts`, still get the English fallback).
+
+## Internal/technical language — confirmed never user-visible
+
+Every `recipient_id`/`caregiver_id`/`occurrence`/`connection_id`/`RLS`/`uuid`
+occurrence in the codebase is a database column name, a TypeScript variable
+name, a route name (`/recipient-dashboard`), or a code comment — never
+interpolated into a translated string or rendered `<Text>`. Confirmed via a
+full-text audit of both locale files (zero matches for any of these tokens
+inside a quoted string value) and every screen file. The internal
+`caregiver`/`recipient` role vocabulary is fully firewalled from the
+user-facing `Organizer`/`Participant`/contextual vocabulary.
+
+## No medical or compliance claims
+
+Confirmed via grep across both locale files, `app.json`, `README.md`, and
+`docs/`: no "HIPAA," "medical," "diagnosis," "treatment," or "health
+record" language exists anywhere in user-facing or marketing-adjacent copy.
+`docs/security-model.md` and `docs/onboarding-model.md` explicitly document
+that this is deliberate, not accidental.
+
+## Empty-state tone
+
+Sampled every empty-state title+body pair in the app
+(`allClearTitle`/`notConnectedTitle`/`connectionEndedTitle`/
+`noRemindersSetUpTitle`/`noParticipantLinked`/`noAnalyticsYet`/
+`noCountableHistory`/`noRemindersCreatedYet`/`noHistoryYet`/`emptyTitle`).
+No emoji and almost no exclamation marks exist anywhere in either locale
+file — the hypothesized "celebratory vs. flat" tone mismatch was not
+found; copy is uniformly short-title-plus-one-sentence, plain and
+functional. The one outlier for length (not tone) is
+`participants.emptyText`, which lists example relationships ("a loved one,
+an athlete, a team member...") and reads noticeably longer/chattier than
+every other empty state — left as-is, since it's doing useful work
+(illustrating that Tavora isn't only for eldercare) that a terser version
+would lose.
+
+## Multiple labels for "invite a participant" (accepted, contextual)
+
+Five different strings exist for this one underlying action across
+different contexts: "Invite Participant" (screen heading/button), "Invite"
+(compact header pill), "Add"/"Add participant" (chip/row action),
+"Invite your first participant" (empty-state CTA). This is treated as
+acceptable contextual variation (a compact header pill legitimately needs
+shorter text than a full empty-state CTA) rather than a defect requiring
+one single string everywhere — Phase 10's own instruction that "contextual
+wording must not obscure the underlying action" is satisfied: every
+variant is unambiguously about inviting/adding a participant.
+
+## Known limitation
+
+`common.save` ("Save") is defined in `en.ts`/`es.ts` but referenced by no
+screen — both real save actions use the longer, screen-specific "Save
+Reminder"/"Save Changes" instead. Left in place rather than removed, since
+deleting an i18n key on the mere chance nothing references it is exactly
+the kind of speculative cleanup this task's constraints discourage; noted
+here so a future pass doesn't re-discover it as a mystery.
