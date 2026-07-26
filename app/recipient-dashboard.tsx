@@ -19,6 +19,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { OfflineBanner, SectionErrorState, announceStateChange } from '@/components/StateViews';
 import { SettingsSheet } from '@/components/settings-sheet';
+import { TasksSummaryCard } from '@/components/TasksSummaryCard';
 import { RADIUS, SHADOW, SPACING, ThemeColors } from '@/constants/theme';
 import { clearAccountScopedLocalState } from '@/lib/accountCleanup';
 import { ErrorCategory, classifyScreenError } from '@/lib/asyncStateCore';
@@ -195,6 +196,7 @@ export default function RecipientDashboard() {
     // "no connection yet" screen with no acknowledgment that a connection
     // existed and ended (organizer- or participant-initiated).
     const [connectionEnded, setConnectionEnded]   = useState(false);
+    const [recipientId, setRecipientId]           = useState<string | null>(null);
     // True once the organizer has created at least one active reminder,
     // regardless of whether any is due today — distinguishes "organizer
     // hasn't set anything up yet" from "reminders exist, just none today,"
@@ -254,6 +256,8 @@ export default function RecipientDashboard() {
         }
 
         if (!isLoadCurrent(generation)) return; // a newer load has since started
+
+        setRecipientId(user.id);
 
         const { data: connectionRows } = await supabase
             .from('connections')
@@ -791,6 +795,9 @@ export default function RecipientDashboard() {
                         </TouchableOpacity>
                     );
                 })}
+                {hasConnection && recipientId ? (
+                    <TasksSummaryCard recipientId={recipientId} recipientTimeZone={Intl.DateTimeFormat().resolvedOptions().timeZone} canCreate={false} />
+                ) : null}
             </ScrollView>
 
             <SettingsSheet

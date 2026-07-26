@@ -17,6 +17,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { OfflineBanner, SectionErrorState, announceStateChange } from '@/components/StateViews';
 import { SettingsSheet } from '@/components/settings-sheet';
+import { TasksSummaryCard } from '@/components/TasksSummaryCard';
 import { RADIUS, SHADOW, SPACING, ThemeColors } from '@/constants/theme';
 import { clearAccountScopedLocalState } from '@/lib/accountCleanup';
 import { showAlertOnce } from '@/lib/alertGuard';
@@ -936,7 +937,7 @@ export default function CaregiverDashboard() {
             router.push('/invite-recipient');
             return;
         }
-        router.push({ pathname: '/create-reminder', params: { connectionId: connectionSummary.id } });
+        router.push({ pathname: '/create-item', params: { connectionId: connectionSummary.id } });
     }
 
     // ── Connection card ─────────────────────────────────────────────────────
@@ -1606,6 +1607,9 @@ export default function CaregiverDashboard() {
                         )}
                         {renderAnalytics()}
                     </>
+                )}
+                {connectionSummary.status === 'accepted' && (
+                    <TasksSummaryCard connectionId={connectionSummary.id} recipientTimeZone={recipientTimeZone} canCreate />
                 )}
             </ScrollView>
 

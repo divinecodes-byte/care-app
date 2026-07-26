@@ -11,7 +11,7 @@
 // local tuning without editing the script.
 
 import { execFileSync } from 'node:child_process';
-import { dbQuery, check, getResults, overallStatus, num } from './helpers';
+import { dbQuery, check, getResults, overallStatus, num, Status } from './helpers';
 
 // ─── Configurable thresholds ──────────────────────────────────────────────
 const CRON_STALE_WARN_MULTIPLIER = Number(process.env.OPS_CRON_WARN_MULTIPLIER ?? 4); // "late" if last run > N x its own schedule interval
@@ -155,6 +155,31 @@ function main() {
 
     const receiptOverdue = num(deliveryMetricsRecord, 'receipt_overdue');
     check('recipient_pushes:receipt_overdue', receiptOverdue > 5 ? 'WARNING' : 'PASS', `${receiptOverdue} sent deliveries with no receipt check after 20 minutes`);
+
+    // ── Task-assignment push health (kept structurally separate from the
+    // timed-reminder metrics above — Week 3 flexible-tasks task #1,
+    // Phase 13) ─────────────────────────────────────────────────────────────
+    const taskMetricsRows = dbQuery('select * from public.task_notification_health_summary(24);') as { metric: string; value: number | null }[];
+    const taskMetricsRecord = Object.fromEntries(taskMetricsRows.map((r) => [r.metric, r.value]));
+    const taskDue = num(taskMetricsRecord, 'due_in_window');
+    const taskSent = num(taskMetricsRecord, 'sent');
+    const taskFailedOther = num(taskMetricsRecord, 'failed_other');
+    const taskFailedTokenAbsence = num(taskMetricsRecord, 'failed_token_absence');
+
+    if (taskDue < FAILURE_RATE_MIN_SAMPLE) {
+        if (taskFailedOther >= FAILURE_RATE_MIN_SAMPLE_ABS_WARN) {
+            check('task_pushes:failure_rate', 'WARNING', `${taskFailedOther} genuine failure(s) of ${taskDue} due in last 24h — sample too small for a rate`);
+        } else {
+            check('task_pushes:failure_rate', 'PASS', `${taskDue} due in last 24h (sent=${taskSent}, of which ${taskFailedTokenAbsence} no-token) — sample below ${FAILURE_RATE_MIN_SAMPLE}, rate not computed`);
+        }
+    } else {
+        const taskFailureRate = taskFailedOther / taskDue;
+        const taskStatus: Status = taskFailureRate >= FAILURE_RATE_FAIL ? 'FAIL' : taskFailureRate >= FAILURE_RATE_WARN ? 'WARNING' : 'PASS';
+        check('task_pushes:failure_rate', taskStatus, `${(taskFailureRate * 100).toFixed(1)}% genuine-failure of ${taskDue} due in last 24h (sent=${taskSent}, excludes ${taskFailedTokenAbsence} no-token)`);
+    }
+
+    const taskStuckPending = num(taskMetricsRecord, 'stuck_pending');
+    check('task_pushes:stuck_pending', taskStuckPending >= STUCK_PENDING_FAIL ? 'FAIL' : taskStuckPending >= STUCK_PENDING_WARN ? 'WARNING' : 'PASS', `${taskStuckPending} task-assignment delivery row(s) pending > 5 minutes`);
 
     // ── Caregiver push health (uses caregiver_notification_events directly —
     // no dedicated health function exists for it; the table is small and a

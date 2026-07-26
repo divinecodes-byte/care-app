@@ -3,6 +3,11 @@
 // malformed tokens immediately — DeviceNotRegistered (app uninstalled,
 // token revoked) is often only visible ~15+ minutes later via the receipts
 // endpoint. This is the follow-up half of push-token hygiene.
+//
+// Week 3 flexible-tasks addition: also checks task_notification_deliveries'
+// sent tickets in the same batched Expo call (one Expo API round trip for
+// both ledgers rather than a second redundant cron/function) — each row is
+// tagged with its source table so the update lands back on the right one.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { assertCronRequest, jsonLog, chunk } from '../_shared/cron-auth.ts';
 
@@ -14,6 +19,9 @@ const LOOKBACK_HOURS = 24;
 type ExpoReceipt =
   | { status: 'ok' }
   | { status: 'error'; message: string; details?: { error?: string } };
+
+type Source = 'reminder' | 'task';
+type TrackedRow = { source: Source; id: string; recipientId: string; ticketId: string };
 
 Deno.serve(async (req) => {
   const unauthorized = assertCronRequest(req);
@@ -28,20 +36,30 @@ Deno.serve(async (req) => {
 
   const since = new Date(Date.now() - LOOKBACK_HOURS * 60 * 60 * 1000).toISOString();
 
-  const { data: deliveries, error } = await supabase
-    .from('reminder_notification_deliveries')
-    .select('id, recipient_id, expo_ticket_id')
-    .eq('status', 'sent')
-    .not('expo_ticket_id', 'is', null)
-    .gte('sent_at', since);
+  const [{ data: reminderRows, error: reminderError }, { data: taskRows, error: taskError }] = await Promise.all([
+    supabase
+      .from('reminder_notification_deliveries')
+      .select('id, recipient_id, expo_ticket_id')
+      .eq('status', 'sent')
+      .not('expo_ticket_id', 'is', null)
+      .gte('sent_at', since),
+    supabase
+      .from('task_notification_deliveries')
+      .select('id, recipient_id, expo_ticket_id')
+      .eq('status', 'sent')
+      .not('expo_ticket_id', 'is', null)
+      .gte('sent_at', since),
+  ]);
 
-  if (error) {
-    log('query_error', { error: error.message });
-    return Response.json({ error: error.message }, { status: 500 });
-  }
+  if (reminderError) log('reminder_query_error', { error: reminderError.message });
+  if (taskError) log('task_query_error', { error: taskError.message });
 
-  const rows = deliveries ?? [];
-  log('scanned', { deliveries: rows.length });
+  const rows: TrackedRow[] = [
+    ...(reminderRows ?? []).map((r: any) => ({ source: 'reminder' as const, id: r.id, recipientId: r.recipient_id, ticketId: r.expo_ticket_id as string })),
+    ...(taskRows ?? []).map((r: any) => ({ source: 'task' as const, id: r.id, recipientId: r.recipient_id, ticketId: r.expo_ticket_id as string })),
+  ];
+
+  log('scanned', { reminderDeliveries: reminderRows?.length ?? 0, taskDeliveries: taskRows?.length ?? 0 });
 
   if (rows.length === 0) {
     log('end', { checked: 0, deactivated: 0 });
@@ -56,22 +74,16 @@ Deno.serve(async (req) => {
   // multi-device disambiguation isn't possible from Expo's response shape
   // alone, so a recipient with several active devices and one stale one
   // among them needs the periodic ticket-time DeviceNotRegistered check
-  // (handled in send-due-recipient-reminders) to catch it precisely instead.
-  const ticketToRecipient = new Map<string, string>();
-  const ticketToDeliveryId = new Map<string, string>();
-  for (const row of rows) {
-    if (row.expo_ticket_id) {
-      ticketToRecipient.set(row.expo_ticket_id, row.recipient_id);
-      ticketToDeliveryId.set(row.expo_ticket_id, row.id);
-    }
-  }
+  // (handled in the send functions) to catch it precisely instead.
+  const ticketToRow = new Map<string, TrackedRow>();
+  for (const row of rows) ticketToRow.set(row.ticketId, row);
 
   let checked = 0;
   let deactivated = 0;
   const recipientsToDeactivate = new Set<string>();
-  const checkedDeliveryIds: string[] = [];
+  const checkedIdsBySource: Record<Source, string[]> = { reminder: [], task: [] };
 
-  for (const batch of chunk(rows.map((r) => r.expo_ticket_id!), RECEIPT_BATCH_SIZE)) {
+  for (const batch of chunk(rows.map((r) => r.ticketId), RECEIPT_BATCH_SIZE)) {
     try {
       const res = await fetch(EXPO_RECEIPTS_URL, {
         method: 'POST',
@@ -84,15 +96,11 @@ Deno.serve(async (req) => {
       for (const ticketId of batch) {
         const receipt = receipts[ticketId];
         checked++;
-        // Recorded regardless of outcome — "checked" means we got a
-        // response from Expo for this ticket, ok or not, which is what
-        // receipt_checked_at/"receipt overdue" monitoring needs to know.
-        const deliveryId = ticketToDeliveryId.get(ticketId);
-        if (deliveryId) checkedDeliveryIds.push(deliveryId);
+        const row = ticketToRow.get(ticketId);
+        if (row) checkedIdsBySource[row.source].push(row.id);
 
         if (receipt?.status === 'error' && receipt.details?.error === 'DeviceNotRegistered') {
-          const recipientId = ticketToRecipient.get(ticketId);
-          if (recipientId) recipientsToDeactivate.add(recipientId);
+          if (row) recipientsToDeactivate.add(row.recipientId);
         }
       }
     } catch (err) {
@@ -106,11 +114,12 @@ Deno.serve(async (req) => {
     }
   }
 
-  if (checkedDeliveryIds.length > 0) {
-    await supabase
-      .from('reminder_notification_deliveries')
-      .update({ receipt_checked_at: new Date().toISOString() })
-      .in('id', checkedDeliveryIds);
+  const nowIso = new Date().toISOString();
+  if (checkedIdsBySource.reminder.length > 0) {
+    await supabase.from('reminder_notification_deliveries').update({ receipt_checked_at: nowIso }).in('id', checkedIdsBySource.reminder);
+  }
+  if (checkedIdsBySource.task.length > 0) {
+    await supabase.from('task_notification_deliveries').update({ receipt_checked_at: nowIso }).in('id', checkedIdsBySource.task);
   }
 
   if (recipientsToDeactivate.size > 0) {
@@ -128,7 +137,7 @@ Deno.serve(async (req) => {
       if (activeTokens && activeTokens.length === 1) {
         await supabase
           .from('push_tokens')
-          .update({ is_active: false, updated_at: new Date().toISOString() })
+          .update({ is_active: false, updated_at: nowIso })
           .eq('id', activeTokens[0].id);
         deactivated++;
       }

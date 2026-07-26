@@ -29,6 +29,41 @@ and `settings.notifyMissed/notifySkipped/notifySnoozed/notifyCompleted` all
 reuse them verbatim. Confirmed consistent everywhere except the "taken"
 concept — see below.
 
+## Task terminology (Week 3 product-expansion task #1)
+
+**Task** is the generic UI word for the second accountability object
+(flexible, non-time-based assignments) — see `docs/flexible-task-model.md`
+for the full architecture. Internal table/column names still use the
+existing `caregiver_id`/`recipient_id` convention; "Task," "Organizer," and
+"Participant" never leak into a table, column, or route name, matching the
+same rule already established for Reminder/Organizer/Participant above.
+
+Task status words are **deliberately distinct** from reminder status words
+— they are never interchangeable, never share a translation key, and a
+screen must never mix them:
+
+| Concept | Term |
+|---|---|
+| A task not yet started | **Upcoming** |
+| A task available to complete, before its deadline | **Open** |
+| A task whose deadline passed, still completable | **Overdue** (never "Missed" — a task is never permanently lost) |
+| A task completed by its deadline | **Completed** |
+| A task completed after its deadline | **Completed late** |
+| A task explicitly declined | **Skipped** |
+
+Why separate from reminder status: "Missed" implies a permanently-lost,
+terminal event (matches the reminder pipeline's cron-driven `missed` write).
+A task's "Overdue" state is the opposite — always still actionable, never
+terminal. Reusing "Missed" for a task would misrepresent that a late
+response is still fully valid. Similarly, there is no "Pending" or
+"Snoozed" task status — those reminder-specific words describe exact-time
+concepts (a response window, a deferred alarm) that don't exist for a task.
+
+`itemTypePicker.*` carries the exact required explanatory copy: "Alerts the
+participant at a specific time" (Timed Reminder) and "Can be completed
+anytime within its assigned date or deadline" (Flexible Task) — chosen so
+neither option reads as the "default"/"other" choice.
+
 ## Contextual relationship labels
 
 Defined in `lib/onboardingCore.ts`'s `ROLE_LABEL_KEYS_BY_USE_CASE`, resolved

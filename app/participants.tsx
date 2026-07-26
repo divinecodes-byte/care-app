@@ -148,7 +148,7 @@ export default function ParticipantsScreen() {
     }
 
     function createReminderFor(connectionId: string) {
-        router.push({ pathname: '/create-reminder', params: { connectionId } });
+        router.push({ pathname: '/create-item', params: { connectionId } });
     }
 
     function confirmEndConnection(connectionId: string, name: string) {

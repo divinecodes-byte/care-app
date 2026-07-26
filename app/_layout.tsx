@@ -144,12 +144,22 @@ function RootLayoutNav() {
 
         const data = (response.notification.request.content.data ?? {}) as Record<string, unknown>;
         const reminderId = data.reminderId as string | undefined;
+        const taskId = data.taskId as string | undefined;
 
         if (data.type === 'caregiver_reminder_event') {
             // Caregiver push notifications never open the recipient's full-screen
             // reminder alert (and its Taken/Snooze/Skip actions) — for now they
             // just take the caregiver to their dashboard.
             router.push('/caregiver-dashboard');
+            return;
+        }
+
+        // Task-assignment push — task-details.tsx re-validates the task's own
+        // active/connection state before allowing any response, so a stale
+        // notification tap for an archived task or ended connection is always
+        // handled by that screen's own calm state, never a crash or a bypass.
+        if (data.notificationType === 'task_assignment' && taskId) {
+            router.push({ pathname: '/task-details', params: { taskId } });
             return;
         }
 
