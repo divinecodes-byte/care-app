@@ -17,9 +17,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { StatusBadge, StatusTone } from '@/components/AccessiblePrimitives';
+import { formatDateStringForDisplay } from '@/components/DatePickerField';
 import { OfflineBanner, SectionErrorState, announceStateChange } from '@/components/StateViews';
 import { SettingsSheet } from '@/components/settings-sheet';
-import { TasksSummaryCard } from '@/components/TasksSummaryCard';
 import { RADIUS, SHADOW, SPACING, ThemeColors } from '@/constants/theme';
 import { clearAccountScopedLocalState } from '@/lib/accountCleanup';
 import { ErrorCategory, classifyScreenError } from '@/lib/asyncStateCore';
@@ -37,12 +38,15 @@ import {
     scheduleSnoozeNotification,
     syncRecipientReminderNotifications,
 } from '@/lib/notifications';
-import { syncCurrentUserTimezone } from '@/lib/timezone';
-import { isDueOnDate } from '@/lib/frequency';
+import { isValidIanaTimezone, repairAndRefetchTimezone, syncCurrentUserTimezone } from '@/lib/timezone';
 import { showAlertOnce } from '@/lib/alertGuard';
 import { REMINDER_ERROR_TRANSLATION_KEYS } from '@/lib/reminderErrors';
 import { respondToReminderOccurrence } from '@/lib/reminderLifecycle';
-import { getFirstEligibleDateString, isPastNoResponseWindow } from '@/lib/reminderStatus';
+import { getZonedAnalyticsStartDateString, isoWeekdayOfDateString } from '@/lib/reminderStatus';
+import { fetchTasksForRecipient, TaskWithSummary } from '@/lib/taskData';
+import { TASK_UPCOMING_LOOKAHEAD_DAYS } from '@/lib/todayFeedCore';
+import { getNextParticipantMidnight, getParticipantLocalDateKey } from '@/lib/participantTodayContext';
+import { isPastNoResponseWindowAt, zonedDateTimeToUtc } from '@/lib/zonedTime';
 
 type ReminderStatus = 'pending' | 'taken' | 'snoozed' | 'skipped' | 'missed';
 
@@ -82,11 +86,10 @@ const TYPE_LABEL_KEYS: Record<string, string> = {
 };
 
 // ─── Pure helpers (unchanged) ────────────────────────────────────────────────
-
-function getTodayDateString() {
-    const today = new Date();
-    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-}
+// getTodayDateString()/shouldShowToday() (device-local) were removed here —
+// every "today" calendar decision now goes through
+// lib/participantTodayContext.ts using the participant's own stored
+// profiles.timezone. See docs/today-hub-model.md.
 
 function formatTime(time: string) {
     const [hourString, minuteString] = time.split(':');
@@ -95,10 +98,6 @@ function formatTime(time: string) {
     if (hour === 0) hour = 12;
     if (hour > 12) hour -= 12;
     return `${hour}:${minuteString} ${suffix}`;
-}
-
-function shouldShowToday(daysOfWeek: number[]) {
-    return isDueOnDate(daysOfWeek, new Date());
 }
 
 // ─── UI helpers ───────────────────────────────────────────────────────────────
@@ -197,6 +196,22 @@ export default function RecipientDashboard() {
     // existed and ended (organizer- or participant-initiated).
     const [connectionEnded, setConnectionEnded]   = useState(false);
     const [recipientId, setRecipientId]           = useState<string | null>(null);
+    // Authoritative for every Today-feed calendar decision (see
+    // lib/participantTodayContext.ts) — null until the first successful
+    // loadReminders() completes; every classification below must defer
+    // rather than fall back to a hardcoded default or the device's own
+    // timezone while null.
+    const [participantTimezone, setParticipantTimezone] = useState<string | null>(null);
+    // True only once loadReminders() has confirmed profiles.timezone is
+    // missing/invalid AND the repair-then-refetch attempt
+    // (repairAndRefetchTimezone) still couldn't produce a valid value —
+    // distinct from "still loading" (participantTimezone null, this false).
+    // Drives a compact, retryable notice instead of ever guessing a zone.
+    const [timezoneUnavailable, setTimezoneUnavailable] = useState(false);
+    // Detects an authenticated-user change between loads (e.g. a session
+    // swap without a full remount) so the PREVIOUS user's timezone can
+    // never be left standing while the new one's is being resolved.
+    const lastAuthUserIdRef = useRef<string | null>(null);
     // True once the organizer has created at least one active reminder,
     // regardless of whether any is due today — distinguishes "organizer
     // hasn't set anything up yet" from "reminders exist, just none today,"
@@ -210,6 +225,63 @@ export default function RecipientDashboard() {
     const pushRegistrationAttemptedRef = useRef(false);
     const hasLoadedOnceRef = useRef(false);
     const { start: startLoad, isCurrent: isLoadCurrent } = useRequestGeneration();
+
+    // Flexible tasks — fetched and failable entirely independently of
+    // reminders (Phase 5: "partial reminder failure must not hide tasks"
+    // and vice versa). Own request-generation guard so a stale response
+    // (e.g. after a fast account switch) can never overwrite a newer one.
+    const [taskStatus, setTaskStatus]   = useState<'loading' | 'ready' | 'error' | 'unavailable'>('loading');
+    const [taskSummaries, setTaskSummaries] = useState<TaskWithSummary[]>([]);
+    const { start: startTaskLoad, isCurrent: isTaskLoadCurrent } = useRequestGeneration();
+    const lastLoadedDateRef = useRef<string>('');
+
+    const loadTasks = useCallback(async () => {
+        const generation = startTaskLoad();
+        setTaskStatus((s) => (s === 'ready' ? s : 'loading'));
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!isTaskLoadCurrent(generation)) return;
+            if (!user) { setTaskSummaries([]); setTaskStatus('ready'); return; }
+
+            const { data: profile, error: profileError } = await supabase.from('profiles').select('timezone').eq('id', user.id).maybeSingle();
+            if (!isTaskLoadCurrent(generation)) return;
+            if (profileError) { setTaskStatus('error'); return; }
+
+            // profiles.timezone is authoritative; a missing/invalid value
+            // triggers the same repair-then-refetch attempt as the
+            // reminders load (repairAndRefetchTimezone) — never a
+            // hardcoded default and never this device's own timezone,
+            // which would silently reintroduce a device-vs-participant
+            // mismatch for exactly the participant who most needs the
+            // stored value to be authoritative (their sync hasn't
+            // succeeded yet). If it's still unavailable after the repair
+            // attempt, tasks are left unclassified rather than guessed.
+            let taskTimezone = isValidIanaTimezone(profile?.timezone) ? profile!.timezone : null;
+            if (!taskTimezone) {
+                taskTimezone = await repairAndRefetchTimezone(user.id);
+                if (!isTaskLoadCurrent(generation)) return;
+            }
+            if (!taskTimezone) {
+                setTaskSummaries([]);
+                setTaskStatus('unavailable');
+                return;
+            }
+
+            const rows = await fetchTasksForRecipient(user.id, taskTimezone);
+            if (!isTaskLoadCurrent(generation)) return;
+
+            setTaskSummaries(rows.filter((r) => r.task.is_active));
+            setTaskStatus('ready');
+        } catch {
+            if (isTaskLoadCurrent(generation)) setTaskStatus('error');
+        }
+    }, [startTaskLoad, isTaskLoadCurrent]);
+
+    const refreshToday = useCallback(() => {
+        loadReminders();
+        loadTasks();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [loadTasks]);
 
     async function loadReminders() {
         const generation = startLoad();
@@ -235,37 +307,93 @@ export default function RecipientDashboard() {
             return;
         }
 
+        // Never let a previous account's already-resolved timezone (and
+        // whatever it classified) stand while a different user's load is
+        // in flight — cleared synchronously, before any further await, the
+        // moment a user-id change is detected between loads.
+        if (lastAuthUserIdRef.current !== null && lastAuthUserIdRef.current !== user.id) {
+            setParticipantTimezone(null);
+            setTimezoneUnavailable(false);
+        }
+        lastAuthUserIdRef.current = user.id;
+
         // A tombstoned account must never reach reminder data, even if a
         // technically-valid session slipped through (e.g. Auth deletion
         // partially failed upstream but the profile tombstone is already
         // in place). No timezone sync, no push registration, no
         // notification sync — this returns before any of that runs.
-        const { data: statusRow } = await supabase
+        //
+        // `timezone` is fetched in this same query — profiles.timezone (not
+        // this device's own clock, and not a hardcoded default) is the sole
+        // authoritative source for every Today-feed calendar decision below
+        // (see lib/participantTodayContext.ts and docs/today-hub-model.md).
+        // The fire-and-forget syncCurrentUserTimezone() call further below
+        // keeps this column following the device over time, but this load
+        // always reads whatever is CURRENTLY stored, never assumes the sync
+        // already ran.
+        const { data: statusRow, error: statusError } = await supabase
             .from('profiles')
-            .select('account_status')
+            .select('account_status, timezone')
             .eq('id', user.id)
             .maybeSingle();
+
+        if (!isLoadCurrent(generation)) return; // a newer load has since started
+
+        if (statusError) {
+            setLoading(false);
+            setRefreshing(false);
+            hasLoadedOnceRef.current = true;
+            setLoadError(classifyScreenError(statusError.message));
+            return;
+        }
 
         if (statusRow?.account_status === 'deleted') {
             setLoading(false);
             setRefreshing(false);
+            setParticipantTimezone(null);
+            setTimezoneUnavailable(false);
             await clearAccountScopedLocalState().catch(() => {});
             await supabase.auth.signOut().catch(() => {});
             router.replace('/signin');
             return;
         }
 
-        if (!isLoadCurrent(generation)) return; // a newer load has since started
-
         setRecipientId(user.id);
+
+        // Missing/invalid triggers the established repair-then-refetch
+        // path (repairAndRefetchTimezone — reconciles this device's own
+        // resolvable timezone into the profile, a no-op if already fine)
+        // and re-reads once. Never falls back to a hardcoded default or
+        // the device's own timezone for classification — if it's still
+        // unavailable after the attempt, this load stops here, leaving
+        // reminders/tasks unclassified rather than guessed (see
+        // "unavailable" handling below and docs/today-hub-model.md).
+        let timezone = isValidIanaTimezone(statusRow?.timezone) ? statusRow!.timezone : null;
+        if (!timezone) {
+            timezone = await repairAndRefetchTimezone(user.id);
+            if (!isLoadCurrent(generation)) return;
+        }
+
+        if (!timezone) {
+            setParticipantTimezone(null);
+            setTimezoneUnavailable(true);
+            setLoading(false);
+            setRefreshing(false);
+            hasLoadedOnceRef.current = true;
+            return;
+        }
+
+        setTimezoneUnavailable(false);
+        setParticipantTimezone(timezone);
 
         const { data: connectionRows } = await supabase
             .from('connections')
-            .select('status')
+            .select('id, status, accepted_at')
             .eq('recipient_id', user.id);
         const hasAccepted = (connectionRows ?? []).some((c) => c.status === 'accepted');
         setHasConnection(hasAccepted);
         setConnectionEnded(!hasAccepted && (connectionRows ?? []).some((c) => c.status === 'ended'));
+        const acceptedAtByConnection = new Map((connectionRows ?? []).map((c) => [c.id, c.accepted_at as string | null]));
 
         // Reconcile this device's timezone every load (not just once) — a
         // recipient who travels needs their stored profiles.timezone to
@@ -318,15 +446,25 @@ export default function RecipientDashboard() {
             syncRecipientReminderNotifications().catch(console.warn);
         }
 
-        const todayDate = getTodayDateString();
+        // Participant-timezone-authoritative "today" (Phase 6/Today-hub
+        // correctness follow-up) — never the device's own local date. See
+        // lib/participantTodayContext.ts.
+        const todayDate = getParticipantLocalDateKey(new Date(), timezone);
+        lastLoadedDateRef.current = todayDate;
         setHasAnyReminders((data || []).length > 0);
 
         // Exclude reminders not yet eligible today — a reminder created today
         // after its scheduled time-of-day already passed shouldn't be treated
-        // as missed; its first occurrence is tomorrow.
+        // as missed; its first occurrence is tomorrow. Both checks now use
+        // the participant's own timezone explicitly (isoWeekdayOfDateString/
+        // getZonedAnalyticsStartDateString), matching exactly how
+        // caregiver-dashboard.tsx already computes this for a caregiver
+        // viewing a *different* participant's reminders — the recipient's
+        // own view now uses the identical zoned math, not device-local
+        // shortcuts.
         const todaysReminders = (data || []).filter((r) =>
-            shouldShowToday(r.days_of_week) &&
-            getFirstEligibleDateString(r.created_at, r.time_of_day) <= todayDate
+            r.days_of_week.includes(isoWeekdayOfDateString(todayDate)) &&
+            getZonedAnalyticsStartDateString(acceptedAtByConnection.get(r.connection_id) ?? r.created_at, r.created_at, r.time_of_day, timezone) <= todayDate
         );
 
         if (todaysReminders.length === 0) {
@@ -367,11 +505,14 @@ export default function RecipientDashboard() {
             if (logStatus && logStatus !== 'pending') {
                 return { ...reminder, today_status: logStatus, snoozed_until: snoozedUntil ?? null };
             }
-            // No log yet, or still pending — check if the response window has expired.
-            const today_status: ReminderStatus = isPastNoResponseWindow(
-                reminder.time_of_day,
-                reminder.no_response_minutes
-            )
+            // No log yet, or still pending — check if the response window has
+            // expired. The scheduled instant is computed in the
+            // PARTICIPANT's own timezone (zonedDateTimeToUtc, the same
+            // DST-safe wall-clock -> absolute-instant conversion the server
+            // uses) — comparing it to "now" needs no further zone awareness,
+            // since both sides are already resolved to real absolute instants.
+            const scheduledFor = zonedDateTimeToUtc(todayDate, reminder.time_of_day, timezone);
+            const today_status: ReminderStatus = isPastNoResponseWindowAt(scheduledFor, reminder.no_response_minutes)
                 ? 'missed'
                 : 'pending';
             return { ...reminder, today_status, snoozed_until: null };
@@ -399,7 +540,7 @@ export default function RecipientDashboard() {
         // docs/reminder-state-model.md.
     }
 
-    useFocusEffect(useCallback(() => { loadReminders(); }, []));
+    useFocusEffect(useCallback(() => { refreshToday(); }, [refreshToday]));
 
     // Reconcile local notifications the moment the app comes back to the
     // foreground — this is the path that catches a caregiver deletion that
@@ -416,11 +557,54 @@ export default function RecipientDashboard() {
                     .finally(() => {
                         syncRecipientReminderNotifications().catch(console.warn);
                     });
+                // Foreground fallback for the scheduled midnight timer below
+                // (Phase 4): React Native timers can be throttled/delayed
+                // while the app is backgrounded, so this is the backstop —
+                // if the PARTICIPANT's own calendar date (never the
+                // device's) has changed since the last load, refresh
+                // immediately. A no-op the vast majority of the time (same
+                // day), so this never becomes aggressive polling.
+                if (participantTimezone && lastLoadedDateRef.current && lastLoadedDateRef.current !== getParticipantLocalDateKey(new Date(), participantTimezone)) {
+                    refreshToday();
+                }
             }
             appStateRef.current = nextState;
         });
         return () => subscription.remove();
-    }, []);
+    }, [participantTimezone, refreshToday]);
+
+    // Scheduled participant-midnight rollover (Phase 4) — replaces
+    // device-midnight/interval-based polling entirely. Recomputes the next
+    // participant-local midnight (DST-safe — never assumes a 24-hour day)
+    // every time it fires, and whenever `participantTimezone` itself
+    // changes (a profile-timezone change, or a fresh value after an
+    // account switch) the effect cleanup cancels the stale timer before a
+    // new one is scheduled against the new zone.
+    useEffect(() => {
+        if (!participantTimezone) return;
+
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        let cancelled = false;
+
+        function scheduleNext() {
+            if (cancelled) return;
+            const next = getNextParticipantMidnight(new Date(), participantTimezone!);
+            // A small buffer past the boundary avoids firing a hair early
+            // due to timer-resolution jitter and landing back in "today".
+            const delayMs = Math.max(next.getTime() - Date.now(), 1000) + 2000;
+            timer = setTimeout(() => {
+                if (cancelled) return;
+                refreshToday();
+                scheduleNext();
+            }, delayMs);
+        }
+
+        scheduleNext();
+        return () => {
+            cancelled = true;
+            if (timer) clearTimeout(timer);
+        };
+    }, [participantTimezone, refreshToday]);
 
     async function saveReminderAction(reminder: Reminder, status: 'taken' | 'skipped' | 'snoozed') {
         // The action buttons are swapped out for a "saving" box while
@@ -428,10 +612,23 @@ export default function RecipientDashboard() {
         // next render -- this synchronous guard is the real protection
         // against a rapid double-tap of the same card queuing two RPCs.
         if (savingReminderId === reminder.id) return;
+
+        // A reminder card is normally only visible/tappable once
+        // loadReminders() has resolved a valid timezone, but a stale card
+        // can still be on screen if the timezone became unavailable on a
+        // later refresh (reminders are left visible, never blanked, on a
+        // background-refresh failure — see loadReminders). Never guess a
+        // zone to compute today's date in that case; block the action
+        // instead.
+        if (!participantTimezone) {
+            showAlertOnce(t('participantDashboard.saveErrorTitle'), t('participantDashboard.timezoneUnavailableText'));
+            return;
+        }
+
         if (Platform.OS === 'ios') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         setSavingReminderId(reminder.id);
 
-        const todayDate = getTodayDateString();
+        const todayDate = getParticipantLocalDateKey(new Date(), participantTimezone);
 
         // The server (respond_to_reminder_occurrence) is the sole author
         // of the persisted log — it validates ownership, reminder.is_active,
@@ -482,6 +679,65 @@ export default function RecipientDashboard() {
         );
     }
 
+    // ── Task bucketing (Phase 4 Today hierarchy, task side) ────────────────
+    // Operates on the already-computed TaskWithSummary[] from loadTasks
+    // (lib/taskLifecycle.ts#summarizeTask already ran once inside
+    // fetchTasksForRecipient, itself already using the participant's own
+    // validated timezone — see loadTasks above) — grouping rules mirror
+    // lib/todayFeedCore.ts#buildTodayItems exactly (same bucket names,
+    // same TASK_UPCOMING_LOOKAHEAD_DAYS bound) without a second redundant
+    // summarizeTask pass, since the summary is already in hand.
+    //
+    // Gated on participantTimezone being loaded (Phase 3: "do not briefly
+    // classify items using another timezone") — every bucket is empty
+    // until then, rather than momentarily computing against any fallback.
+    const todayStr = participantTimezone ? getParticipantLocalDateKey(new Date(), participantTimezone) : null;
+    const { overdueTasks, dueTodayTasks, openOtherTasks, upcomingTasks, terminalTodayTasks } = useMemo(() => {
+        const overdue: TaskWithSummary[] = [];
+        const dueToday: TaskWithSummary[] = [];
+        const openOther: TaskWithSummary[] = [];
+        const upcoming: TaskWithSummary[] = [];
+        const terminalToday: TaskWithSummary[] = [];
+
+        if (!todayStr) {
+            return { overdueTasks: overdue, dueTodayTasks: dueToday, openOtherTasks: openOther, upcomingTasks: upcoming, terminalTodayTasks: terminalToday };
+        }
+
+        for (const entry of taskSummaries) {
+            const { task, summary } = entry;
+            if (summary.status === 'overdue') {
+                overdue.push(entry);
+            } else if (summary.status === 'open') {
+                const dueDate = task.frequency === 'one_time' ? task.due_date : summary.actionableDate;
+                if (dueDate === todayStr) dueToday.push(entry);
+                else openOther.push(entry);
+            } else if (summary.status === 'upcoming') {
+                const [sy, sm, sd] = task.start_date.split('-').map(Number);
+                const [ty, tm, td] = todayStr.split('-').map(Number);
+                const daysAhead = Math.round((Date.UTC(sy, sm - 1, sd) - Date.UTC(ty, tm - 1, td)) / 86400000);
+                if (daysAhead <= TASK_UPCOMING_LOOKAHEAD_DAYS) upcoming.push(entry);
+            } else if (summary.lastResolved?.occurrence_date === todayStr) {
+                terminalToday.push(entry);
+            }
+        }
+        return { overdueTasks: overdue, dueTodayTasks: dueToday, openOtherTasks: openOther, upcomingTasks: upcoming, terminalTodayTasks: terminalToday };
+    }, [taskSummaries, todayStr]);
+
+    const [respondingTaskId, setRespondingTaskId] = useState<string | null>(null);
+
+    async function respondTaskAction(taskId: string, occurrenceDate: string, action: 'completed' | 'skipped') {
+        if (respondingTaskId) return;
+        if (Platform.OS === 'ios') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        setRespondingTaskId(taskId);
+        const { error } = await supabase.rpc('respond_to_task_occurrence', { p_task_id: taskId, p_occurrence_date: occurrenceDate, p_status: action });
+        setRespondingTaskId(null);
+        if (error) {
+            showAlertOnce(t('tasksSection.loadFailedTitle'), t('tasksSection.loadFailedText'));
+            return;
+        }
+        loadTasks();
+    }
+
     return (
         <SafeAreaView style={styles.container}>
             <ScrollView
@@ -490,7 +746,7 @@ export default function RecipientDashboard() {
                 refreshControl={
                     <RefreshControl
                         refreshing={refreshing}
-                        onRefresh={loadReminders}
+                        onRefresh={refreshToday}
                         tintColor={C.primary}
                         colors={[C.primary]}
                     />
@@ -516,6 +772,20 @@ export default function RecipientDashboard() {
                         <Ionicons name="settings-outline" size={22} color={C.primary} />
                     </TouchableOpacity>
                 </View>
+
+                {/* Overdue flexible tasks — the single highest-priority
+                    Today group (Phase 4): shown before even the reminder
+                    progress summary, but styled as clearly-actionable
+                    rather than alarmist (no red/urgent color scheme — see
+                    docs/today-hub-model.md). */}
+                {overdueTasks.length > 0 && (
+                    <View style={styles.taskSectionBlock}>
+                        <Text style={styles.taskSectionHeading} accessibilityRole="header">{t('tasksSection.overdueSection')}</Text>
+                        {overdueTasks.map((entry) => (
+                            <TaskTodayCard key={entry.task.id} entry={entry} C={C} t={t} styles={styles} respondingTaskId={respondingTaskId} onRespond={respondTaskAction} />
+                        ))}
+                    </View>
+                )}
 
                 {/* Today's progress summary */}
                 {!loading && reminders.length > 0 && (() => {
@@ -583,6 +853,19 @@ export default function RecipientDashboard() {
                 {!loading && loadError && loadError !== 'network' && (
                     <SectionErrorState
                         text={t(ERROR_CATEGORY_TRANSLATION_KEYS[loadError])}
+                        onRetry={loadReminders}
+                        retrying={refreshing}
+                    />
+                )}
+
+                {/* Your stored timezone is missing/invalid and the repair
+                    attempt (syncCurrentUserTimezone, re-read once) still
+                    couldn't produce a valid value — never guessed with a
+                    hardcoded or device zone. Reminders/tasks stay
+                    unclassified until this resolves. */}
+                {!loading && !loadError && timezoneUnavailable && (
+                    <SectionErrorState
+                        text={t('participantDashboard.timezoneUnavailableText')}
                         onRetry={loadReminders}
                         retrying={refreshing}
                     />
@@ -795,17 +1078,162 @@ export default function RecipientDashboard() {
                         </TouchableOpacity>
                     );
                 })}
+
+                {/* Flexible tasks — due today / open with no deadline, and a
+                    short upcoming lookahead. Overdue tasks render near the
+                    top of the screen instead (see below the header) — see
+                    docs/today-hub-model.md for the full Today ordering and
+                    why reminders and tasks are integrated at the group
+                    level (each keeps its own existing, independently-tested
+                    card rendering) rather than fully interleaved item-by-
+                    item. */}
+                {taskStatus === 'error' && (
+                    <SectionErrorState text={t('tasksSection.loadFailedText')} onRetry={loadTasks} />
+                )}
+                {taskStatus === 'unavailable' && (
+                    <SectionErrorState text={t('tasksSection.timezoneUnavailableText')} onRetry={loadTasks} />
+                )}
+                {(dueTodayTasks.length > 0 || openOtherTasks.length > 0) && (
+                    <View style={styles.taskSectionBlock}>
+                        {dueTodayTasks.map((entry) => (
+                            <TaskTodayCard key={entry.task.id} entry={entry} C={C} t={t} styles={styles} respondingTaskId={respondingTaskId} onRespond={respondTaskAction} />
+                        ))}
+                        {openOtherTasks.map((entry) => (
+                            <TaskTodayCard key={entry.task.id} entry={entry} C={C} t={t} styles={styles} respondingTaskId={respondingTaskId} onRespond={respondTaskAction} />
+                        ))}
+                    </View>
+                )}
+                {upcomingTasks.length > 0 && (
+                    <View style={styles.taskSectionBlock}>
+                        <Text style={styles.taskSectionHeading}>{t('tasksSection.upcomingSection')}</Text>
+                        {upcomingTasks.map((entry) => (
+                            <TaskTodayCard key={entry.task.id} entry={entry} C={C} t={t} styles={styles} respondingTaskId={respondingTaskId} onRespond={respondTaskAction} readOnly />
+                        ))}
+                    </View>
+                )}
+                {terminalTodayTasks.length > 0 && (
+                    <View style={styles.taskSectionBlock}>
+                        <Text style={styles.taskSectionHeading}>{t('tasksSection.completedSection')}</Text>
+                        {terminalTodayTasks.map((entry) => (
+                            <TaskTodayCard key={entry.task.id} entry={entry} C={C} t={t} styles={styles} respondingTaskId={respondingTaskId} onRespond={respondTaskAction} readOnly />
+                        ))}
+                    </View>
+                )}
+                {hasConnection ? (
+                    <TouchableOpacity
+                        style={styles.viewAllTasksRow}
+                        onPress={() => router.push('/tasks')}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('tasksSection.heading')}
+                    >
+                        <Ionicons name="checkbox-outline" size={16} color={C.primary} />
+                        <Text style={styles.viewAllTasksText}>{t('tasksSection.heading')}</Text>
+                        <Ionicons name="chevron-forward" size={14} color={C.textMuted} />
+                    </TouchableOpacity>
+                ) : null}
                 {hasConnection && recipientId ? (
-                    <TasksSummaryCard recipientId={recipientId} recipientTimeZone={Intl.DateTimeFormat().resolvedOptions().timeZone} canCreate={false} />
+                    <TouchableOpacity
+                        style={styles.viewAllTasksRow}
+                        onPress={() => router.push('/activity')}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('activityFeed.myActivityHeading')}
+                    >
+                        <Ionicons name="time-outline" size={16} color={C.primary} />
+                        <Text style={styles.viewAllTasksText}>{t('activityFeed.myActivityHeading')}</Text>
+                        <Ionicons name="chevron-forward" size={14} color={C.textMuted} />
+                    </TouchableOpacity>
                 ) : null}
             </ScrollView>
 
             <SettingsSheet
                 visible={settingsVisible}
                 onClose={() => setSettingsVisible(false)}
-                onConnectionEnded={loadReminders}
+                onConnectionEnded={refreshToday}
             />
         </SafeAreaView>
+    );
+}
+
+// ─── TaskTodayCard ──────────────────────────────────────────────────────────
+// A compact task card for the Today hub — deliberately distinct markup from
+// the reminder card above (no exact-time display, Complete/Skip only, never
+// Snooze) while sharing the same StatusBadge/theme-token visual language so
+// the two feel related, not like two different apps. See
+// docs/today-hub-model.md.
+
+const TASK_STATUS_TONE: Record<string, StatusTone> = {
+    upcoming: 'neutral',
+    open: 'neutral',
+    overdue: 'warning',
+    completed_on_time: 'success',
+    completed_late: 'warning',
+    skipped: 'error',
+};
+
+function TaskTodayCard({
+    entry, C, t, styles, respondingTaskId, onRespond, readOnly = false,
+}: {
+    entry: TaskWithSummary;
+    C: ThemeColors;
+    t: (key: string, vars?: Record<string, string | number>) => string;
+    styles: ReturnType<typeof createStyles>;
+    respondingTaskId: string | null;
+    onRespond: (taskId: string, occurrenceDate: string, action: 'completed' | 'skipped') => void;
+    readOnly?: boolean;
+}) {
+    const { task, summary } = entry;
+    const statusLabel = t(`taskStatus.${summary.status === 'completed_on_time' ? 'completedOnTime' : summary.status === 'completed_late' ? 'completedLate' : summary.status}`);
+    const canRespond = !readOnly && !!summary.actionableDate;
+    const isResponding = respondingTaskId === task.id;
+    const scheduleContext = task.frequency === 'one_time'
+        ? (summary.upcomingDate ? t('tasksSection.startsLabel', { date: formatDateStringForDisplay(summary.upcomingDate) }) : (task.due_date ? t('tasksSection.dueLabel', { date: formatDateStringForDisplay(task.due_date) }) : t('tasksSection.noDueDate')))
+        : t(`tasksSection.${task.frequency === 'daily' ? 'recurrenceEveryDay' : task.frequency === 'weekdays' ? 'recurrenceWeekdays' : task.frequency === 'weekends' ? 'recurrenceWeekends' : 'recurrenceOneTime'}`);
+
+    return (
+        <TouchableOpacity
+            style={[styles.taskCard, SHADOW.sm]}
+            onPress={() => router.push({ pathname: '/task-details', params: { taskId: task.id } })}
+            accessibilityRole="button"
+            accessibilityLabel={`${t('itemTypePicker.flexibleTaskTitle')}, ${task.title}, ${statusLabel}`}
+            activeOpacity={0.9}
+        >
+            <View style={styles.taskCardTopRow}>
+                <View style={styles.taskKindPill}>
+                    <Ionicons name="checkbox-outline" size={12} color={C.textSecondary} />
+                    <Text style={styles.taskKindPillText}>{t('itemTypePicker.flexibleTaskTitle')}</Text>
+                </View>
+                <StatusBadge label={statusLabel} tone={TASK_STATUS_TONE[summary.status] ?? 'neutral'} />
+            </View>
+            <Text style={styles.taskCardTitle} numberOfLines={2}>{task.title}</Text>
+            <Text style={styles.taskCardSubtitle}>
+                {entry.organizerName ? `${t('tasksSection.organizerLabel', { name: entry.organizerName })} · ` : ''}
+                {scheduleContext}
+                {summary.overdueCount > 1 ? ` · ${t('tasksSection.overdueCountBadge', { n: summary.overdueCount })}` : ''}
+            </Text>
+            {canRespond ? (
+                <View style={styles.taskCardActionRow}>
+                    <TouchableOpacity
+                        style={[styles.taskCompleteButton]}
+                        onPress={() => onRespond(task.id, summary.actionableDate!, 'completed')}
+                        disabled={isResponding}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('tasksSection.complete')}
+                        accessibilityState={{ disabled: isResponding, busy: isResponding }}
+                    >
+                        {isResponding ? <ActivityIndicator color={C.textInverse} size="small" /> : <Text style={styles.taskCompleteButtonText}>{t('tasksSection.complete')}</Text>}
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={styles.taskSkipButton}
+                        onPress={() => onRespond(task.id, summary.actionableDate!, 'skipped')}
+                        disabled={isResponding}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('tasksSection.skip')}
+                    >
+                        <Text style={styles.taskSkipButtonText}>{t('tasksSection.skip')}</Text>
+                    </TouchableOpacity>
+                </View>
+            ) : null}
+        </TouchableOpacity>
     );
 }
 
@@ -1149,4 +1577,21 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
         fontSize: 15,
         fontWeight: '600',
     },
+
+    // ── Flexible tasks (Today hub integration) ─────────────────────────────
+    taskSectionBlock: { marginBottom: 8 },
+    taskSectionHeading: { fontSize: 15, fontWeight: '800', color: C.textPrimary, marginBottom: 10, marginTop: 4 },
+    taskCard: { backgroundColor: C.bgSurface, borderRadius: RADIUS.xl, padding: 16, marginBottom: 12 },
+    taskCardTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+    taskKindPill: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: RADIUS.full, backgroundColor: C.bgAlt },
+    taskKindPillText: { fontSize: 11, fontWeight: '700', color: C.textSecondary },
+    taskCardTitle: { fontSize: 15, fontWeight: '700', color: C.textPrimary, marginBottom: 4 },
+    taskCardSubtitle: { fontSize: 13, color: C.textSecondary },
+    taskCardActionRow: { flexDirection: 'row', gap: 10, marginTop: 12 },
+    taskCompleteButton: { flex: 1, minHeight: 44, borderRadius: RADIUS.lg, alignItems: 'center', justifyContent: 'center', backgroundColor: C.primary },
+    taskCompleteButtonText: { color: C.textInverse, fontSize: 14, fontWeight: '700' },
+    taskSkipButton: { flex: 1, minHeight: 44, borderRadius: RADIUS.lg, alignItems: 'center', justifyContent: 'center', backgroundColor: C.bgAlt, borderWidth: 1.5, borderColor: C.border },
+    taskSkipButtonText: { color: C.textSecondary, fontSize: 14, fontWeight: '700' },
+    viewAllTasksRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, minHeight: 44, marginTop: 4, marginBottom: 12 },
+    viewAllTasksText: { fontSize: 14, fontWeight: '700', color: C.primary },
 });

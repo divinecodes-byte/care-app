@@ -18,6 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { OfflineBanner, SectionErrorState, announceStateChange } from '@/components/StateViews';
 import { SettingsSheet } from '@/components/settings-sheet';
 import { TasksSummaryCard } from '@/components/TasksSummaryCard';
+import { ActivityPreviewCard } from '@/components/ActivityPreviewCard';
 import { RADIUS, SHADOW, SPACING, ThemeColors } from '@/constants/theme';
 import { clearAccountScopedLocalState } from '@/lib/accountCleanup';
 import { showAlertOnce } from '@/lib/alertGuard';
@@ -33,6 +34,7 @@ import { getZonedComputedStatus, isoWeekdayOfDateString, isReminderEligibleOnZon
 import { getStoredSelectedConnectionId, setStoredSelectedConnectionId } from '@/lib/selected-participant';
 import { supabase } from '@/lib/supabase';
 import { useThemeColors } from '@/lib/theme';
+import { isValidIanaTimezone } from '@/lib/timezone';
 import { getZonedTodayString } from '@/lib/zonedTime';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -335,6 +337,9 @@ export default function CaregiverDashboard() {
     }
 
     function getHeatmapStyle(day: DayData) {
+        // Defensive only — renderAnalytics() never reaches the heatmap
+        // JSX that calls this without a confirmed-valid recipientTimeZone.
+        if (!recipientTimeZone) return styles.heatmapNoData;
         const todayString = getZonedTodayString(recipientTimeZone);
         if (day.dateString > todayString) return styles.heatmapFuture;
         if (!day.hasData) return styles.heatmapNoData;
@@ -571,11 +576,22 @@ export default function CaregiverDashboard() {
     const [reminderBreakdown, setReminderBreakdown] = useState<ReminderBreakdownItem[]>([]);
     const [hasAnyReminders, setHasAnyReminders]     = useState(false);
     const [settingsVisible, setSettingsVisible]     = useState(false);
-    // The connected recipient's own stored timezone — set by
+    // The connected recipient's OWN stored timezone — set by
     // loadReminderData, read by getHeatmapStyle and the adherence-stats
-    // getRangeStats calls below. Defaults to this device's own timezone
-    // only until the real value loads.
-    const [recipientTimeZone, setRecipientTimeZone] = useState<string>(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
+    // getRangeStats calls below. Null until a valid value has actually
+    // been read — never this caregiver's own device timezone, and never a
+    // hardcoded default. There is no repair path the organizer's client
+    // can trigger for a different person's stored profile (only that
+    // participant's own device can resync it via syncCurrentUserTimezone);
+    // see recipientTimeZoneUnavailable below for what happens when it
+    // can't be read.
+    const [recipientTimeZone, setRecipientTimeZone] = useState<string | null>(null);
+    // True once loadReminderData has confirmed the selected participant's
+    // stored timezone is missing/invalid/unreadable — distinct from "still
+    // loading" (recipientTimeZone null, this false). Drives a compact,
+    // retryable notice instead of ever computing analytics against a
+    // guessed zone.
+    const [recipientTimeZoneUnavailable, setRecipientTimeZoneUnavailable] = useState(false);
 
     // Caregiver/Organizer id, cached for re-fetching reminder data on participant switch.
     const caregiverIdRef = useRef<string | null>(null);
@@ -602,32 +618,42 @@ export default function CaregiverDashboard() {
 
         // Every pending/missed/future computation below runs in the
         // connected RECIPIENT's own stored timezone, never this
-        // caregiver's device clock — a caregiver viewing a recipient in a
-        // different timezone must see the same status the recipient (and
-        // the server) would compute. Falls back to this device's own
-        // timezone only if the recipient's can't be read at all (never
-        // silently falls back to treating the caregiver's zone as
-        // authoritative when the real value IS available).
+        // caregiver's device clock and never a hardcoded default — a
+        // caregiver viewing a recipient in a different timezone must see
+        // the same status the recipient (and the server) would compute.
+        // There is no repair path the organizer's client can trigger for a
+        // participant's own profile (only that participant's own device
+        // can resync it), so a missing/invalid/unreadable value here is
+        // left unavailable rather than guessed — see
+        // recipientTimeZoneUnavailable below.
         const { data: connectionRow } = await supabase
             .from('connections')
             .select('recipient_id')
             .eq('id', connectionId)
             .maybeSingle();
 
-        let recipientTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        let recipientTz: string | null = null;
         if (connectionRow?.recipient_id) {
             const { data: recipientProfile } = await supabase
                 .from('profiles')
                 .select('timezone')
                 .eq('id', connectionRow.recipient_id)
                 .maybeSingle();
-            if (recipientProfile?.timezone) recipientTz = recipientProfile.timezone;
+            if (loadGenerationRef.current !== myGeneration) return;
+            recipientTz = isValidIanaTimezone(recipientProfile?.timezone) ? recipientProfile!.timezone : null;
         }
         // A newer switch has since started — abandon this stale in-flight
         // load entirely rather than writing even the timezone for a
         // participant that's no longer selected.
         if (loadGenerationRef.current !== myGeneration) return;
         setRecipientTimeZone(recipientTz);
+        setRecipientTimeZoneUnavailable(!recipientTz);
+
+        if (!recipientTz) {
+            setDashboardLoading(false);
+            hasLoadedReminderDataOnceRef.current = true;
+            return;
+        }
 
         const { data: remindersData, error: remindersError } = await supabase
             .from('reminders')
@@ -716,8 +742,15 @@ export default function CaregiverDashboard() {
         setConnectionSummary(p);
         // A different participant's data is about to load — show the full
         // loading card rather than leaving the previous participant's
-        // analytics on screen under the new participant's name.
+        // analytics on screen under the new participant's name. The old
+        // participant's timezone is cleared here, synchronously, rather
+        // than left in place until the new fetch resolves (relying only on
+        // loadGenerationRef to discard a stale write would still let the
+        // OLD participant's zone classify the screen for however long the
+        // new fetch takes).
         hasLoadedReminderDataOnceRef.current = false;
+        setRecipientTimeZone(null);
+        setRecipientTimeZoneUnavailable(false);
         if (caregiverIdRef.current) setStoredSelectedConnectionId(caregiverIdRef.current, p.id);
         loadReminderData(p.id, p.acceptedAt ?? new Date().toISOString());
     }
@@ -1152,6 +1185,20 @@ export default function CaregiverDashboard() {
                         <Text style={styles.loadingText}>{t('organizerDashboard.loadingReminders')}</Text>
                     </View>
                 </View>
+            );
+        }
+
+        // The participant's own stored timezone couldn't be read even
+        // after loadReminderData ran — never compute pending/missed/future
+        // status against a guessed zone. Nothing below this point may run
+        // without a confirmed-valid recipientTimeZone.
+        if (recipientTimeZoneUnavailable || !recipientTimeZone) {
+            return (
+                <SectionErrorState
+                    text={t('organizerDashboard.recipientTimezoneUnavailableText')}
+                    onRetry={() => loadReminderData(connectionSummary.id, connectionSummary.acceptedAt ?? new Date().toISOString())}
+                    retrying={dashboardLoading}
+                />
             );
         }
 
@@ -1608,8 +1655,11 @@ export default function CaregiverDashboard() {
                         {renderAnalytics()}
                     </>
                 )}
-                {connectionSummary.status === 'accepted' && (
+                {connectionSummary.status === 'accepted' && recipientTimeZone && (
                     <TasksSummaryCard connectionId={connectionSummary.id} recipientTimeZone={recipientTimeZone} canCreate />
+                )}
+                {connectionSummary.status === 'accepted' && (
+                    <ActivityPreviewCard connectionId={connectionSummary.id} />
                 )}
             </ScrollView>
 

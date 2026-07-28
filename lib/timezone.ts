@@ -79,3 +79,24 @@ export async function syncCurrentUserTimezone(): Promise<TimezoneSyncResult> {
 
     return { status: 'updated', from: storedTimezone, to: deviceTimezone };
 }
+
+/**
+ * Repair path for a missing/invalid stored `profiles.timezone`: reconciles
+ * this device's own resolvable IANA timezone into the given user's profile
+ * (via syncCurrentUserTimezone, a no-op if the device can't resolve one
+ * either) and re-reads the stored value once. Returns the freshly-valid
+ * value, or null if it's still missing/invalid after the attempt — callers
+ * must treat null as "unavailable," never substitute a hardcoded or
+ * device-local guess for authoritative reminder/task classification.
+ */
+export async function repairAndRefetchTimezone(userId: string): Promise<string | null> {
+    await syncCurrentUserTimezone().catch(() => null);
+
+    const { data } = await supabase
+        .from('profiles')
+        .select('timezone')
+        .eq('id', userId)
+        .maybeSingle();
+
+    return isValidIanaTimezone(data?.timezone) ? data!.timezone : null;
+}

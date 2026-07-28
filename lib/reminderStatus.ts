@@ -268,17 +268,27 @@ export function isReminderEligibleOnZonedDate(
     return true;
 }
 
-/** Zoned equivalent of getComputedStatus — the response-window check compares against the actual current instant, same as the device-clock version, but the scheduled instant is computed in the recipient's timezone rather than the device's. */
+/**
+ * Zoned equivalent of getComputedStatus — the response-window check compares
+ * against the actual current instant, same as the device-clock version, but
+ * the scheduled instant is computed in the recipient's timezone rather than
+ * the device's. `now` is optional and defaults to the real current instant
+ * (`isPastNoResponseWindowAt`'s own default) for every existing caller —
+ * pass it explicitly (e.g. from a ParticipantTodayContext, or a fixed
+ * instant in a test) to make this function's result fully deterministic
+ * rather than silently reading the real clock underneath.
+ */
 export function getZonedComputedStatus(
     reminder: ReminderScheduleLike,
     dateString: string,
     todayString: string,
     timeZone: string,
-    log?: ReminderLogLike
+    log?: ReminderLogLike,
+    now?: Date
 ): DisplayReminderStatus {
     if (log?.status) return log.status;
     if (dateString > todayString) return 'pending';
     const scheduledFor = zonedDateTimeToUtc(dateString, reminder.time_of_day, timeZone);
-    if (!isPastNoResponseWindowAt(scheduledFor, reminder.no_response_minutes)) return 'pending';
+    if (!isPastNoResponseWindowAt(scheduledFor, reminder.no_response_minutes, now)) return 'pending';
     return 'missed';
 }
