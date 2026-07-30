@@ -13,6 +13,7 @@
 // audit task (A-T) — see docs/security-model.md for what each is defending.
 
 import { newClient, randomSuffix, record, summarize, signUpTestUser, dbQuery, SUPABASE_URL, ANON_KEY } from './helpers';
+import { installCrashSafety } from '../audit-infrastructure/cleanup';
 
 const RAND = randomSuffix();
 const PASSWORD = `SecAudit!${RAND}9X`;
@@ -21,9 +22,33 @@ async function main() {
     console.log(`Security audit run ${RAND}\n`);
 
     // Every ID pushed here is guaranteed to be purged in the finally block
-    // below, even if setup itself fails partway through.
+    // below, even if setup itself fails partway through. installCrashSafety
+    // additionally runs this same cleanup on SIGINT/SIGTERM/uncaughtException/
+    // unhandledRejection -- previously this script had no signal handler at
+    // all, so an interrupt mid-run skipped the finally block entirely and
+    // orphaned whatever synthetic accounts had been created so far.
     const testUserIds: string[] = [];
     const testConnectionIds: string[] = [];
+    let cleaned = false;
+    async function cleanup() {
+        if (cleaned) return;
+        cleaned = true;
+        console.log('\nCleaning up synthetic test data...');
+        const idList = testUserIds.map((id) => `'${id}'`).join(',');
+        dbQuery(`delete from public.profiles where id in (${idList});`);
+
+        const verifyProfiles = dbQuery(`select count(*) as c from public.profiles where id in (${idList});`) as { c: number }[];
+        const verifyAuth = dbQuery(`select count(*) as c from auth.users where email like 'tavora.secaudit.%.${RAND}@example.com';`) as { c: number }[];
+        console.log(`Leftover profiles: ${verifyProfiles[0]?.c ?? '?'}, leftover auth users needing manual cleanup: ${verifyAuth[0]?.c ?? '?'}`);
+
+        // profiles.id no longer FKs to auth.users (account-deletion migration),
+        // so auth.users rows for accounts that were never soft-deleted through
+        // delete-account must be removed directly too.
+        dbQuery(`delete from auth.users where email like 'tavora.secaudit.%.${RAND}@example.com';`);
+        const verifyAuthAfter = dbQuery(`select count(*) as c from auth.users where email like 'tavora.secaudit.%.${RAND}@example.com';`) as { c: number }[];
+        record('cleanup', 'all synthetic auth users removed', (verifyAuthAfter[0]?.c ?? 1) === 0, `remaining: ${verifyAuthAfter[0]?.c}`);
+    }
+    installCrashSafety(cleanup);
 
     try {
         // ── Setup: two connected users (caregiverA/recipientA) + one outsider (caregiverB) ──
@@ -307,21 +332,7 @@ async function main() {
 
         console.log('\nAll scenario checks executed.');
     } finally {
-        // ── Cleanup: hard-purge every synthetic artifact this run created ────────
-        console.log('\nCleaning up synthetic test data...');
-        const idList = testUserIds.map((id) => `'${id}'`).join(',');
-        dbQuery(`delete from public.profiles where id in (${idList});`);
-
-        const verifyProfiles = dbQuery(`select count(*) as c from public.profiles where id in (${idList});`) as { c: number }[];
-        const verifyAuth = dbQuery(`select count(*) as c from auth.users where email like 'tavora.secaudit.%.${RAND}@example.com';`) as { c: number }[];
-        console.log(`Leftover profiles: ${verifyProfiles[0]?.c ?? '?'}, leftover auth users needing manual cleanup: ${verifyAuth[0]?.c ?? '?'}`);
-
-        // profiles.id no longer FKs to auth.users (account-deletion migration),
-        // so auth.users rows for accounts that were never soft-deleted through
-        // delete-account must be removed directly too.
-        dbQuery(`delete from auth.users where email like 'tavora.secaudit.%.${RAND}@example.com';`);
-        const verifyAuthAfter = dbQuery(`select count(*) as c from auth.users where email like 'tavora.secaudit.%.${RAND}@example.com';`) as { c: number }[];
-        record('cleanup', 'all synthetic auth users removed', (verifyAuthAfter[0]?.c ?? 1) === 0, `remaining: ${verifyAuthAfter[0]?.c}`);
+        await cleanup();
     }
 
     const allPassed = summarize();

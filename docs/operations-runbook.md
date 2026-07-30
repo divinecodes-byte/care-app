@@ -9,8 +9,18 @@ repo.
 
 ## Alerting policy
 
-There is no paid alerting/monitoring vendor wired up (Sentry, Datadog,
-PagerDuty, etc.) as of Week 1 launch. The substitute is:
+**Automatic external notifications are NOT active.** There is still no
+paid alerting/monitoring vendor wired up (Sentry, Datadog, PagerDuty,
+etc.). As of Week 4 Task #1, an internal alert *outbox* exists
+(`operational_alerts` / `operational_alert_deliveries`, evaluated every 10
+minutes by the `evaluate-ops-health` Edge Function against the same
+`public.ops_health_evaluate()` function this runbook's health report uses)
+-- but `deliver-ops-alerts` currently only records an honest
+`status='unconfigured'` row and logs a line saying so; nothing is actually
+sent anywhere. See `docs/operational-alert-model.md` for the full design
+and the exact configuration step required to activate real delivery.
+
+Until that's configured, the substitute remains:
 
 - **`scripts/ops-health/run.ts`** — run manually, or on a schedule you set
   up yourself (e.g. a personal cron job, a GitHub Actions scheduled
@@ -20,10 +30,14 @@ PagerDuty, etc.) as of Week 1 launch. The substitute is:
   the simplest zero-cost option).
 - **Supabase's own dashboard** (Database → Cron, Edge Functions → Logs) as
   a manual fallback if this repo's tooling is unavailable.
+- **Direct SQL**: `select * from public.operational_alerts where resolved_at is null;`
+  shows every currently-open condition the evaluator has detected, even
+  though nothing has been externally delivered for it yet.
 
-This is intentionally minimal per the Week 1 constraint of no new paid
-infrastructure. Upgrading to a real alerting vendor is a reasonable
-post-launch follow-up, not done here.
+This is intentionally minimal. Upgrading to a real alerting vendor, or
+wiring `deliver-ops-alerts` to a webhook/email destination, is a reasonable
+follow-up, not done here per the constraint against adding a paid
+dependency without explicit approval.
 
 ## Daily health report
 
@@ -44,9 +58,18 @@ active, and ran recently with a successful status; recipient push failure
 rate over the last 24h; stuck-pending and retry-exhausted delivery counts;
 receipts not yet checked 20+ minutes after send; caregiver push event
 counts; inactive push token count (informational); `net._http_response`
-and `cron.job_run_details` rows past their retention window (a proxy for
-"are the cleanup cron jobs actually running"); and local-vs-remote
-migration sync.
+and `cron.job_run_details` rows past their retention window **plus a
+cleanup-cadence grace period** (see "Retention policy in effect" below --
+this is a proxy for "are the cleanup cron jobs actually running," corrected
+in Week 4 Task #1 to stop false-positiving on the normal once-daily
+sawtooth); and local-vs-remote migration sync.
+
+As of Week 4 Task #1, every one of these checks (except migration sync,
+which is CLI-only) is computed by a single SQL function,
+`public.ops_health_evaluate()` — this script just calls it and formats the
+rows. The `evaluate-ops-health` Edge Function (see "Alerting policy" above)
+calls the exact same function, so the terminal report and the automatic
+evaluator can never disagree about whether something is healthy.
 
 ## What "healthy" looks like
 
@@ -61,9 +84,11 @@ migration sync.
   itself the next day.
 - Recipient push failure rate under ~10%, zero stuck-pending, zero
   retry-exhausted deliveries at rest.
-- `net._http_response` rows older than 14 days and `cron.job_run_details`
-  rows older than 7 days: at or near zero (the daily cleanup jobs enforce
-  this).
+- `net._http_response` rows older than 14 days + 26h and `cron.job_run_details`
+  rows older than 7 days + 26h: zero (the daily cleanup jobs enforce this).
+  The 26-hour grace period is deliberate — see "Retention policy in effect"
+  below for why a raw count against the exact retention boundary used to
+  false-positive every single day.
 
 ## Delivery-latency definition
 
@@ -298,6 +323,31 @@ or resetting it to `pending`.
   history covered by the account-deletion anonymization rules, not
   operational logs — see `docs/security-model.md`. Do not add a retention
   job for these without an explicit, separate product decision.
+
+### Root cause of the retention false-positive (Week 4 Task #1)
+
+The `retention:pg_net_and_cron_logs` health check used to flag WARNING
+essentially every day, even though the two cleanup jobs above were
+confirmed running successfully every single day with zero errors
+(verified directly against `cron.job_run_details`'s own run history).
+Root cause was arithmetic, not a real cleanup failure: `cron.job_run_details`
+receives roughly **7,584 new rows per day**, dominated by the 30-second
+`send-due-recipient-reminders` job (~2,877/day) plus three 1-minute jobs
+(~1,440/day each). Since cleanup only runs once daily, a natural sawtooth
+of up to a full day's volume sits past the *raw* 7-day retention boundary
+in the hours before each nightly run — that's expected, not a backlog.
+
+Fixed in `public.ops_health_evaluate()` (used by both
+`scripts/ops-health/run.ts` and the `evaluate-ops-health` Edge Function —
+see "Alerting policy" above) by checking rows older than *retention + a
+26-hour grace period* (one full daily cycle plus buffer) instead of the
+raw boundary, and by additionally checking the cleanup jobs' own
+last-run-succeeded status directly (via `cron_health_summary()`) —
+distinguishing "rows are old because cleanup genuinely hasn't run/failed"
+(FAIL) from "rows are old because we're mid-cycle, right on schedule"
+(PASS) from "a real multi-day backlog is accumulating despite cleanup
+apparently succeeding" (WARNING). A raw row count is deliberately no
+longer the primary signal.
 
 ## Rollback procedure (this task's changes as a whole)
 

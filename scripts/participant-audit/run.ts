@@ -21,6 +21,8 @@ import {
     record,
     summarize,
 } from '../security-audit/helpers';
+import { installCrashSafety } from '../audit-infrastructure/cleanup';
+import { provisionFixturePool, resetFixturePool, detectFixtureContamination, getFixtureClient, getFixturePassword } from '../audit-infrastructure/fixtures';
 import { categorizeConnection } from '../../lib/connectionStateCore';
 
 const RAND = randomSuffix();
@@ -30,28 +32,11 @@ const EMAIL_PREFIX = 'tavora.participantaudit';
 async function signUpTestUser(emailPrefix: string, fullName: string) {
     const client = newClient();
     const email = `${EMAIL_PREFIX}.${emailPrefix}.${RAND}@example.com`;
-    const { data, error } = await client.auth.signUp({ email, password: PASSWORD, options: { data: { full_name: fullName } } });
+    const { data, error } = await client.auth.signUp({ email, password: PASSWORD, options: { data: { full_name: fullName, audit_account: true } } });
     if (error || !data.user) throw new Error(`signup failed for ${email}: ${error?.message}`);
     return { id: data.user.id, email, client };
 }
 
-function lastTestsPassedMatch(output: string): string | null {
-    const matches = [...output.matchAll(/(\d+)\/(\d+) tests passed/g)];
-    return matches.length > 0 ? matches[matches.length - 1][0] : null;
-}
-
-// A nested suite's full captured stdout can itself contain ITS OWN
-// embedded nested-suite output (reminder-audit/onboarding-audit each
-// shell out to security-audit/auth-audit/ops-health internally) --
-// passing that whole blob as a record() detail string bloats this
-// script's own log/memory footprint substantially for no benefit (the
-// nested suite's own log already has the full detail). Extract just the
-// final tally line (or a short prefix) instead.
-function summaryOf(text: string): string {
-    const tally = lastTestsPassedMatch(text);
-    if (tally) return tally;
-    return text.length > 300 ? `${text.slice(0, 300)}…` : text;
-}
 
 async function makeCaregiver(label: string) {
     const cg = await signUpTestUser(`${label}cg`, `Part ${label} Organizer`);
@@ -82,6 +67,43 @@ async function main() {
     const testUserIds: string[] = [];
     const testConnectionIds: string[] = [];
     const testReminderIds: string[] = [];
+    let cleaned = false;
+    async function cleanup() {
+        if (cleaned) return;
+        cleaned = true;
+        console.log('\nCleaning up synthetic test data...');
+        for (const reminderId of testReminderIds) {
+            dbQuery(`delete from public.reminder_notification_deliveries where reminder_id = '${reminderId}';`);
+            dbQuery(`delete from public.reminder_logs where reminder_id = '${reminderId}';`);
+        }
+        if (testReminderIds.length > 0) {
+            dbQuery(`delete from public.reminders where id in (${testReminderIds.map((id) => `'${id}'`).join(',')});`);
+        }
+        if (testConnectionIds.length > 0) {
+            dbQuery(`delete from public.connections where id in (${testConnectionIds.map((id) => `'${id}'`).join(',')});`);
+        }
+        // Some organizers/recipients in this run may have leftover
+        // connections not captured above (e.g. concurrent-create races in
+        // scenario G) — sweep every remaining row touching a synthetic
+        // user before deleting the profiles/auth rows themselves.
+        if (testUserIds.length > 0) {
+            const idList = testUserIds.map((id) => `'${id}'`).join(',');
+            dbQuery(`delete from public.reminder_notification_deliveries where reminder_id in (select id from public.reminders where caregiver_id in (${idList}) or recipient_id in (${idList}));`);
+            dbQuery(`delete from public.reminder_logs where caregiver_id in (${idList}) or recipient_id in (${idList});`);
+            dbQuery(`delete from public.reminders where caregiver_id in (${idList}) or recipient_id in (${idList});`);
+            dbQuery(`delete from public.connections where caregiver_id in (${idList}) or recipient_id in (${idList});`);
+            dbQuery(`delete from public.onboarding_events where user_id in (${idList});`);
+            dbQuery(`delete from public.profiles where id in (${idList});`);
+            try {
+                execFileSync('supabase', ['db', 'query', '--linked', '-o', 'json', `delete from auth.users where id in (${idList});`], { stdio: 'pipe' });
+            } catch (err) {
+                console.warn('Leftover auth users needing manual cleanup:', testUserIds.length, err instanceof Error ? err.message : err);
+            }
+        }
+        const remaining = dbQuery(`select count(*) as c from auth.users where email like '${EMAIL_PREFIX}.%${RAND}%';`);
+        record('cleanup', 'all synthetic auth users removed', Number((remaining[0] as any)?.c ?? 1) === 0, `remaining: ${(remaining[0] as any)?.c}`);
+    }
+    installCrashSafety(cleanup);
 
     try {
         // ── A: organizer with zero participants ──────────────────────────────
@@ -234,9 +256,16 @@ async function main() {
         record('N', 'the participant can end their own connection', !endNErr && connNStatus === 'ended');
 
         // An unrelated third party cannot end someone else's connection.
-        const outsider = await signUpTestUser('outsider', 'Outsider');
-        testUserIds.push(outsider.id);
-        const { error: outsiderEndErr } = await outsider.client.rpc('end_connection', { p_connection_id: connM });
+        // This scenario only needs "any identity not party to connM" --
+        // the shared fixture pool's unauthorizedUser role exists exactly
+        // for this, so it uses that instead of a disposable signup (Week 4
+        // Task #1's fixture-adoption ledger; see docs/synthetic-fixture-model.md).
+        const fixturePool = await provisionFixturePool();
+        resetFixturePool();
+        detectFixtureContamination();
+        const outsiderClient = getFixtureClient('unauthorizedUser');
+        await outsiderClient.auth.signInWithPassword({ email: fixturePool.unauthorizedUser.email, password: getFixturePassword() });
+        const { error: outsiderEndErr } = await outsiderClient.rpc('end_connection', { p_connection_id: connM });
         record('N', 'an unrelated user cannot end a connection they are not party to', !!outsiderEndErr && outsiderEndErr.message.includes('not_authorized'), outsiderEndErr?.message);
         // Idempotent -- ending an already-ended connection again is a harmless success.
         const { error: idempotentEndErr } = await orgM.client.rpc('end_connection', { p_connection_id: connM });
@@ -372,45 +401,9 @@ async function main() {
         record('Y', "Participant Y1's analytics query returns only Y1's log (taken), never Y2's", y1Logs.length === 1 && y1Logs[0].status === 'taken');
         record('Y', "Participant Y2's analytics query returns only Y2's log (missed), never Y1's -- no silent cross-participant aggregation", y2Logs.length === 1 && y2Logs[0].status === 'missed');
 
-        // ── Z-AD: regression shell-outs ─────────────────────────────────────────
-        try {
-            const out = execFileSync('npx', ['tsx', 'scripts/security-audit/run.ts'], { encoding: 'utf-8', env: process.env });
-            const m = lastTestsPassedMatch(out);
-            record('Z', 'scripts/security-audit/run.ts remains fully passing', !!m && m.startsWith('24/24'), m ?? undefined);
-        } catch (err: any) {
-            record('Z', 'scripts/security-audit/run.ts remains fully passing', false, summaryOf(err?.stdout ?? (err instanceof Error ? err.message : String(err))));
-        }
-
-        try {
-            const out = execFileSync('npx', ['tsx', 'scripts/auth-audit/run.ts'], { encoding: 'utf-8', env: process.env });
-            const m = lastTestsPassedMatch(out);
-            record('AA', 'scripts/auth-audit/run.ts remains fully passing', !!m && m.startsWith('37/37'), m ?? undefined);
-        } catch (err: any) {
-            record('AA', 'scripts/auth-audit/run.ts remains fully passing', false, summaryOf(err?.stdout ?? (err instanceof Error ? err.message : String(err))));
-        }
-
-        try {
-            const out = execFileSync('npx', ['tsx', 'scripts/reminder-audit/run.ts'], { encoding: 'utf-8', env: process.env });
-            const m = lastTestsPassedMatch(out);
-            record('AB', 'scripts/reminder-audit/run.ts remains passing', !!m, m ?? undefined);
-        } catch (err: any) {
-            record('AB', 'scripts/reminder-audit/run.ts remains passing', false, summaryOf(err?.stdout ?? (err instanceof Error ? err.message : String(err))));
-        }
-
-        try {
-            const out = execFileSync('npx', ['tsx', 'scripts/onboarding-audit/run.ts'], { encoding: 'utf-8', env: process.env });
-            const m = lastTestsPassedMatch(out);
-            record('AC', 'scripts/onboarding-audit/run.ts remains passing', !!m, m ?? undefined);
-        } catch (err: any) {
-            record('AC', 'scripts/onboarding-audit/run.ts remains passing', false, summaryOf(err?.stdout ?? (err instanceof Error ? err.message : String(err))));
-        }
-
-        try {
-            execFileSync('npx', ['tsx', 'scripts/ops-health/run.ts'], { encoding: 'utf-8', env: process.env });
-            record('AD', 'scripts/ops-health/run.ts does not report FAIL (exit code 0)', true);
-        } catch (err: any) {
-            record('AD', 'scripts/ops-health/run.ts does not report FAIL (exit code 0)', false, summaryOf(err?.stdout ?? (err instanceof Error ? err.message : String(err))));
-        }
+        // Nested cross-suite "remains passing" checks (formerly Z-AD)
+        // removed as part of Week 4 Task #1's DAG-flattening pass -- see
+        // docs/audit-infrastructure-model.md.
 
         // Sanity check the pure classification helper agrees with what the
         // server actually did throughout this run (categorizeConnection is
@@ -419,37 +412,7 @@ async function main() {
         record('extra', 'categorizeConnection() agrees with the server: an ended row categorizes as "ended"', categorizeConnection(endedRow) === 'ended');
 
     } finally {
-        console.log('\nCleaning up synthetic test data...');
-        for (const reminderId of testReminderIds) {
-            dbQuery(`delete from public.reminder_notification_deliveries where reminder_id = '${reminderId}';`);
-            dbQuery(`delete from public.reminder_logs where reminder_id = '${reminderId}';`);
-        }
-        if (testReminderIds.length > 0) {
-            dbQuery(`delete from public.reminders where id in (${testReminderIds.map((id) => `'${id}'`).join(',')});`);
-        }
-        if (testConnectionIds.length > 0) {
-            dbQuery(`delete from public.connections where id in (${testConnectionIds.map((id) => `'${id}'`).join(',')});`);
-        }
-        // Some organizers/recipients in this run may have leftover
-        // connections not captured above (e.g. concurrent-create races in
-        // scenario G) — sweep every remaining row touching a synthetic
-        // user before deleting the profiles/auth rows themselves.
-        if (testUserIds.length > 0) {
-            const idList = testUserIds.map((id) => `'${id}'`).join(',');
-            dbQuery(`delete from public.reminder_notification_deliveries where reminder_id in (select id from public.reminders where caregiver_id in (${idList}) or recipient_id in (${idList}));`);
-            dbQuery(`delete from public.reminder_logs where caregiver_id in (${idList}) or recipient_id in (${idList});`);
-            dbQuery(`delete from public.reminders where caregiver_id in (${idList}) or recipient_id in (${idList});`);
-            dbQuery(`delete from public.connections where caregiver_id in (${idList}) or recipient_id in (${idList});`);
-            dbQuery(`delete from public.onboarding_events where user_id in (${idList});`);
-            dbQuery(`delete from public.profiles where id in (${idList});`);
-            try {
-                execFileSync('supabase', ['db', 'query', '--linked', '-o', 'json', `delete from auth.users where id in (${idList});`], { stdio: 'pipe' });
-            } catch (err) {
-                console.warn('Leftover auth users needing manual cleanup:', testUserIds.length, err instanceof Error ? err.message : err);
-            }
-        }
-        const remaining = dbQuery(`select count(*) as c from auth.users where email like '${EMAIL_PREFIX}.%${RAND}%';`);
-        record('cleanup', 'all synthetic auth users removed', Number((remaining[0] as any)?.c ?? 1) === 0, `remaining: ${(remaining[0] as any)?.c}`);
+        await cleanup();
     }
 
     const passed = summarize();

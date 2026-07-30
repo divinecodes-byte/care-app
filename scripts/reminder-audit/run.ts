@@ -31,6 +31,7 @@ import {
     record,
     summarize,
 } from '../security-audit/helpers';
+import { installCrashSafety } from '../audit-infrastructure/cleanup';
 import {
     getAnalyticsStartDate,
     getComputedStatus,
@@ -44,7 +45,7 @@ const EMAIL_PREFIX = 'tavora.reminderaudit';
 async function signUpTestUser(emailPrefix: string, fullName: string) {
     const client = newClient();
     const email = `${EMAIL_PREFIX}.${emailPrefix}.${RAND}@example.com`;
-    const { data, error } = await client.auth.signUp({ email, password: PASSWORD, options: { data: { full_name: fullName } } });
+    const { data, error } = await client.auth.signUp({ email, password: PASSWORD, options: { data: { full_name: fullName, audit_account: true } } });
     if (error || !data.user) throw new Error(`signup failed for ${email}: ${error?.message}`);
     return { id: data.user.id, email, client };
 }
@@ -58,12 +59,6 @@ function utcTimeString(offsetMinutes: number): string {
 function todayIsoWeekday(): number {
     const jsDay = new Date().getUTCDay(); // 0=Sun..6=Sat
     return jsDay === 0 ? 7 : jsDay;
-}
-
-/** Last "N/M tests passed" match in a suite's combined stdout -- needed because auth-audit's own output embeds a nested security-audit run's summary line earlier in the same text. */
-function lastTestsPassedMatch(text: string): RegExpMatchArray | null {
-    const matches = [...text.matchAll(/(\d+)\/(\d+) tests passed/g)];
-    return matches.length > 0 ? matches[matches.length - 1] : null;
 }
 
 function rpcErrorKind(message: string | undefined): string {
@@ -80,6 +75,32 @@ async function main() {
     const testUserIds: string[] = [];
     const testConnectionIds: string[] = [];
     const testReminderIds: string[] = [];
+    let cleaned = false;
+    async function cleanup() {
+        if (cleaned) return;
+        cleaned = true;
+        console.log('\nCleaning up synthetic test data...');
+        for (const reminderId of testReminderIds) {
+            dbQuery(`delete from public.reminder_notification_deliveries where reminder_id = '${reminderId}';`);
+            dbQuery(`delete from public.reminder_logs where reminder_id = '${reminderId}';`);
+        }
+        dbQuery(`delete from public.reminders where id in (${testReminderIds.map((id) => `'${id}'`).join(',') || "'00000000-0000-0000-0000-000000000000'"});`);
+        for (const connectionId of testConnectionIds) {
+            dbQuery(`delete from public.connections where id = '${connectionId}';`);
+        }
+        if (testUserIds.length > 0) {
+            const idList = testUserIds.map((id) => `'${id}'`).join(',');
+            dbQuery(`delete from public.profiles where id in (${idList});`);
+            try {
+                execFileSync('supabase', ['db', 'query', '--linked', '-o', 'json', `delete from auth.users where id in (${idList});`], { stdio: 'pipe' });
+            } catch (err) {
+                console.warn('Leftover auth users needing manual cleanup:', testUserIds.length, err instanceof Error ? err.message : err);
+            }
+        }
+        const remaining = dbQuery(`select count(*) as c from auth.users where email like '${EMAIL_PREFIX}.%${RAND}%';`);
+        record('cleanup', 'all synthetic auth users removed', Number((remaining[0] as any)?.c ?? 1) === 0, `remaining: ${(remaining[0] as any)?.c}`);
+    }
+    installCrashSafety(cleanup);
 
     async function makeConnectedPair(label: string) {
         const caregiver = await signUpTestUser(`${label}cg`, `Reminder Audit ${label} Caregiver`);
@@ -291,7 +312,11 @@ async function main() {
         // will claim it, find no push token for the synthetic recipient, and
         // write a genuine status='failed' row that pollutes real ops-health
         // metrics for as long as this row survives. Delete it immediately
-        // rather than waiting for this suite's end-of-run cleanup.
+        // (the very next statement after the assertion above -- this is
+        // already the tightest this window can be, since the assertion
+        // itself must read the row's post-edit state first) rather than
+        // waiting for this suite's end-of-run cleanup. See "Live-cron
+        // isolation during audits" in docs/audit-infrastructure-model.md.
         dbQuery(`delete from public.reminder_notification_deliveries where reminder_id = '${reminderT}';`);
 
         // ── U: delete during snooze (no snooze delivery claimed for an inactive reminder) ──
@@ -415,51 +440,14 @@ async function main() {
         const ahEdit = await editSchedule(recipientA.client, reminderC, { title: 'forged edit' });
         record('AH', 'a recipient cannot call update_reminder_schedule for a reminder they do not own as caregiver', !!ahEdit.error, ahEdit.error?.message);
 
-        // ── AI/AJ/AK: full regression suites ─────────────────────────────────────
-        try {
-            const secOut = execFileSync('npx', ['tsx', 'scripts/security-audit/run.ts'], { encoding: 'utf-8', env: process.env });
-            const secMatch = lastTestsPassedMatch(secOut);
-            record('AI', 'scripts/security-audit/run.ts remains fully passing', !!secMatch && secMatch[1] === secMatch[2], secMatch?.[0]);
-        } catch (err) {
-            record('AI', 'scripts/security-audit/run.ts remains fully passing', false, err instanceof Error ? err.message : String(err));
-        }
-
-        try {
-            const authOut = execFileSync('npx', ['tsx', 'scripts/auth-audit/run.ts'], { encoding: 'utf-8', env: process.env });
-            const authMatch = lastTestsPassedMatch(authOut);
-            record('AJ', 'scripts/auth-audit/run.ts remains fully passing', !!authMatch && authMatch[1] === authMatch[2], authMatch?.[0]);
-        } catch (err) {
-            record('AJ', 'scripts/auth-audit/run.ts remains fully passing', false, err instanceof Error ? err.message : String(err));
-        }
-
-        try {
-            execFileSync('npx', ['tsx', 'scripts/ops-health/run.ts'], { encoding: 'utf-8', env: process.env });
-            record('AK', 'scripts/ops-health/run.ts does not report FAIL (exit code 0)', true);
-        } catch (err: any) {
-            record('AK', 'scripts/ops-health/run.ts does not report FAIL (exit code 0)', false, err?.stdout ?? (err instanceof Error ? err.message : String(err)));
-        }
+        // Nested cross-suite "remains passing" checks (formerly AI/AJ/AK)
+        // removed as part of Week 4 Task #1's DAG-flattening pass -- see
+        // docs/audit-infrastructure-model.md. scripts/final-regression/run.ts
+        // now runs security-audit, auth-audit, and ops-health exactly once
+        // each, instead of every other suite re-invoking them.
 
     } finally {
-        console.log('\nCleaning up synthetic test data...');
-        for (const reminderId of testReminderIds) {
-            dbQuery(`delete from public.reminder_notification_deliveries where reminder_id = '${reminderId}';`);
-            dbQuery(`delete from public.reminder_logs where reminder_id = '${reminderId}';`);
-        }
-        dbQuery(`delete from public.reminders where id in (${testReminderIds.map((id) => `'${id}'`).join(',') || "'00000000-0000-0000-0000-000000000000'"});`);
-        for (const connectionId of testConnectionIds) {
-            dbQuery(`delete from public.connections where id = '${connectionId}';`);
-        }
-        if (testUserIds.length > 0) {
-            const idList = testUserIds.map((id) => `'${id}'`).join(',');
-            dbQuery(`delete from public.profiles where id in (${idList});`);
-            try {
-                execFileSync('supabase', ['db', 'query', '--linked', '-o', 'json', `delete from auth.users where id in (${idList});`], { stdio: 'pipe' });
-            } catch (err) {
-                console.warn('Leftover auth users needing manual cleanup:', testUserIds.length, err instanceof Error ? err.message : err);
-            }
-        }
-        const remaining = dbQuery(`select count(*) as c from auth.users where email like '${EMAIL_PREFIX}.%${RAND}%';`);
-        record('cleanup', 'all synthetic auth users removed', Number((remaining[0] as any)?.c ?? 1) === 0, `remaining: ${(remaining[0] as any)?.c}`);
+        await cleanup();
     }
 
     const passed = summarize();

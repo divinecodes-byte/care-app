@@ -27,6 +27,7 @@ import {
     record,
     summarize,
 } from '../security-audit/helpers';
+import { installCrashSafety } from '../audit-infrastructure/cleanup';
 import { buildTodayItems, TodayReminderInput, TodayTaskInput } from '../../lib/todayFeedCore';
 import { activityEventKey, ActivityRow, normalizeActivityRows } from '../../lib/activityFeedCore';
 import { isTaskOccurrenceEligible, TaskScheduleLike } from '../../lib/taskLifecycle';
@@ -60,7 +61,7 @@ const LABELS = {
 async function signUpTestUser(emailPrefix: string, fullName: string) {
     const client = newClient();
     const email = `${EMAIL_PREFIX}.${emailPrefix}.${RAND}@example.com`;
-    const { data, error } = await client.auth.signUp({ email, password: PASSWORD, options: { data: { full_name: fullName } } });
+    const { data, error } = await client.auth.signUp({ email, password: PASSWORD, options: { data: { full_name: fullName, audit_account: true } } });
     if (error || !data.user) throw new Error(`signup failed for ${email}: ${error?.message}`);
     return { id: data.user.id, email, client };
 }
@@ -74,10 +75,6 @@ function addDays(dateString: string, days: number): string {
     const [y, m, d] = dateString.split('-').map(Number);
     return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
 }
-function lastTestsPassedMatch(text: string): RegExpMatchArray | null {
-    const matches = [...text.matchAll(/(\d+)\/(\d+) tests passed/g)];
-    return matches.length > 0 ? matches[matches.length - 1] : null;
-}
 
 async function main() {
     console.log(`Activity audit run ${RAND}\n`);
@@ -86,6 +83,37 @@ async function main() {
     const testConnectionIds: string[] = [];
     const testTaskIds: string[] = [];
     const testReminderIds: string[] = [];
+    let cleaned = false;
+    async function cleanup() {
+        if (cleaned) return;
+        cleaned = true;
+        console.log('\nCleaning up synthetic test data...');
+        for (const taskId of testTaskIds) {
+            dbQuery(`delete from public.task_notification_deliveries where task_id = '${taskId}';`);
+            dbQuery(`delete from public.task_occurrences where task_id = '${taskId}';`);
+        }
+        dbQuery(`delete from public.tasks where id in (${testTaskIds.map((id) => `'${id}'`).join(',') || "'00000000-0000-0000-0000-000000000000'"});`);
+        for (const reminderId of testReminderIds) {
+            dbQuery(`delete from public.reminder_notification_deliveries where reminder_id = '${reminderId}';`);
+            dbQuery(`delete from public.reminder_logs where reminder_id = '${reminderId}';`);
+        }
+        dbQuery(`delete from public.reminders where id in (${testReminderIds.map((id) => `'${id}'`).join(',') || "'00000000-0000-0000-0000-000000000000'"});`);
+        for (const connectionId of testConnectionIds) {
+            dbQuery(`delete from public.connections where id = '${connectionId}';`);
+        }
+        if (testUserIds.length > 0) {
+            const idList = testUserIds.map((id) => `'${id}'`).join(',');
+            dbQuery(`delete from public.profiles where id in (${idList});`);
+            try {
+                execFileSync('supabase', ['db', 'query', '--linked', '-o', 'json', `delete from auth.users where id in (${idList});`], { stdio: 'pipe' });
+            } catch (err) {
+                console.warn('Leftover auth users needing manual cleanup:', testUserIds.length, err instanceof Error ? err.message : err);
+            }
+        }
+        const remaining = dbQuery(`select count(*) as c from auth.users where email like '${EMAIL_PREFIX}.%${RAND}%';`);
+        record('cleanup', 'all synthetic auth users removed', Number((remaining[0] as any)?.c ?? 1) === 0, `remaining: ${(remaining[0] as any)?.c}`);
+    }
+    installCrashSafety(cleanup);
 
     async function makeConnectedPair(label: string, recipientTz = 'UTC') {
         const caregiver = await signUpTestUser(`${label}cg`, `Activity Audit ${label} Caregiver`);
@@ -799,97 +827,12 @@ async function main() {
         record('AZ', 'activity does not change reminder analytics', JSON.stringify(reminderAnalyticsBefore) === JSON.stringify(reminderAnalyticsAfter), 'reminder_logs count unchanged by activity-feed reads');
         record('BA', 'activity does not change task analytics', JSON.stringify(taskAnalyticsBefore.data) === JSON.stringify(taskAnalyticsAfter.data), 'task_analytics_summary unchanged by activity-feed reads');
 
-        // ── BB-BK: full regression suites ────────────────────────────────────
-        try {
-            const out = execFileSync('npx', ['tsx', 'scripts/security-audit/run.ts'], { encoding: 'utf-8', env: process.env });
-            const m = lastTestsPassedMatch(out);
-            record('BB', 'scripts/security-audit/run.ts remains 24/24 PASS', !!m && m[1] === m[2], m?.[0]);
-        } catch (err) { record('BB', 'scripts/security-audit/run.ts remains 24/24 PASS', false, err instanceof Error ? err.message : String(err)); }
-
-        try {
-            const out = execFileSync('npx', ['tsx', 'scripts/auth-audit/run.ts'], { encoding: 'utf-8', env: process.env });
-            const m = lastTestsPassedMatch(out);
-            record('BC', 'scripts/auth-audit/run.ts remains 37/37 PASS', !!m && m[1] === m[2], m?.[0]);
-        } catch (err) { record('BC', 'scripts/auth-audit/run.ts remains 37/37 PASS', false, err instanceof Error ? err.message : String(err)); }
-
-        try {
-            const out = execFileSync('npx', ['tsx', 'scripts/reminder-audit/run.ts'], { encoding: 'utf-8', env: process.env });
-            const m = lastTestsPassedMatch(out);
-            record('BD', 'scripts/reminder-audit/run.ts remains passing', !!m && m[1] === m[2], m?.[0]);
-        } catch (err) { record('BD', 'scripts/reminder-audit/run.ts remains passing', false, err instanceof Error ? err.message : String(err)); }
-
-        try {
-            const out = execFileSync('npx', ['tsx', 'scripts/task-audit/run.ts'], { encoding: 'utf-8', env: process.env });
-            const m = lastTestsPassedMatch(out);
-            record('BE', "task audit's own scenarios remain passing", !!m && m[1] === m[2], m?.[0]);
-        } catch (err) { record('BE', "task audit's own scenarios remain passing", false, err instanceof Error ? err.message : String(err)); }
-
-        try {
-            const out = execFileSync('npx', ['tsx', 'scripts/onboarding-audit/run.ts'], { encoding: 'utf-8', env: process.env });
-            const m = lastTestsPassedMatch(out);
-            record('BF', "onboarding audit's own scenarios remain passing", !!m && m[1] === m[2], m?.[0]);
-        } catch (err) { record('BF', "onboarding audit's own scenarios remain passing", false, err instanceof Error ? err.message : String(err)); }
-
-        try {
-            const out = execFileSync('npx', ['tsx', 'scripts/participant-audit/run.ts'], { encoding: 'utf-8', env: process.env });
-            const m = lastTestsPassedMatch(out);
-            record('BG', "participant audit's own scenarios remain passing", !!m && m[1] === m[2], m?.[0]);
-        } catch (err) { record('BG', "participant audit's own scenarios remain passing", false, err instanceof Error ? err.message : String(err)); }
-
-        try {
-            const out = execFileSync('npx', ['tsx', 'scripts/ui-state-audit/run.ts'], { encoding: 'utf-8', env: process.env });
-            const m = lastTestsPassedMatch(out);
-            record('BH', "UI-state audit's own scenarios remain passing", !!m && m[1] === m[2], m?.[0]);
-        } catch (err) { record('BH', "UI-state audit's own scenarios remain passing", false, err instanceof Error ? err.message : String(err)); }
-
-        try {
-            const out = execFileSync('npx', ['tsx', 'scripts/accessibility-audit/run.ts'], { encoding: 'utf-8', env: process.env });
-            const m = lastTestsPassedMatch(out);
-            record('BI', "accessibility audit's own scenarios remain passing", !!m && m[1] === m[2], m?.[0]);
-        } catch (err) { record('BI', "accessibility audit's own scenarios remain passing", false, err instanceof Error ? err.message : String(err)); }
-
-        try {
-            const out = execFileSync('npx', ['tsx', 'scripts/visual-consistency-audit/run.ts'], { encoding: 'utf-8', env: process.env });
-            const m = lastTestsPassedMatch(out);
-            record('BJ', "visual-consistency audit's own scenarios remain passing", !!m && m[1] === m[2], m?.[0]);
-        } catch (err) { record('BJ', "visual-consistency audit's own scenarios remain passing", false, err instanceof Error ? err.message : String(err)); }
-
-        try {
-            const out = execFileSync('npx', ['tsx', 'scripts/ops-health/run.ts'], { encoding: 'utf-8', env: process.env });
-            const hasActivityFail = /\[FAIL\] activity_/.test(out);
-            record('BK', 'ops health has no new activity-related FAIL', !hasActivityFail, hasActivityFail ? 'an activity_* check reported FAIL' : 'no activity_* checks exist (none needed — read-only, no new delivery-health metric per Phase 20)');
-        } catch (err: any) {
-            const out = err?.stdout ?? '';
-            const hasActivityFail = /\[FAIL\] activity_/.test(out);
-            record('BK', 'ops health has no new activity-related FAIL', !hasActivityFail, hasActivityFail ? 'an activity_* check reported FAIL' : (err instanceof Error ? err.message : String(err)));
-        }
+        // Nested cross-suite "remains passing" checks (formerly BB-BK)
+        // removed as part of Week 4 Task #1's DAG-flattening pass -- see
+        // docs/audit-infrastructure-model.md.
 
     } finally {
-        console.log('\nCleaning up synthetic test data...');
-        for (const taskId of testTaskIds) {
-            dbQuery(`delete from public.task_notification_deliveries where task_id = '${taskId}';`);
-            dbQuery(`delete from public.task_occurrences where task_id = '${taskId}';`);
-        }
-        dbQuery(`delete from public.tasks where id in (${testTaskIds.map((id) => `'${id}'`).join(',') || "'00000000-0000-0000-0000-000000000000'"});`);
-        for (const reminderId of testReminderIds) {
-            dbQuery(`delete from public.reminder_notification_deliveries where reminder_id = '${reminderId}';`);
-            dbQuery(`delete from public.reminder_logs where reminder_id = '${reminderId}';`);
-        }
-        dbQuery(`delete from public.reminders where id in (${testReminderIds.map((id) => `'${id}'`).join(',') || "'00000000-0000-0000-0000-000000000000'"});`);
-        for (const connectionId of testConnectionIds) {
-            dbQuery(`delete from public.connections where id = '${connectionId}';`);
-        }
-        if (testUserIds.length > 0) {
-            const idList = testUserIds.map((id) => `'${id}'`).join(',');
-            dbQuery(`delete from public.profiles where id in (${idList});`);
-            try {
-                execFileSync('supabase', ['db', 'query', '--linked', '-o', 'json', `delete from auth.users where id in (${idList});`], { stdio: 'pipe' });
-            } catch (err) {
-                console.warn('Leftover auth users needing manual cleanup:', testUserIds.length, err instanceof Error ? err.message : err);
-            }
-        }
-        const remaining = dbQuery(`select count(*) as c from auth.users where email like '${EMAIL_PREFIX}.%${RAND}%';`);
-        record('cleanup', 'all synthetic auth users removed', Number((remaining[0] as any)?.c ?? 1) === 0, `remaining: ${(remaining[0] as any)?.c}`);
+        await cleanup();
     }
 
     const passed = summarize();

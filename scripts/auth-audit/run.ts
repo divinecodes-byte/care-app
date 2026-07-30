@@ -25,6 +25,7 @@ import {
     record,
     summarize,
 } from '../security-audit/helpers';
+import { installCrashSafety } from '../audit-infrastructure/cleanup';
 
 const RAND = randomSuffix();
 const PASSWORD = `AuthAudit!${RAND}9X`;
@@ -41,7 +42,7 @@ const EMAIL_PREFIX = 'tavora.authaudit';
 async function signUpTestUser(emailPrefix: string, fullName: string) {
     const client = newClient();
     const email = `${EMAIL_PREFIX}.${emailPrefix}.${RAND}@example.com`;
-    const { data, error } = await client.auth.signUp({ email, password: PASSWORD, options: { data: { full_name: fullName } } });
+    const { data, error } = await client.auth.signUp({ email, password: PASSWORD, options: { data: { full_name: fullName, audit_account: true } } });
     if (error || !data.user) throw new Error(`signup failed for ${email}: ${error?.message}`);
     return { id: data.user.id, email, client };
 }
@@ -67,6 +68,30 @@ async function main() {
 
     const testUserIds: string[] = [];
     const testConnectionIds: string[] = [];
+    let cleaned = false;
+    async function cleanup() {
+        if (cleaned) return;
+        cleaned = true;
+        console.log('\nCleaning up synthetic test data...');
+        for (const connectionId of testConnectionIds) {
+            dbQuery(`delete from public.reminder_notification_deliveries where reminder_id in (select id from public.reminders where connection_id = '${connectionId}');`);
+            dbQuery(`delete from public.reminders where connection_id = '${connectionId}';`);
+            dbQuery(`delete from public.connections where id = '${connectionId}';`);
+        }
+        dbQuery(`delete from public.push_tokens where expo_push_token like 'ExponentPushToken[authaudit-${RAND}%';`);
+        if (testUserIds.length > 0) {
+            const idList = testUserIds.map((id) => `'${id}'`).join(',');
+            dbQuery(`delete from public.profiles where id in (${idList});`);
+            try {
+                execFileSync('supabase', ['db', 'query', '--linked', '-o', 'json', `delete from auth.users where id in (${idList});`], { stdio: 'pipe' });
+            } catch (err) {
+                console.warn('Leftover auth users needing manual cleanup:', testUserIds.length, err instanceof Error ? err.message : err);
+            }
+        }
+        const remaining = dbQuery(`select count(*) as c from auth.users where email like 'tavora.authaudit.%${RAND}%';`);
+        record('cleanup', 'all synthetic auth users removed', Number((remaining[0] as any)?.c ?? 1) === 0, `remaining: ${(remaining[0] as any)?.c}`);
+    }
+    installCrashSafety(cleanup);
 
     try {
         // ── A: normal signup and atomic profile creation ────────────────────
@@ -268,47 +293,16 @@ async function main() {
         const tombstoneAfterDelete = dbQuery(`select account_status, notification_preview_mode from public.profiles where id='${userT.id}';`);
         record('T', 'deletion still tombstones the profile correctly (account_status=deleted, preview reset to private)', (tombstoneAfterDelete[0] as any)?.account_status === 'deleted' && (tombstoneAfterDelete[0] as any)?.notification_preview_mode === 'private');
 
-        // ── U: invite security suite remains 24/24 PASS ─────────────────────────
-        try {
-            const secAuditOut = execFileSync('npx', ['tsx', 'scripts/security-audit/run.ts'], {
-                encoding: 'utf-8',
-                env: process.env,
-            });
-            const match = secAuditOut.match(/(\d+)\/(\d+) tests passed/);
-            const allPassed = !!match && match[1] === match[2];
-            record('U', 'scripts/security-audit/run.ts remains fully passing', allPassed, match?.[0]);
-        } catch (err) {
-            record('U', 'scripts/security-audit/run.ts remains fully passing', false, err instanceof Error ? err.message : String(err));
-        }
-
-        // ── V: ops-health reports no new FAIL ────────────────────────────────────
-        try {
-            execFileSync('npx', ['tsx', 'scripts/ops-health/run.ts'], { encoding: 'utf-8', env: process.env });
-            record('V', 'scripts/ops-health/run.ts does not report FAIL (exit code 0)', true);
-        } catch (err: any) {
-            // ops-health exits 1 only on FAIL, not WARNING — a non-zero exit here is a real regression.
-            record('V', 'scripts/ops-health/run.ts does not report FAIL (exit code 0)', false, err?.stdout ?? (err instanceof Error ? err.message : String(err)));
-        }
+        // Nested cross-suite "remains passing" checks (formerly U, V) were
+        // removed here as part of Week 4 Task #1's DAG-flattening pass --
+        // security-audit and ops-health are now each run exactly once, by
+        // scripts/final-regression/run.ts, instead of being re-invoked from
+        // inside every other suite (the combinatorial fan-out that was
+        // producing ~thousands of theoretical signups per full routine-audit
+        // run). See docs/audit-infrastructure-model.md.
 
     } finally {
-        console.log('\nCleaning up synthetic test data...');
-        for (const connectionId of testConnectionIds) {
-            dbQuery(`delete from public.reminder_notification_deliveries where reminder_id in (select id from public.reminders where connection_id = '${connectionId}');`);
-            dbQuery(`delete from public.reminders where connection_id = '${connectionId}';`);
-            dbQuery(`delete from public.connections where id = '${connectionId}';`);
-        }
-        dbQuery(`delete from public.push_tokens where expo_push_token like 'ExponentPushToken[authaudit-${RAND}%';`);
-        if (testUserIds.length > 0) {
-            const idList = testUserIds.map((id) => `'${id}'`).join(',');
-            dbQuery(`delete from public.profiles where id in (${idList});`);
-            try {
-                execFileSync('supabase', ['db', 'query', '--linked', '-o', 'json', `delete from auth.users where id in (${idList});`], { stdio: 'pipe' });
-            } catch (err) {
-                console.warn('Leftover auth users needing manual cleanup:', testUserIds.length, err instanceof Error ? err.message : err);
-            }
-        }
-        const remaining = dbQuery(`select count(*) as c from auth.users where email like 'tavora.authaudit.%${RAND}%';`);
-        record('cleanup', 'all synthetic auth users removed', Number((remaining[0] as any)?.c ?? 1) === 0, `remaining: ${(remaining[0] as any)?.c}`);
+        await cleanup();
     }
 
     const passed = summarize();

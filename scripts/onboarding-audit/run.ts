@@ -19,6 +19,7 @@ import {
     record,
     summarize,
 } from '../security-audit/helpers';
+import { installCrashSafety } from '../audit-infrastructure/cleanup';
 import { resolveProfileRoute } from '../../lib/onboardingCore';
 
 const RAND = randomSuffix();
@@ -28,7 +29,7 @@ const EMAIL_PREFIX = 'tavora.onboardingaudit';
 async function signUpTestUser(emailPrefix: string, fullName: string) {
     const client = newClient();
     const email = `${EMAIL_PREFIX}.${emailPrefix}.${RAND}@example.com`;
-    const { data, error } = await client.auth.signUp({ email, password: PASSWORD, options: { data: { full_name: fullName } } });
+    const { data, error } = await client.auth.signUp({ email, password: PASSWORD, options: { data: { full_name: fullName, audit_account: true } } });
     if (error || !data.user) throw new Error(`signup failed for ${email}: ${error?.message}`);
     return { id: data.user.id, email, client };
 }
@@ -52,21 +53,41 @@ function nyTimeMinutesAgo(minutes: number): string {
     return `${map.hour}:${map.minute}:00`;
 }
 
-function lastTestsPassedMatch(output: string): RegExpMatchArray | null {
-    // Nested subprocess suites (e.g. reminder-audit shelling out to
-    // security-audit) embed an inner suite's own summary line earlier in
-    // the captured stdout — always take the LAST match, which is this
-    // suite's own final tally, not a nested one's.
-    const matches = [...output.matchAll(/(\d+)\/(\d+) tests passed/g)];
-    return matches.length > 0 ? [matches[matches.length - 1][0]] as unknown as RegExpMatchArray : null;
-}
-
 async function main() {
     console.log(`Onboarding audit run ${RAND}\n`);
 
     const testUserIds: string[] = [];
     const testConnectionIds: string[] = [];
     const testReminderIds: string[] = [];
+    let cleaned = false;
+    async function cleanup() {
+        if (cleaned) return;
+        cleaned = true;
+        console.log('\nCleaning up synthetic test data...');
+        for (const reminderId of testReminderIds) {
+            dbQuery(`delete from public.reminder_notification_deliveries where reminder_id = '${reminderId}';`);
+            dbQuery(`delete from public.reminder_logs where reminder_id = '${reminderId}';`);
+        }
+        if (testReminderIds.length > 0) {
+            dbQuery(`delete from public.reminders where id in (${testReminderIds.map((id) => `'${id}'`).join(',')});`);
+        }
+        dbQuery(`delete from public.onboarding_events where user_id in (${testUserIds.length > 0 ? testUserIds.map((id) => `'${id}'`).join(',') : "'00000000-0000-0000-0000-000000000000'"});`);
+        for (const connectionId of testConnectionIds) {
+            dbQuery(`delete from public.connections where id = '${connectionId}';`);
+        }
+        if (testUserIds.length > 0) {
+            const idList = testUserIds.map((id) => `'${id}'`).join(',');
+            dbQuery(`delete from public.profiles where id in (${idList});`);
+            try {
+                execFileSync('supabase', ['db', 'query', '--linked', '-o', 'json', `delete from auth.users where id in (${idList});`], { stdio: 'pipe' });
+            } catch (err) {
+                console.warn('Leftover auth users needing manual cleanup:', testUserIds.length, err instanceof Error ? err.message : err);
+            }
+        }
+        const remaining = dbQuery(`select count(*) as c from auth.users where email like '${EMAIL_PREFIX}.%${RAND}%';`);
+        record('cleanup', 'all synthetic auth users removed', Number((remaining[0] as any)?.c ?? 1) === 0, `remaining: ${(remaining[0] as any)?.c}`);
+    }
+    installCrashSafety(cleanup);
 
     async function makeConnectedPair(label: string) {
         const caregiver = await signUpTestUser(`${label}cg`, `Onb ${label} Organizer`);
@@ -315,62 +336,12 @@ async function main() {
         const { data: vReadAsRecipient, error: vReadErr } = await vRc.client.from('reminders').select('id').eq('id', remV?.id).maybeSingle();
         record('V', 'a participant can read/respond to their reminders regardless of notification-permission state (no server-side gate)', !vReadErr && vReadAsRecipient?.id === remV?.id);
 
-        // ── W-Z: regression shell-outs ─────────────────────────────────────
-        try {
-            const out = execFileSync('npx', ['tsx', 'scripts/security-audit/run.ts'], { encoding: 'utf-8', env: process.env });
-            const m = lastTestsPassedMatch(out);
-            record('W', 'scripts/security-audit/run.ts remains fully passing', !!m && m[0].startsWith('24/24'), m?.[0]);
-        } catch (err: any) {
-            record('W', 'scripts/security-audit/run.ts remains fully passing', false, err?.stdout ?? (err instanceof Error ? err.message : String(err)));
-        }
-
-        try {
-            const out = execFileSync('npx', ['tsx', 'scripts/auth-audit/run.ts'], { encoding: 'utf-8', env: process.env });
-            const m = lastTestsPassedMatch(out);
-            record('X', 'scripts/auth-audit/run.ts remains fully passing', !!m && m[0].startsWith('37/37'), m?.[0]);
-        } catch (err: any) {
-            record('X', 'scripts/auth-audit/run.ts remains fully passing', false, err?.stdout ?? (err instanceof Error ? err.message : String(err)));
-        }
-
-        try {
-            const out = execFileSync('npx', ['tsx', 'scripts/reminder-audit/run.ts'], { encoding: 'utf-8', env: process.env });
-            const m = lastTestsPassedMatch(out);
-            record('Y', 'scripts/reminder-audit/run.ts remains passing', !!m, m?.[0]);
-        } catch (err: any) {
-            record('Y', 'scripts/reminder-audit/run.ts remains passing', false, err?.stdout ?? (err instanceof Error ? err.message : String(err)));
-        }
-
-        try {
-            execFileSync('npx', ['tsx', 'scripts/ops-health/run.ts'], { encoding: 'utf-8', env: process.env });
-            record('Z', 'scripts/ops-health/run.ts does not report FAIL (exit code 0)', true);
-        } catch (err: any) {
-            record('Z', 'scripts/ops-health/run.ts does not report FAIL (exit code 0)', false, err?.stdout ?? (err instanceof Error ? err.message : String(err)));
-        }
+        // Nested cross-suite "remains passing" checks (formerly W-Z) removed
+        // as part of Week 4 Task #1's DAG-flattening pass -- see
+        // docs/audit-infrastructure-model.md.
 
     } finally {
-        console.log('\nCleaning up synthetic test data...');
-        for (const reminderId of testReminderIds) {
-            dbQuery(`delete from public.reminder_notification_deliveries where reminder_id = '${reminderId}';`);
-            dbQuery(`delete from public.reminder_logs where reminder_id = '${reminderId}';`);
-        }
-        if (testReminderIds.length > 0) {
-            dbQuery(`delete from public.reminders where id in (${testReminderIds.map((id) => `'${id}'`).join(',')});`);
-        }
-        dbQuery(`delete from public.onboarding_events where user_id in (${testUserIds.length > 0 ? testUserIds.map((id) => `'${id}'`).join(',') : "'00000000-0000-0000-0000-000000000000'"});`);
-        for (const connectionId of testConnectionIds) {
-            dbQuery(`delete from public.connections where id = '${connectionId}';`);
-        }
-        if (testUserIds.length > 0) {
-            const idList = testUserIds.map((id) => `'${id}'`).join(',');
-            dbQuery(`delete from public.profiles where id in (${idList});`);
-            try {
-                execFileSync('supabase', ['db', 'query', '--linked', '-o', 'json', `delete from auth.users where id in (${idList});`], { stdio: 'pipe' });
-            } catch (err) {
-                console.warn('Leftover auth users needing manual cleanup:', testUserIds.length, err instanceof Error ? err.message : err);
-            }
-        }
-        const remaining = dbQuery(`select count(*) as c from auth.users where email like '${EMAIL_PREFIX}.%${RAND}%';`);
-        record('cleanup', 'all synthetic auth users removed', Number((remaining[0] as any)?.c ?? 1) === 0, `remaining: ${(remaining[0] as any)?.c}`);
+        await cleanup();
     }
 
     const passed = summarize();

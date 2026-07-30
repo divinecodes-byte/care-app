@@ -29,6 +29,7 @@ import {
     record,
     summarize,
 } from '../security-audit/helpers';
+import { installCrashSafety } from '../audit-infrastructure/cleanup';
 import { classifyScreenError, isRetryableCategory, ErrorCategory } from '../../lib/asyncStateCore';
 import { classifyAuthError, AUTH_ERROR_TRANSLATION_KEYS } from '../../lib/authErrors';
 import { ERROR_CATEGORY_TRANSLATION_KEYS } from '../../lib/errorClassification';
@@ -37,21 +38,11 @@ const RAND = randomSuffix();
 const PASSWORD = `UiStateAudit!${RAND}9X`;
 const EMAIL_PREFIX = 'tavora.uistateaudit';
 
-function lastTestsPassedMatch(output: string): string | null {
-    const matches = [...output.matchAll(/(\d+)\/(\d+) tests passed/g)];
-    return matches.length > 0 ? matches[matches.length - 1][0] : null;
-}
-
-function summaryOf(text: string): string {
-    const tally = lastTestsPassedMatch(text);
-    if (tally) return tally;
-    return text.length > 300 ? `${text.slice(0, 300)}…` : text;
-}
 
 async function signUpTestUser(emailPrefix: string, fullName: string) {
     const client = newClient();
     const email = `${EMAIL_PREFIX}.${emailPrefix}.${RAND}@example.com`;
-    const { data, error } = await client.auth.signUp({ email, password: PASSWORD, options: { data: { full_name: fullName } } });
+    const { data, error } = await client.auth.signUp({ email, password: PASSWORD, options: { data: { full_name: fullName, audit_account: true } } });
     if (error || !data.user) throw new Error(`signup failed for ${email}: ${error?.message}`);
     return { id: data.user.id, email, client };
 }
@@ -139,6 +130,39 @@ async function main() {
     const testUserIds: string[] = [];
     const testConnectionIds: string[] = [];
     const testReminderIds: string[] = [];
+    let cleaned = false;
+    async function cleanup() {
+        if (cleaned) return;
+        cleaned = true;
+        console.log('\nCleaning up synthetic test data...');
+        for (const reminderId of testReminderIds) {
+            dbQuery(`delete from public.reminder_notification_deliveries where reminder_id = '${reminderId}';`);
+            dbQuery(`delete from public.reminder_logs where reminder_id = '${reminderId}';`);
+        }
+        if (testReminderIds.length > 0) {
+            dbQuery(`delete from public.reminders where id in (${testReminderIds.map((id) => `'${id}'`).join(',')});`);
+        }
+        if (testConnectionIds.length > 0) {
+            dbQuery(`delete from public.connections where id in (${testConnectionIds.map((id) => `'${id}'`).join(',')});`);
+        }
+        if (testUserIds.length > 0) {
+            const idList = testUserIds.map((id) => `'${id}'`).join(',');
+            dbQuery(`delete from public.reminder_notification_deliveries where reminder_id in (select id from public.reminders where caregiver_id in (${idList}) or recipient_id in (${idList}));`);
+            dbQuery(`delete from public.reminder_logs where caregiver_id in (${idList}) or recipient_id in (${idList});`);
+            dbQuery(`delete from public.reminders where caregiver_id in (${idList}) or recipient_id in (${idList});`);
+            dbQuery(`delete from public.connections where caregiver_id in (${idList}) or recipient_id in (${idList});`);
+            dbQuery(`delete from public.onboarding_events where user_id in (${idList});`);
+            dbQuery(`delete from public.profiles where id in (${idList});`);
+            try {
+                execFileSync('supabase', ['db', 'query', '--linked', '-o', 'json', `delete from auth.users where id in (${idList});`], { stdio: 'pipe' });
+            } catch (err) {
+                console.warn('Leftover auth users needing manual cleanup:', testUserIds.length, err instanceof Error ? err.message : err);
+            }
+        }
+        const remaining = dbQuery(`select count(*) as c from auth.users where email like '${EMAIL_PREFIX}.%${RAND}%';`);
+        record('cleanup', 'all synthetic auth users removed', Number((remaining[0] as any)?.c ?? 1) === 0, `remaining: ${(remaining[0] as any)?.c}`);
+    }
+    installCrashSafety(cleanup);
 
     try {
         // ── M: connection-ended is distinguishable from never-connected ─────
@@ -274,57 +298,12 @@ async function main() {
         record('U', 'a participant whose organizer has created a reminder (even one not due today) has hasAnyReminders=true -- never collapsed into the same "organizer hasn\'t set up anything" empty state as a genuinely-untouched participant',
             (allRemindersU ?? []).length === 1);
 
-        // ── Regression: existing suites remain fully passing ────────────────────
-        for (const [id, script, expectPrefix] of [
-            ['V', 'scripts/security-audit/run.ts', '24/24'],
-            ['W', 'scripts/auth-audit/run.ts', '37/37'],
-            ['X', 'scripts/reminder-audit/run.ts', null],
-            ['Y', 'scripts/onboarding-audit/run.ts', null],
-            ['Z', 'scripts/participant-audit/run.ts', null],
-        ] as const) {
-            try {
-                const out = execFileSync('npx', ['tsx', script], { encoding: 'utf-8', env: process.env });
-                const m = lastTestsPassedMatch(out);
-                record(id, `${script} remains fully passing`, !!m && (!expectPrefix || m.startsWith(expectPrefix)), m ?? undefined);
-            } catch (err: any) {
-                record(id, `${script} remains fully passing`, false, summaryOf(err?.stdout ?? (err instanceof Error ? err.message : String(err))));
-            }
-        }
-        try {
-            execFileSync('npx', ['tsx', 'scripts/ops-health/run.ts'], { encoding: 'utf-8', env: process.env });
-            record('AA', 'scripts/ops-health/run.ts does not report FAIL (exit code 0)', true);
-        } catch (err: any) {
-            record('AA', 'scripts/ops-health/run.ts does not report FAIL (exit code 0)', false, summaryOf(err?.stdout ?? (err instanceof Error ? err.message : String(err))));
-        }
+        // Nested cross-suite "remains passing" checks (formerly V-AA)
+        // removed as part of Week 4 Task #1's DAG-flattening pass -- see
+        // docs/audit-infrastructure-model.md.
 
     } finally {
-        console.log('\nCleaning up synthetic test data...');
-        for (const reminderId of testReminderIds) {
-            dbQuery(`delete from public.reminder_notification_deliveries where reminder_id = '${reminderId}';`);
-            dbQuery(`delete from public.reminder_logs where reminder_id = '${reminderId}';`);
-        }
-        if (testReminderIds.length > 0) {
-            dbQuery(`delete from public.reminders where id in (${testReminderIds.map((id) => `'${id}'`).join(',')});`);
-        }
-        if (testConnectionIds.length > 0) {
-            dbQuery(`delete from public.connections where id in (${testConnectionIds.map((id) => `'${id}'`).join(',')});`);
-        }
-        if (testUserIds.length > 0) {
-            const idList = testUserIds.map((id) => `'${id}'`).join(',');
-            dbQuery(`delete from public.reminder_notification_deliveries where reminder_id in (select id from public.reminders where caregiver_id in (${idList}) or recipient_id in (${idList}));`);
-            dbQuery(`delete from public.reminder_logs where caregiver_id in (${idList}) or recipient_id in (${idList});`);
-            dbQuery(`delete from public.reminders where caregiver_id in (${idList}) or recipient_id in (${idList});`);
-            dbQuery(`delete from public.connections where caregiver_id in (${idList}) or recipient_id in (${idList});`);
-            dbQuery(`delete from public.onboarding_events where user_id in (${idList});`);
-            dbQuery(`delete from public.profiles where id in (${idList});`);
-            try {
-                execFileSync('supabase', ['db', 'query', '--linked', '-o', 'json', `delete from auth.users where id in (${idList});`], { stdio: 'pipe' });
-            } catch (err) {
-                console.warn('Leftover auth users needing manual cleanup:', testUserIds.length, err instanceof Error ? err.message : err);
-            }
-        }
-        const remaining = dbQuery(`select count(*) as c from auth.users where email like '${EMAIL_PREFIX}.%${RAND}%';`);
-        record('cleanup', 'all synthetic auth users removed', Number((remaining[0] as any)?.c ?? 1) === 0, `remaining: ${(remaining[0] as any)?.c}`);
+        await cleanup();
     }
 
     const passed = summarize();

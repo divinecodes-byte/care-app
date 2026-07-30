@@ -24,6 +24,8 @@ import {
     record,
     summarize,
 } from '../security-audit/helpers';
+import { installCrashSafety } from '../audit-infrastructure/cleanup';
+import { provisionFixturePool, resetFixturePool, detectFixtureContamination, getFixtureClient, getFixturePassword } from '../audit-infrastructure/fixtures';
 import { getComputedTaskStatus, isTaskOccurrenceEligible, summarizeTask, TaskScheduleLike } from '../../lib/taskLifecycle';
 
 const RAND = randomSuffix();
@@ -41,7 +43,7 @@ function has(content: string, pattern: RegExp): boolean {
 async function signUpTestUser(emailPrefix: string, fullName: string) {
     const client = newClient();
     const email = `${EMAIL_PREFIX}.${emailPrefix}.${RAND}@example.com`;
-    const { data, error } = await client.auth.signUp({ email, password: PASSWORD, options: { data: { full_name: fullName } } });
+    const { data, error } = await client.auth.signUp({ email, password: PASSWORD, options: { data: { full_name: fullName, audit_account: true } } });
     if (error || !data.user) throw new Error(`signup failed for ${email}: ${error?.message}`);
     return { id: data.user.id, email, client };
 }
@@ -56,10 +58,6 @@ function addDays(dateString: string, days: number): string {
     return dt.toISOString().slice(0, 10);
 }
 
-function lastTestsPassedMatch(text: string): RegExpMatchArray | null {
-    const matches = [...text.matchAll(/(\d+)\/(\d+) tests passed/g)];
-    return matches.length > 0 ? matches[matches.length - 1] : null;
-}
 
 async function main() {
     console.log(`Task audit run ${RAND}\n`);
@@ -67,6 +65,32 @@ async function main() {
     const testUserIds: string[] = [];
     const testConnectionIds: string[] = [];
     const testTaskIds: string[] = [];
+    let cleaned = false;
+    async function cleanup() {
+        if (cleaned) return;
+        cleaned = true;
+        console.log('\nCleaning up synthetic test data...');
+        for (const taskId of testTaskIds) {
+            dbQuery(`delete from public.task_notification_deliveries where task_id = '${taskId}';`);
+            dbQuery(`delete from public.task_occurrences where task_id = '${taskId}';`);
+        }
+        dbQuery(`delete from public.tasks where id in (${testTaskIds.map((id) => `'${id}'`).join(',') || "'00000000-0000-0000-0000-000000000000'"});`);
+        for (const connectionId of testConnectionIds) {
+            dbQuery(`delete from public.connections where id = '${connectionId}';`);
+        }
+        if (testUserIds.length > 0) {
+            const idList = testUserIds.map((id) => `'${id}'`).join(',');
+            dbQuery(`delete from public.profiles where id in (${idList});`);
+            try {
+                execFileSync('supabase', ['db', 'query', '--linked', '-o', 'json', `delete from auth.users where id in (${idList});`], { stdio: 'pipe' });
+            } catch (err) {
+                console.warn('Leftover auth users needing manual cleanup:', testUserIds.length, err instanceof Error ? err.message : err);
+            }
+        }
+        const remaining = dbQuery(`select count(*) as c from auth.users where email like '${EMAIL_PREFIX}.%${RAND}%';`);
+        record('cleanup', 'all synthetic auth users removed', Number((remaining[0] as any)?.c ?? 1) === 0, `remaining: ${(remaining[0] as any)?.c}`);
+    }
+    installCrashSafety(cleanup);
 
     async function makeConnectedPair(label: string, recipientTz = 'UTC') {
         const caregiver = await signUpTestUser(`${label}cg`, `Task Audit ${label} Caregiver`);
@@ -164,16 +188,26 @@ async function main() {
         record('G', 'reject task for ended connection', !!gResult.error && /connection_inactive/.test(gResult.error.message), gResult.error?.message);
 
         // ── H: reject unrelated organizer ─────────────────────────────────────
-        const { caregiver: cgH2 } = await makeConnectedPair('h2');
-        const hResult = await createTask(cgH2.client, connA, { frequency: 'one_time', startDate: today });
+        // H/J/AQ only need "any unrelated organizer/participant identity" --
+        // the previous makeConnectedPair calls each created a full
+        // throwaway pair but only ever used one half. Swapped to the
+        // shared fixture pool (Week 4 Task #1's fixture-adoption ledger;
+        // see docs/synthetic-fixture-model.md).
+        const fixturePoolH = await provisionFixturePool();
+        resetFixturePool();
+        detectFixtureContamination();
+        const cgH2 = getFixtureClient('organizerB');
+        await cgH2.auth.signInWithPassword({ email: fixturePoolH.organizerB.email, password: getFixturePassword() });
+        const hResult = await createTask(cgH2, connA, { frequency: 'one_time', startDate: today });
         record('H', 'reject unrelated organizer', !!hResult.error && /connection_inactive/.test(hResult.error.message), hResult.error?.message);
 
         // ── I/J: read isolation ───────────────────────────────────────────────
         const iRead = await rcA.client.from('tasks').select('id').eq('id', aResult.data.id).maybeSingle();
         record('I', 'participant reads own task', !iRead.error && iRead.data?.id === aResult.data.id, iRead.error?.message);
 
-        const { recipient: rcJ } = await makeConnectedPair('j');
-        const jRead = await rcJ.client.from('tasks').select('id').eq('id', aResult.data.id).maybeSingle();
+        const rcJ = getFixtureClient('participantB');
+        await rcJ.auth.signInWithPassword({ email: fixturePoolH.participantB.email, password: getFixturePassword() });
+        const jRead = await rcJ.from('tasks').select('id').eq('id', aResult.data.id).maybeSingle();
         record('J', 'unrelated participant cannot read task', !jRead.error && !jRead.data, jRead.error?.message ?? 'no row returned (RLS)');
 
         // ── K/L/M: lifecycle classification (pure lib/taskLifecycle.ts, mirrors server) ──
@@ -379,89 +413,18 @@ async function main() {
         record('AP', 'direct table mutation blocked', !!apInsert.error && !!apUpdate.error, JSON.stringify({ insertError: apInsert.error?.message, updateError: apUpdate.error?.message }));
 
         // ── AQ: RLS cross-account isolation (task_occurrences) ──────────────────
-        const aqRead = await rcJ.client.from('task_occurrences').select('id').eq('task_id', nTask.id);
+        const aqRead = await rcJ.from('task_occurrences').select('id').eq('task_id', nTask.id);
         record('AQ', 'RLS cross-account isolation', !aqRead.error && (aqRead.data ?? []).length === 0, JSON.stringify(aqRead.data));
 
-        // ── AR-AY: full regression suites ────────────────────────────────────────
-        try {
-            const out = execFileSync('npx', ['tsx', 'scripts/security-audit/run.ts'], { encoding: 'utf-8', env: process.env });
-            const m = lastTestsPassedMatch(out);
-            record('AR', 'scripts/security-audit/run.ts remains 24/24 PASS', !!m && m[1] === m[2], m?.[0]);
-        } catch (err) { record('AR', 'scripts/security-audit/run.ts remains 24/24 PASS', false, err instanceof Error ? err.message : String(err)); }
-
-        try {
-            const out = execFileSync('npx', ['tsx', 'scripts/auth-audit/run.ts'], { encoding: 'utf-8', env: process.env });
-            const m = lastTestsPassedMatch(out);
-            record('AS', 'scripts/auth-audit/run.ts remains 37/37 PASS', !!m && m[1] === m[2], m?.[0]);
-        } catch (err) { record('AS', 'scripts/auth-audit/run.ts remains 37/37 PASS', false, err instanceof Error ? err.message : String(err)); }
-
-        try {
-            const out = execFileSync('npx', ['tsx', 'scripts/reminder-audit/run.ts'], { encoding: 'utf-8', env: process.env });
-            const m = lastTestsPassedMatch(out);
-            record('AT', 'scripts/reminder-audit/run.ts remains passing', !!m && m[1] === m[2], m?.[0]);
-        } catch (err) { record('AT', 'scripts/reminder-audit/run.ts remains passing', false, err instanceof Error ? err.message : String(err)); }
-
-        try {
-            const out = execFileSync('npx', ['tsx', 'scripts/onboarding-audit/run.ts'], { encoding: 'utf-8', env: process.env });
-            const m = lastTestsPassedMatch(out);
-            record('AU', 'scripts/onboarding-audit/run.ts remains passing', !!m && m[1] === m[2], m?.[0]);
-        } catch (err) { record('AU', 'scripts/onboarding-audit/run.ts remains passing', false, err instanceof Error ? err.message : String(err)); }
-
-        try {
-            const out = execFileSync('npx', ['tsx', 'scripts/participant-audit/run.ts'], { encoding: 'utf-8', env: process.env });
-            const m = lastTestsPassedMatch(out);
-            record('AV', 'scripts/participant-audit/run.ts remains passing', !!m && m[1] === m[2], m?.[0]);
-        } catch (err) { record('AV', 'scripts/participant-audit/run.ts remains passing', false, err instanceof Error ? err.message : String(err)); }
-
-        try {
-            const out = execFileSync('npx', ['tsx', 'scripts/ui-state-audit/run.ts'], { encoding: 'utf-8', env: process.env });
-            const m = lastTestsPassedMatch(out);
-            record('AW', 'scripts/ui-state-audit/run.ts remains passing', !!m && m[1] === m[2], m?.[0]);
-        } catch (err) { record('AW', 'scripts/ui-state-audit/run.ts remains passing', false, err instanceof Error ? err.message : String(err)); }
-
-        try {
-            const out = execFileSync('npx', ['tsx', 'scripts/accessibility-audit/run.ts'], { encoding: 'utf-8', env: process.env });
-            const m = lastTestsPassedMatch(out);
-            record('AX', 'scripts/accessibility-audit/run.ts remains 58/58 PASS', !!m && m[1] === m[2], m?.[0]);
-        } catch (err) { record('AX', 'scripts/accessibility-audit/run.ts remains 58/58 PASS', false, err instanceof Error ? err.message : String(err)); }
-
-        try {
-            const out = execFileSync('npx', ['tsx', 'scripts/visual-consistency-audit/run.ts'], { encoding: 'utf-8', env: process.env });
-            const m = lastTestsPassedMatch(out);
-            record('AY', 'scripts/visual-consistency-audit/run.ts remains passing', !!m && m[1] === m[2], m?.[0]);
-        } catch (err) { record('AY', 'scripts/visual-consistency-audit/run.ts remains passing', false, err instanceof Error ? err.message : String(err)); }
-
-        try {
-            const out = execFileSync('npx', ['tsx', 'scripts/ops-health/run.ts'], { encoding: 'utf-8', env: process.env });
-            const hasTaskFail = /\[FAIL\] task_/.test(out);
-            record('AZ', 'ops health has no new task-related FAIL', !hasTaskFail, hasTaskFail ? 'a task_* check reported FAIL' : 'no task_* FAIL lines');
-        } catch (err: any) {
-            const out = err?.stdout ?? '';
-            const hasTaskFail = /\[FAIL\] task_/.test(out);
-            record('AZ', 'ops health has no new task-related FAIL', !hasTaskFail, hasTaskFail ? 'a task_* check reported FAIL' : (err instanceof Error ? err.message : String(err)));
-        }
+        // Nested cross-suite "remains passing" checks (formerly AR-AZ)
+        // removed as part of Week 4 Task #1's DAG-flattening pass -- see
+        // docs/audit-infrastructure-model.md. scripts/final-regression/run.ts
+        // now runs every suite exactly once and checks ops-health once at
+        // the end, instead of each of the other 8 suites re-invoking all of
+        // them from inside task-audit.
 
     } finally {
-        console.log('\nCleaning up synthetic test data...');
-        for (const taskId of testTaskIds) {
-            dbQuery(`delete from public.task_notification_deliveries where task_id = '${taskId}';`);
-            dbQuery(`delete from public.task_occurrences where task_id = '${taskId}';`);
-        }
-        dbQuery(`delete from public.tasks where id in (${testTaskIds.map((id) => `'${id}'`).join(',') || "'00000000-0000-0000-0000-000000000000'"});`);
-        for (const connectionId of testConnectionIds) {
-            dbQuery(`delete from public.connections where id = '${connectionId}';`);
-        }
-        if (testUserIds.length > 0) {
-            const idList = testUserIds.map((id) => `'${id}'`).join(',');
-            dbQuery(`delete from public.profiles where id in (${idList});`);
-            try {
-                execFileSync('supabase', ['db', 'query', '--linked', '-o', 'json', `delete from auth.users where id in (${idList});`], { stdio: 'pipe' });
-            } catch (err) {
-                console.warn('Leftover auth users needing manual cleanup:', testUserIds.length, err instanceof Error ? err.message : err);
-            }
-        }
-        const remaining = dbQuery(`select count(*) as c from auth.users where email like '${EMAIL_PREFIX}.%${RAND}%';`);
-        record('cleanup', 'all synthetic auth users removed', Number((remaining[0] as any)?.c ?? 1) === 0, `remaining: ${(remaining[0] as any)?.c}`);
+        await cleanup();
     }
 
     const passed = summarize();

@@ -23,7 +23,6 @@
 // correctly is the meaningful, honest check available here.
 
 import { readFileSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
 import { record, summarize } from '../security-audit/helpers';
 
 const ROOT = process.cwd();
@@ -34,17 +33,6 @@ function read(relPath: string): string {
 
 function has(content: string, pattern: RegExp): boolean {
     return pattern.test(content);
-}
-
-function lastTestsPassedMatch(output: string): string | null {
-    const matches = [...output.matchAll(/(\d+)\/(\d+) tests passed/g)];
-    return matches.length > 0 ? matches[matches.length - 1][0] : null;
-}
-
-function summaryOf(text: string): string {
-    const tally = lastTestsPassedMatch(text);
-    if (tally) return tally;
-    return text.length > 300 ? `${text.slice(0, 300)}…` : text;
 }
 
 async function main() {
@@ -203,29 +191,12 @@ async function main() {
     // this check only needs to additionally confirm the two files agree on
     // shape, which a clean `npx tsc --noEmit` already established structurally.
 
-    // ── U-Z, AA: regression suites remain passing ────────────────────────────
-    for (const [id, script, expectPrefix] of [
-        ['U', 'scripts/ui-state-audit/run.ts', null],
-        ['V', 'scripts/participant-audit/run.ts', null],
-        ['W', 'scripts/onboarding-audit/run.ts', null],
-        ['X', 'scripts/security-audit/run.ts', '24/24'],
-        ['Y', 'scripts/auth-audit/run.ts', '37/37'],
-        ['Z', 'scripts/reminder-audit/run.ts', null],
-    ] as const) {
-        try {
-            const out = execFileSync('npx', ['tsx', script], { encoding: 'utf-8', env: process.env });
-            const m = lastTestsPassedMatch(out);
-            record(id, `${script} remains passing`, !!m && (!expectPrefix || m.startsWith(expectPrefix)), m ?? undefined);
-        } catch (err: any) {
-            record(id, `${script} remains passing`, false, summaryOf(err?.stdout ?? (err instanceof Error ? err.message : String(err))));
-        }
-    }
-    try {
-        execFileSync('npx', ['tsx', 'scripts/ops-health/run.ts'], { encoding: 'utf-8', env: process.env });
-        record('AA', 'scripts/ops-health/run.ts does not report FAIL (exit code 0)', true);
-    } catch (err: any) {
-        record('AA', 'scripts/ops-health/run.ts does not report FAIL (exit code 0)', false, summaryOf(err?.stdout ?? (err instanceof Error ? err.message : String(err))));
-    }
+    // Nested cross-suite "remains passing" checks (formerly U-Z, AA)
+    // removed as part of Week 4 Task #1's DAG-flattening pass -- see
+    // docs/audit-infrastructure-model.md. This suite creates zero synthetic
+    // accounts itself (pure static source-inspection); the removed checks
+    // were solely regression re-invocations of other, signup-heavy suites,
+    // now covered exactly once each by scripts/final-regression/run.ts.
 
     const passed = summarize();
     process.exit(passed ? 0 : 1);

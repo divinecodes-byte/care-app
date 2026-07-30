@@ -29,6 +29,7 @@ import {
     record,
     summarize,
 } from '../security-audit/helpers';
+import { installCrashSafety } from '../audit-infrastructure/cleanup';
 import { getZonedComputedStatus, isReminderEligibleOnZonedDate, ReminderScheduleLike } from '../../lib/reminderStatus';
 import { getZonedTodayString } from '../../lib/zonedTime';
 
@@ -42,7 +43,7 @@ const PHOENIX = 'America/Phoenix'; // fixed UTC-7 year-round, no DST -- determin
 async function signUpTestUser(emailPrefix: string, fullName: string) {
     const client = newClient();
     const email = `${EMAIL_PREFIX}.${emailPrefix}.${RAND}@example.com`;
-    const { data, error } = await client.auth.signUp({ email, password: PASSWORD, options: { data: { full_name: fullName } } });
+    const { data, error } = await client.auth.signUp({ email, password: PASSWORD, options: { data: { full_name: fullName, audit_account: true } } });
     if (error || !data.user) throw new Error(`signup failed for ${email}: ${error?.message}`);
     return { id: data.user.id, email, client };
 }
@@ -71,6 +72,32 @@ async function main() {
     const testUserIds: string[] = [];
     const testConnectionIds: string[] = [];
     const testReminderIds: string[] = [];
+    let cleaned = false;
+    async function cleanup() {
+        if (cleaned) return;
+        cleaned = true;
+        console.log('\nCleaning up synthetic test data...');
+        for (const reminderId of testReminderIds) {
+            dbQuery(`delete from public.reminder_notification_deliveries where reminder_id = '${reminderId}';`);
+            dbQuery(`delete from public.reminder_logs where reminder_id = '${reminderId}';`);
+        }
+        dbQuery(`delete from public.reminders where id in (${testReminderIds.map((id) => `'${id}'`).join(',') || "'00000000-0000-0000-0000-000000000000'"});`);
+        for (const connectionId of testConnectionIds) {
+            dbQuery(`delete from public.connections where id = '${connectionId}';`);
+        }
+        if (testUserIds.length > 0) {
+            const idList = testUserIds.map((id) => `'${id}'`).join(',');
+            dbQuery(`delete from public.profiles where id in (${idList});`);
+            try {
+                execFileSync('supabase', ['db', 'query', '--linked', '-o', 'json', `delete from auth.users where id in (${idList});`], { stdio: 'pipe' });
+            } catch (err) {
+                console.warn('Leftover auth users needing manual cleanup:', testUserIds.length, err instanceof Error ? err.message : err);
+            }
+        }
+        const remaining = dbQuery(`select count(*) as c from auth.users where email like '${EMAIL_PREFIX}.%${RAND}%';`);
+        record('cleanup', 'all synthetic auth users removed', Number((remaining[0] as any)?.c ?? 1) === 0, `remaining: ${(remaining[0] as any)?.c}`);
+    }
+    installCrashSafety(cleanup);
 
     async function makeConnectedPair(label: string, recipientTz: string) {
         const caregiver = await signUpTestUser(`${label}cg`, `TzRace ${label} Caregiver`);
@@ -286,6 +313,14 @@ async function main() {
         record('O', 'changing the no-response window after a response is already recorded never rewrites the historical occurrence', oLogBefore.status === oLogAfter.status && oLogBefore.completed_at === oLogAfter.completed_at);
 
         // ── P: title-only edit does not invalidate delivery ───────────────────────
+        // No immediate delete needed here (unlike scenario T in run.ts):
+        // connA's participants, including recipientA, are deliberately left
+        // at server_push_enabled=false (line ~236 above), which the live
+        // claim_due_recipient_reminder_deliveries() gates on directly -- so
+        // this raw-inserted row is never claimable by the real cron
+        // regardless of how long it survives until the suite's end-of-run
+        // cleanup. See "Live-cron isolation during audits" in
+        // docs/audit-infrastructure-model.md.
         const reminderP = await createReminder(connA, caregiverA.id, recipientA.id, { daysOfWeek: allDays, timeOfDay: utcTimeString(-5) });
         dbQuery(`insert into public.reminder_notification_deliveries (reminder_id, recipient_id, occurrence_date, scheduled_for, delivery_type, status, schedule_version) values ('${reminderP}', '${recipientA.id}', current_date, now() - interval '5 minutes', 'reminder', 'pending', 1);`);
         await editSchedule(caregiverA.client, reminderP, { title: 'A brand new title, nothing else' });
@@ -359,64 +394,15 @@ async function main() {
         const wLogAfter = logFor(reminderW);
         record('W', 'a historical log is byte-for-byte unchanged after several subsequent schedule edits', JSON.stringify(wLogBefore) === JSON.stringify(wLogAfter));
 
-        // ── X/Y/Z/AA: full regression suites ──────────────────────────────────────
-        function lastTestsPassedMatch(text: string): RegExpMatchArray | null {
-            const matches = [...text.matchAll(/(\d+)\/(\d+) tests passed/g)];
-            return matches.length > 0 ? matches[matches.length - 1] : null;
-        }
-
-        try {
-            const secOut = execFileSync('npx', ['tsx', 'scripts/security-audit/run.ts'], { encoding: 'utf-8', env: process.env });
-            const m = lastTestsPassedMatch(secOut);
-            record('X', 'scripts/security-audit/run.ts remains fully passing', !!m && m[1] === m[2], m?.[0]);
-        } catch (err) {
-            record('X', 'scripts/security-audit/run.ts remains fully passing', false, err instanceof Error ? err.message : String(err));
-        }
-
-        try {
-            const authOut = execFileSync('npx', ['tsx', 'scripts/auth-audit/run.ts'], { encoding: 'utf-8', env: process.env });
-            const m = lastTestsPassedMatch(authOut);
-            record('Y', 'scripts/auth-audit/run.ts remains fully passing', !!m && m[1] === m[2], m?.[0]);
-        } catch (err) {
-            record('Y', 'scripts/auth-audit/run.ts remains fully passing', false, err instanceof Error ? err.message : String(err));
-        }
-
-        try {
-            const remOut = execFileSync('npx', ['tsx', 'scripts/reminder-audit/run.ts'], { encoding: 'utf-8', env: process.env });
-            const m = lastTestsPassedMatch(remOut);
-            record('Z', 'scripts/reminder-audit/run.ts remains fully passing', !!m && m[1] === m[2], m?.[0]);
-        } catch (err) {
-            record('Z', 'scripts/reminder-audit/run.ts remains fully passing', false, err instanceof Error ? err.message : String(err));
-        }
-
-        try {
-            execFileSync('npx', ['tsx', 'scripts/ops-health/run.ts'], { encoding: 'utf-8', env: process.env });
-            record('AA', 'scripts/ops-health/run.ts does not report FAIL (exit code 0)', true);
-        } catch (err: any) {
-            record('AA', 'scripts/ops-health/run.ts does not report FAIL (exit code 0)', false, err?.stdout ?? (err instanceof Error ? err.message : String(err)));
-        }
+        // Nested cross-suite "remains passing" checks (formerly X/Y/Z/AA)
+        // removed as part of Week 4 Task #1's DAG-flattening pass -- see
+        // docs/audit-infrastructure-model.md. This file is already a
+        // standalone companion invoked directly, not nested by anyone else;
+        // scripts/final-regression/run.ts now covers security-audit,
+        // auth-audit, reminder-audit, and ops-health each exactly once.
 
     } finally {
-        console.log('\nCleaning up synthetic test data...');
-        for (const reminderId of testReminderIds) {
-            dbQuery(`delete from public.reminder_notification_deliveries where reminder_id = '${reminderId}';`);
-            dbQuery(`delete from public.reminder_logs where reminder_id = '${reminderId}';`);
-        }
-        dbQuery(`delete from public.reminders where id in (${testReminderIds.map((id) => `'${id}'`).join(',') || "'00000000-0000-0000-0000-000000000000'"});`);
-        for (const connectionId of testConnectionIds) {
-            dbQuery(`delete from public.connections where id = '${connectionId}';`);
-        }
-        if (testUserIds.length > 0) {
-            const idList = testUserIds.map((id) => `'${id}'`).join(',');
-            dbQuery(`delete from public.profiles where id in (${idList});`);
-            try {
-                execFileSync('supabase', ['db', 'query', '--linked', '-o', 'json', `delete from auth.users where id in (${idList});`], { stdio: 'pipe' });
-            } catch (err) {
-                console.warn('Leftover auth users needing manual cleanup:', testUserIds.length, err instanceof Error ? err.message : err);
-            }
-        }
-        const remaining = dbQuery(`select count(*) as c from auth.users where email like '${EMAIL_PREFIX}.%${RAND}%';`);
-        record('cleanup', 'all synthetic auth users removed', Number((remaining[0] as any)?.c ?? 1) === 0, `remaining: ${(remaining[0] as any)?.c}`);
+        await cleanup();
     }
 
     const passed = summarize();

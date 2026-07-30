@@ -12,16 +12,16 @@
 // afterward — see the final report for which suites needed a standalone
 // re-run.
 
-import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import {
     dbQuery,
     newClient,
     randomSuffix,
     record,
-    skip,
     summarize,
 } from '../security-audit/helpers';
+import { installCrashSafety } from '../audit-infrastructure/cleanup';
+import { provisionFixturePool, resetFixturePool, detectFixtureContamination, getFixtureClient, getFixturePassword } from '../audit-infrastructure/fixtures';
 import { BUILT_IN_ROUTINE_PACKS, expandBuiltInPackItem, getBuiltInPack } from '../../lib/routineCatalog';
 import { addParticipantCalendarDays } from '../../lib/participantTodayContext';
 import { en } from '../../lib/i18n/locales/en';
@@ -57,11 +57,6 @@ function todayDateString(): string {
     return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Phoenix', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 }
 
-function lastTestsPassedMatch(text: string): RegExpMatchArray | null {
-    const matches = [...text.matchAll(/(\d+)\/(\d+) tests passed/g)];
-    return matches.length > 0 ? matches[matches.length - 1] : null;
-}
-
 // A fake `t()` for expanding built-in pack items outside React — resolves
 // the real en.ts strings via dot-path, exactly what the app's i18n context
 // would resolve for an English-locale user.
@@ -73,7 +68,7 @@ function tEnglish(key: string): string {
 async function signUpTestUser(emailPrefix: string, fullName: string, role: 'caregiver' | 'recipient', timezone = 'America/Phoenix') {
     const client = newClient();
     const email = `${EMAIL_PREFIX}.${emailPrefix}.${RAND}@example.com`;
-    const { data, error } = await client.auth.signUp({ email, password: PASSWORD, options: { data: { full_name: fullName } } });
+    const { data, error } = await client.auth.signUp({ email, password: PASSWORD, options: { data: { full_name: fullName, audit_account: true } } });
     if (error || !data.user) throw new Error(`signup failed for ${email}: ${error?.message}`);
     await client.from('profiles').update({ role, timezone }).eq('id', data.user.id);
     return { id: data.user.id, email, client };
@@ -81,8 +76,6 @@ async function signUpTestUser(emailPrefix: string, fullName: string, role: 'care
 
 async function main() {
     console.log(`Routine audit run ${RAND}\n`);
-
-    const standaloneRerunNeeded: string[] = [];
 
     async function makeConnectedPair(label: string, recipientTz = 'America/Phoenix') {
         const caregiver = await signUpTestUser(`${label}cg`, `Routine Audit ${label} Caregiver`, 'caregiver');
@@ -135,6 +128,37 @@ async function main() {
     // even ran).
     let crashError: unknown = null;
 
+    // Unlike most other suites, this cleanup is not in-memory-array-scoped
+    // (it re-derives everything from EMAIL_PREFIX at cleanup time), so it's
+    // already immune to the "orphaned before being pushed to an array"
+    // race -- but until now it still had no SIGINT/SIGTERM/uncaughtException/
+    // unhandledRejection handler, so an external interrupt still bypassed
+    // this function entirely (Node does not run pending finally blocks on
+    // an unhandled signal). installCrashSafety closes that gap.
+    let cleaned = false;
+    async function cleanup() {
+        if (cleaned) return;
+        cleaned = true;
+        console.log('\nCleaning up synthetic test data...');
+        dbQuery(`delete from public.routine_notification_deliveries where recipient_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%');`);
+        dbQuery(`delete from public.routine_instance_items where routine_instance_id in (select id from public.routine_instances where organizer_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%'));`);
+        dbQuery(`delete from public.routine_instances where organizer_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%');`);
+        dbQuery(`delete from public.routine_template_items where template_id in (select id from public.routine_templates where owner_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%'));`);
+        dbQuery(`delete from public.routine_templates where owner_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%');`);
+        dbQuery(`delete from public.task_notification_deliveries where recipient_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%');`);
+        dbQuery(`delete from public.reminder_notification_deliveries where recipient_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%');`);
+        dbQuery(`delete from public.reminder_logs where recipient_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%') or caregiver_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%');`);
+        dbQuery(`delete from public.task_occurrences where task_id in (select id from public.tasks where caregiver_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%') or recipient_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%'));`);
+        dbQuery(`delete from public.tasks where caregiver_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%') or recipient_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%');`);
+        dbQuery(`delete from public.reminders where caregiver_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%') or recipient_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%');`);
+        dbQuery(`delete from public.connections where caregiver_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%') or recipient_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%');`);
+        dbQuery(`delete from public.profiles where id in (select id from auth.users where email like '${EMAIL_PREFIX}.%');`);
+        dbQuery(`delete from auth.users where email like '${EMAIL_PREFIX}.%';`);
+        const remaining = dbQuery(`select count(*) as c from auth.users where email like '${EMAIL_PREFIX}.%';`) as { c: number }[];
+        record('cleanup', 'all synthetic auth users removed', Number(remaining[0]?.c) === 0, `remaining: ${remaining[0]?.c}`);
+    }
+    installCrashSafety(cleanup);
+
     try {
         // ── A-D: Built-in pack catalog ──────────────────────────────────────
         record('A', 'browse built-in packs', BUILT_IN_ROUTINE_PACKS.length === 8 && BUILT_IN_ROUTINE_PACKS.every((p) => p.items.length >= 2), `count=${BUILT_IN_ROUTINE_PACKS.length}`);
@@ -169,11 +193,20 @@ async function main() {
         });
         record('G', 'organizer edits own template', !updateEError && updatedE?.title === 'My Template E Updated' && updatedE?.itemCount === 3 && updatedE?.revision === 2, updateEError?.message ?? JSON.stringify(updatedE));
 
-        const { caregiver: cgH } = await makeConnectedPair('hi');
-        const { data: readAsH } = await cgH.client.from('routine_templates').select('id').eq('id', templateE.templateId).maybeSingle();
+        // H/I/CA only need "any unrelated organizer identity" -- the
+        // previous makeConnectedPair('hi') created a full throwaway pair
+        // but only ever used the caregiver half. Swapped to the shared
+        // fixture pool's organizerB role instead (Week 4 Task #1's
+        // fixture-adoption ledger; see docs/synthetic-fixture-model.md).
+        const fixturePoolHI = await provisionFixturePool();
+        resetFixturePool();
+        detectFixtureContamination();
+        const cgH = getFixtureClient('organizerB');
+        await cgH.auth.signInWithPassword({ email: fixturePoolHI.organizerB.email, password: getFixturePassword() });
+        const { data: readAsH } = await cgH.from('routine_templates').select('id').eq('id', templateE.templateId).maybeSingle();
         record('H', 'unrelated organizer cannot read template', readAsH === null, JSON.stringify(readAsH));
 
-        const { error: mutateAsHError } = await cgH.client.rpc('update_routine_template', {
+        const { error: mutateAsHError } = await cgH.rpc('update_routine_template', {
             p_template_id: templateE.templateId, p_title: 'Hijacked', p_description: null, p_use_case: null, p_items: [reminderItem()],
         });
         record('I', 'unrelated organizer cannot mutate template', !!mutateAsHError && /not_authorized/.test(mutateAsHError.message), mutateAsHError?.message);
@@ -284,7 +317,7 @@ async function main() {
         record('W', 'reject ended connection', !!applyEndedError && /connection_inactive/.test(applyEndedError.message), applyEndedError?.message);
 
         // X: unrelated connection (cgH tries to apply using connU, owned by cgU)
-        const { error: applyUnrelatedError } = await cgH.client.rpc('apply_routine_template', {
+        const { error: applyUnrelatedError } = await cgH.rpc('apply_routine_template', {
             p_connection_id: connU, p_source_template_id: null, p_source_template_revision: null,
             p_built_in_pack_id: 'morning_routine', p_built_in_pack_version: '1', p_title: 'Should fail',
             p_start_date: todayDateString(), p_items: [applyReminderItem('r1')], p_apply_request_id: `apply-x-${RAND}`,
@@ -711,7 +744,7 @@ async function main() {
         const { data: readAsUnrelatedParticipant } = await rcUnrelated.client.from('routine_instances').select('id').eq('id', applyU.routineInstanceId).maybeSingle();
         record('BC', 'unrelated participant denied', readAsUnrelatedParticipant === null, JSON.stringify(readAsUnrelatedParticipant));
 
-        const { data: readAsUnrelatedOrganizer } = await cgH.client.from('routine_instances').select('id').eq('id', applyU.routineInstanceId).maybeSingle();
+        const { data: readAsUnrelatedOrganizer } = await cgH.from('routine_instances').select('id').eq('id', applyU.routineInstanceId).maybeSingle();
         record('BD', 'unrelated organizer denied', readAsUnrelatedOrganizer === null, JSON.stringify(readAsUnrelatedOrganizer));
 
         // ── BE-BG: template/routine isolation ───────────────────────────────
@@ -838,59 +871,20 @@ async function main() {
         record('BZ', 'direct mutation blocked', !!directInsertError && !!directInstanceInsertError, `${directInsertError?.message} / ${directInstanceInsertError?.message}`);
 
         // ── CA: RLS cross-account isolation (explicit direct-read check) ────
-        const { data: crossAccountRead } = await cgH.client.from('routine_template_items').select('id').eq('template_id', templateE.templateId);
+        const { data: crossAccountRead } = await cgH.from('routine_template_items').select('id').eq('template_id', templateE.templateId);
         record('CA', 'RLS cross-account isolation', (crossAccountRead ?? []).length === 0, `rows=${(crossAccountRead ?? []).length}`);
 
-        // ── CB-CL: regression suites remain passing ─────────────────────────
-        function runSuite(id: string, name: string, envKey: string, cmd: string) {
-            try {
-                const out = execFileSync('npx', ['tsx', cmd], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
-                const match = lastTestsPassedMatch(out);
-                record(id, name, !!match && match[1] === match[2], match ? `${match[1]}/${match[2]} tests passed` : 'no summary line found');
-            } catch (err) {
-                standaloneRerunNeeded.push(`${id} (${name})`);
-                const message = err instanceof Error ? err.message.slice(0, 300) : String(err);
-                // A nested suite failing specifically because of Supabase's
-                // signup rate limit, or a transient gateway error (502/503,
-                // an established, previously-confirmed-transient pattern in
-                // this codebase's own audit infrastructure -- see
-                // scripts/security-audit/helpers.ts#dbQuery's own retry
-                // comment), is an inability to verify, not a routine-feature
-                // defect -- recorded as SKIP (never silently as PASS, but
-                // also never conflated with a real FAIL) so it can never be
-                // mistaken for evidence against this task's own
-                // routine-specific scenarios (which never hit this path).
-                // Any other failure is still a real FAIL, exactly as
-                // before.
-                if (/rate limit/i.test(message)) {
-                    skip(id, name, `${envKey}: rate-limited, not attributable this run — ${message}`);
-                } else if (/\b(502|503)\b|unexpected (login role )?status/i.test(message)) {
-                    skip(id, name, `${envKey}: transient gateway error, not attributable this run — ${message}`);
-                } else {
-                    record(id, name, false, `${envKey}: ${message}`);
-                }
-            }
-        }
-
-        runSuite('CB', 'security audit remains 24/24 PASS', 'SECURITY_AUDIT', 'scripts/security-audit/run.ts');
-        runSuite('CC', 'auth audit remains 37/37 PASS', 'AUTH_AUDIT', 'scripts/auth-audit/run.ts');
-        runSuite('CD', 'reminder audit own scenarios remain passing', 'REMINDER_AUDIT', 'scripts/reminder-audit/run.ts');
-        runSuite('CE', 'task audit own scenarios remain passing', 'TASK_AUDIT', 'scripts/task-audit/run.ts');
-        runSuite('CF', 'activity audit own scenarios remain passing', 'ACTIVITY_AUDIT', 'scripts/activity-audit/run.ts');
-        runSuite('CG', 'participant audit own scenarios remain passing', 'PARTICIPANT_AUDIT', 'scripts/participant-audit/run.ts');
-        runSuite('CH', 'onboarding audit own scenarios remain passing', 'ONBOARDING_AUDIT', 'scripts/onboarding-audit/run.ts');
-        runSuite('CI', 'UI-state audit own scenarios remain passing', 'UI_STATE_AUDIT', 'scripts/ui-state-audit/run.ts');
-        runSuite('CJ', 'accessibility audit own scenarios remain passing', 'ACCESSIBILITY_AUDIT', 'scripts/accessibility-audit/run.ts');
-        runSuite('CK', 'visual-consistency audit own scenarios remain passing', 'VISUAL_CONSISTENCY_AUDIT', 'scripts/visual-consistency-audit/run.ts');
-
-        try {
-            const opsOut = execFileSync('npx', ['tsx', 'scripts/ops-health/run.ts'], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
-            const routineLines = opsOut.split('\n').filter((l) => /routine/i.test(l));
-            const hasFail = routineLines.some((l) => l.includes('[FAIL]'));
-            record('CL', 'ops health has no new routine-related FAIL', !hasFail, routineLines.join(' | ') || 'no routine-specific lines (none needed yet — no routine pushes sent in this run\'s window)');
-        } catch (err) {
-            record('CL', 'ops health has no new routine-related FAIL', false, err instanceof Error ? err.message.slice(0, 300) : String(err));
-        }
+        // Nested cross-suite "remains passing" checks (formerly CB-CL,
+        // including the local runSuite() rate-limit/gateway-error SKIP
+        // classifier) removed as part of Week 4 Task #1's DAG-flattening
+        // pass. This suite was the single worst offender for combinatorial
+        // signup fan-out -- unrolled recursively, a full run here could
+        // attempt on the order of ~8,000 real signups. That classifier's
+        // logic (rate-limit/502/503 -> SKIP, everything else -> FAIL) now
+        // lives centrally in scripts/audit-infrastructure/classify.ts, used
+        // by scripts/final-regression/run.ts, which runs every suite
+        // exactly once instead of every suite re-invoking every other one.
+        // See docs/audit-infrastructure-model.md.
 
     } catch (err) {
         // Anything above that wasn't already caught locally (typically a
@@ -901,27 +895,7 @@ async function main() {
         // to main().catch() with no scenario breakdown at all.
         crashError = err;
     } finally {
-        console.log('\nCleaning up synthetic test data...');
-        dbQuery(`delete from public.routine_notification_deliveries where recipient_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%');`);
-        dbQuery(`delete from public.routine_instance_items where routine_instance_id in (select id from public.routine_instances where organizer_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%'));`);
-        dbQuery(`delete from public.routine_instances where organizer_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%');`);
-        dbQuery(`delete from public.routine_template_items where template_id in (select id from public.routine_templates where owner_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%'));`);
-        dbQuery(`delete from public.routine_templates where owner_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%');`);
-        dbQuery(`delete from public.task_notification_deliveries where recipient_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%');`);
-        dbQuery(`delete from public.reminder_notification_deliveries where recipient_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%');`);
-        dbQuery(`delete from public.reminder_logs where recipient_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%') or caregiver_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%');`);
-        dbQuery(`delete from public.task_occurrences where task_id in (select id from public.tasks where caregiver_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%') or recipient_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%'));`);
-        dbQuery(`delete from public.tasks where caregiver_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%') or recipient_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%');`);
-        dbQuery(`delete from public.reminders where caregiver_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%') or recipient_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%');`);
-        dbQuery(`delete from public.connections where caregiver_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%') or recipient_id in (select id from auth.users where email like '${EMAIL_PREFIX}.%');`);
-        dbQuery(`delete from public.profiles where id in (select id from auth.users where email like '${EMAIL_PREFIX}.%');`);
-        dbQuery(`delete from auth.users where email like '${EMAIL_PREFIX}.%';`);
-        const remaining = dbQuery(`select count(*) as c from auth.users where email like '${EMAIL_PREFIX}.%';`) as { c: number }[];
-        record('cleanup', 'all synthetic auth users removed', Number(remaining[0]?.c) === 0, `remaining: ${remaining[0]?.c}`);
-
-        if (standaloneRerunNeeded.length > 0) {
-            console.log(`\nNote: the following nested regression suites failed and should be re-run STANDALONE to distinguish a genuine regression from Supabase signup rate-limit noise: ${standaloneRerunNeeded.join(', ')}`);
-        }
+        await cleanup();
     }
 
     const ok = summarize();
@@ -936,8 +910,7 @@ async function main() {
         ...[...ownSource.matchAll(/\brecord\('([^']+)',/g)].map((m) => m[1]),
         ...[...ownSource.matchAll(/\bskip\('([^']+)',/g)].map((m) => m[1]),
     ]);
-    const runSuiteIds = new Set([...ownSource.matchAll(/\brunSuite\('([^']+)',/g)].map((m) => m[1]));
-    const expectedTotal = literalIds.size + runSuiteIds.size;
+    const expectedTotal = literalIds.size;
 
     if (crashError) {
         console.error(

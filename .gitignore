@@ -42,3 +42,9 @@ app-example
 /ios
 /android
 .env
+
+# Week 4 Task #1: audit-infrastructure run artifacts and fixture-pool lock
+# state -- generated per-run, never committed (see docs/final-regression-runbook.md
+# for retention guidance).
+/artifacts/
+/.audit-lock/

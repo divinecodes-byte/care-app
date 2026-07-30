@@ -114,6 +114,11 @@ export function skip(id: string, name: string, detail?: string) {
     console.log(`[SKIP] ${id} — ${name}${detail ? `  (${detail})` : ''}`);
 }
 
+/** Read-only snapshot of every result recorded so far this run -- used by scripts/audit-infrastructure/artifacts.ts to serialize structured JSON without any script changing its calling convention. */
+export function getResults(): TestResult[] {
+    return [...results];
+}
+
 export function summarize(): boolean {
     const failed = results.filter((r) => r.pass === false);
     const skipped = results.filter((r) => r.pass === null);
@@ -139,7 +144,10 @@ export function summarize(): boolean {
 export async function signUpTestUser(emailPrefix: string, rand: string, password: string, fullName: string) {
     const client = newClient();
     const email = `tavora.secaudit.${emailPrefix}.${rand}@example.com`;
-    const { data, error } = await client.auth.signUp({ email, password });
+    // `audit_account: true` lets scripts/audit-infrastructure/cleanup.ts's
+    // globalSyntheticSweep() confirm an account is synthetic via metadata,
+    // not just a namespace guess -- see docs/audit-infrastructure-model.md.
+    const { data, error } = await client.auth.signUp({ email, password, options: { data: { audit_account: true } } });
     if (error || !data.user) throw new Error(`signup failed for ${email}: ${error?.message}`);
     // The handle_new_user trigger (Week 1 task #6) already created a bare
     // profiles row atomically with the auth.users insert above — upsert
