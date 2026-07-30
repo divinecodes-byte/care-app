@@ -8,6 +8,8 @@
 // sent tickets in the same batched Expo call (one Expo API round trip for
 // both ledgers rather than a second redundant cron/function) — each row is
 // tagged with its source table so the update lands back on the right one.
+// Week 3 routine-templates addition: routine_notification_deliveries joins
+// the same batched check for the same reason -- no new cron needed.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { assertCronRequest, jsonLog, chunk } from '../_shared/cron-auth.ts';
 
@@ -20,7 +22,7 @@ type ExpoReceipt =
   | { status: 'ok' }
   | { status: 'error'; message: string; details?: { error?: string } };
 
-type Source = 'reminder' | 'task';
+type Source = 'reminder' | 'task' | 'routine';
 type TrackedRow = { source: Source; id: string; recipientId: string; ticketId: string };
 
 Deno.serve(async (req) => {
@@ -36,7 +38,11 @@ Deno.serve(async (req) => {
 
   const since = new Date(Date.now() - LOOKBACK_HOURS * 60 * 60 * 1000).toISOString();
 
-  const [{ data: reminderRows, error: reminderError }, { data: taskRows, error: taskError }] = await Promise.all([
+  const [
+    { data: reminderRows, error: reminderError },
+    { data: taskRows, error: taskError },
+    { data: routineRows, error: routineError },
+  ] = await Promise.all([
     supabase
       .from('reminder_notification_deliveries')
       .select('id, recipient_id, expo_ticket_id')
@@ -49,17 +55,25 @@ Deno.serve(async (req) => {
       .eq('status', 'sent')
       .not('expo_ticket_id', 'is', null)
       .gte('sent_at', since),
+    supabase
+      .from('routine_notification_deliveries')
+      .select('id, recipient_id, expo_ticket_id')
+      .eq('status', 'sent')
+      .not('expo_ticket_id', 'is', null)
+      .gte('sent_at', since),
   ]);
 
   if (reminderError) log('reminder_query_error', { error: reminderError.message });
   if (taskError) log('task_query_error', { error: taskError.message });
+  if (routineError) log('routine_query_error', { error: routineError.message });
 
   const rows: TrackedRow[] = [
     ...(reminderRows ?? []).map((r: any) => ({ source: 'reminder' as const, id: r.id, recipientId: r.recipient_id, ticketId: r.expo_ticket_id as string })),
     ...(taskRows ?? []).map((r: any) => ({ source: 'task' as const, id: r.id, recipientId: r.recipient_id, ticketId: r.expo_ticket_id as string })),
+    ...(routineRows ?? []).map((r: any) => ({ source: 'routine' as const, id: r.id, recipientId: r.recipient_id, ticketId: r.expo_ticket_id as string })),
   ];
 
-  log('scanned', { reminderDeliveries: reminderRows?.length ?? 0, taskDeliveries: taskRows?.length ?? 0 });
+  log('scanned', { reminderDeliveries: reminderRows?.length ?? 0, taskDeliveries: taskRows?.length ?? 0, routineDeliveries: routineRows?.length ?? 0 });
 
   if (rows.length === 0) {
     log('end', { checked: 0, deactivated: 0 });
@@ -81,7 +95,7 @@ Deno.serve(async (req) => {
   let checked = 0;
   let deactivated = 0;
   const recipientsToDeactivate = new Set<string>();
-  const checkedIdsBySource: Record<Source, string[]> = { reminder: [], task: [] };
+  const checkedIdsBySource: Record<Source, string[]> = { reminder: [], task: [], routine: [] };
 
   for (const batch of chunk(rows.map((r) => r.ticketId), RECEIPT_BATCH_SIZE)) {
     try {
@@ -120,6 +134,9 @@ Deno.serve(async (req) => {
   }
   if (checkedIdsBySource.task.length > 0) {
     await supabase.from('task_notification_deliveries').update({ receipt_checked_at: nowIso }).in('id', checkedIdsBySource.task);
+  }
+  if (checkedIdsBySource.routine.length > 0) {
+    await supabase.from('routine_notification_deliveries').update({ receipt_checked_at: nowIso }).in('id', checkedIdsBySource.routine);
   }
 
   if (recipientsToDeactivate.size > 0) {

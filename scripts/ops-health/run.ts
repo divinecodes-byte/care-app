@@ -38,6 +38,8 @@ const REQUIRED_CRON_JOBS: { name: string; cadenceSeconds: number }[] = [
     { name: 'check-push-receipts', cadenceSeconds: 15 * 60 },
     { name: 'sync-missed-reminders-db', cadenceSeconds: 5 * 60 },
     { name: 'send-caregiver-push-notifications', cadenceSeconds: 60 },
+    { name: 'send-task-assignment-notifications', cadenceSeconds: 60 },
+    { name: 'send-routine-assignment-notifications', cadenceSeconds: 60 },
     { name: 'cleanup-pg-net-responses', cadenceSeconds: 24 * 60 * 60 },
     { name: 'cleanup-cron-job-run-details', cadenceSeconds: 24 * 60 * 60 },
 ];
@@ -180,6 +182,32 @@ function main() {
 
     const taskStuckPending = num(taskMetricsRecord, 'stuck_pending');
     check('task_pushes:stuck_pending', taskStuckPending >= STUCK_PENDING_FAIL ? 'FAIL' : taskStuckPending >= STUCK_PENDING_WARN ? 'WARNING' : 'PASS', `${taskStuckPending} task-assignment delivery row(s) pending > 5 minutes`);
+
+    // ── Routine-assignment push health (kept structurally separate from
+    // both metrics above — Week 3 routine-templates task #3, Phase 22 —
+    // routine notifications are never counted toward reminder or task
+    // failure rates, and vice versa) ─────────────────────────────────────
+    const routineMetricsRows = dbQuery('select * from public.routine_notification_health_summary(24);') as { metric: string; value: number | null }[];
+    const routineMetricsRecord = Object.fromEntries(routineMetricsRows.map((r) => [r.metric, r.value]));
+    const routineDue = num(routineMetricsRecord, 'due_in_window');
+    const routineSent = num(routineMetricsRecord, 'sent');
+    const routineFailedOther = num(routineMetricsRecord, 'failed_other');
+    const routineFailedTokenAbsence = num(routineMetricsRecord, 'failed_token_absence');
+
+    if (routineDue < FAILURE_RATE_MIN_SAMPLE) {
+        if (routineFailedOther >= FAILURE_RATE_MIN_SAMPLE_ABS_WARN) {
+            check('routine_pushes:failure_rate', 'WARNING', `${routineFailedOther} genuine failure(s) of ${routineDue} due in last 24h — sample too small for a rate`);
+        } else {
+            check('routine_pushes:failure_rate', 'PASS', `${routineDue} due in last 24h (sent=${routineSent}, of which ${routineFailedTokenAbsence} no-token) — sample below ${FAILURE_RATE_MIN_SAMPLE}, rate not computed`);
+        }
+    } else {
+        const routineFailureRate = routineFailedOther / routineDue;
+        const routineStatus: Status = routineFailureRate >= FAILURE_RATE_FAIL ? 'FAIL' : routineFailureRate >= FAILURE_RATE_WARN ? 'WARNING' : 'PASS';
+        check('routine_pushes:failure_rate', routineStatus, `${(routineFailureRate * 100).toFixed(1)}% genuine-failure of ${routineDue} due in last 24h (sent=${routineSent}, excludes ${routineFailedTokenAbsence} no-token)`);
+    }
+
+    const routineStuckPending = num(routineMetricsRecord, 'stuck_pending');
+    check('routine_pushes:stuck_pending', routineStuckPending >= STUCK_PENDING_FAIL ? 'FAIL' : routineStuckPending >= STUCK_PENDING_WARN ? 'WARNING' : 'PASS', `${routineStuckPending} routine-assignment delivery row(s) pending > 5 minutes`);
 
     // ── Caregiver push health (uses caregiver_notification_events directly —
     // no dedicated health function exists for it; the table is small and a

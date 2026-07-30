@@ -1570,15 +1570,26 @@ export default function CaregiverDashboard() {
                             {t('organizerDashboard.heading')}
                         </Text>
 
-                        <TouchableOpacity
-                            style={styles.iconButton}
-                            onPress={() => setSettingsVisible(true)}
-                            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                            accessibilityRole="button"
-                            accessibilityLabel={t('settings.title')}
-                        >
-                            <Ionicons name="settings-outline" size={19} color={C.textSecondary} />
-                        </TouchableOpacity>
+                        <View style={styles.headerActionsRow}>
+                            <TouchableOpacity
+                                style={styles.iconButton}
+                                onPress={() => router.push({ pathname: '/routine-library', params: connectionSummary.status === 'accepted' ? { connectionId: connectionSummary.id } : {} })}
+                                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                                accessibilityRole="button"
+                                accessibilityLabel={t('routineLibrary.heading')}
+                            >
+                                <Ionicons name="albums-outline" size={19} color={C.textSecondary} />
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={styles.iconButton}
+                                onPress={() => setSettingsVisible(true)}
+                                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                                accessibilityRole="button"
+                                accessibilityLabel={t('settings.title')}
+                            >
+                                <Ionicons name="settings-outline" size={19} color={C.textSecondary} />
+                            </TouchableOpacity>
+                        </View>
                     </View>
 
                     <View style={styles.headerSubRow}>
@@ -1689,6 +1700,11 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
         justifyContent: 'space-between',
         alignItems: 'center',
         gap: 12,
+    },
+    headerActionsRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
     },
     heading: {
         flex: 1,

@@ -151,6 +151,10 @@ export default function ParticipantsScreen() {
         router.push({ pathname: '/create-item', params: { connectionId } });
     }
 
+    function assignRoutineFor(connectionId: string) {
+        router.push({ pathname: '/routine-library', params: { connectionId } });
+    }
+
     function confirmEndConnection(connectionId: string, name: string) {
         showAlertOnce(
             t('participants.endConnectionConfirmTitle'),
@@ -356,6 +360,15 @@ export default function ParticipantsScreen() {
                                                 >
                                                     <Ionicons name="add-circle-outline" size={16} color={C.primary} />
                                                     <Text style={styles.cardActionText}>{t('participants.createReminderAction')}</Text>
+                                                </TouchableOpacity>
+                                                <TouchableOpacity
+                                                    style={styles.cardActionButton}
+                                                    onPress={() => assignRoutineFor(p.connectionId)}
+                                                    accessibilityRole="button"
+                                                    accessibilityLabel={t('participants.assignRoutineAction')}
+                                                >
+                                                    <Ionicons name="albums-outline" size={16} color={C.primary} />
+                                                    <Text style={styles.cardActionText}>{t('participants.assignRoutineAction')}</Text>
                                                 </TouchableOpacity>
                                                 <TouchableOpacity
                                                     style={styles.cardActionButton}

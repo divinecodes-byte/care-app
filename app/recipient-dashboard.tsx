@@ -235,6 +235,47 @@ export default function RecipientDashboard() {
     const { start: startTaskLoad, isCurrent: isTaskLoadCurrent } = useRequestGeneration();
     const lastLoadedDateRef = useRef<string>('');
 
+    // Purely cosmetic — a subtle "From a routine" label on cards whose
+    // reminder/task id happens to be a routine_instance_items member.
+    // Independent of the reminders/tasks load paths above: a failure here
+    // never blocks or hides the underlying reminder/task card, and it
+    // re-fetches whenever recipientId changes (including an account
+    // switch), so it can never carry a prior account's membership set
+    // forward.
+    const [routineMemberReminderIds, setRoutineMemberReminderIds] = useState<Set<string>>(new Set());
+    const [routineMemberTaskIds, setRoutineMemberTaskIds] = useState<Set<string>>(new Set());
+
+    useEffect(() => {
+        if (!recipientId) {
+            setRoutineMemberReminderIds(new Set());
+            setRoutineMemberTaskIds(new Set());
+            return;
+        }
+        let cancelled = false;
+        (async () => {
+            const { data: instances } = await supabase.from('routine_instances').select('id').eq('participant_id', recipientId);
+            const instanceIds = (instances ?? []).map((row) => row.id);
+            if (instanceIds.length === 0) {
+                if (!cancelled) { setRoutineMemberReminderIds(new Set()); setRoutineMemberTaskIds(new Set()); }
+                return;
+            }
+            const { data: memberItems } = await supabase
+                .from('routine_instance_items')
+                .select('item_kind, reminder_id, task_id')
+                .in('routine_instance_id', instanceIds);
+            if (cancelled) return;
+            const reminderIds = new Set<string>();
+            const taskIds = new Set<string>();
+            for (const item of memberItems ?? []) {
+                if (item.item_kind === 'reminder' && item.reminder_id) reminderIds.add(item.reminder_id);
+                if (item.item_kind === 'task' && item.task_id) taskIds.add(item.task_id);
+            }
+            setRoutineMemberReminderIds(reminderIds);
+            setRoutineMemberTaskIds(taskIds);
+        })();
+        return () => { cancelled = true; };
+    }, [recipientId]);
+
     const loadTasks = useCallback(async () => {
         const generation = startTaskLoad();
         setTaskStatus((s) => (s === 'ready' ? s : 'loading'));
@@ -782,7 +823,7 @@ export default function RecipientDashboard() {
                     <View style={styles.taskSectionBlock}>
                         <Text style={styles.taskSectionHeading} accessibilityRole="header">{t('tasksSection.overdueSection')}</Text>
                         {overdueTasks.map((entry) => (
-                            <TaskTodayCard key={entry.task.id} entry={entry} C={C} t={t} styles={styles} respondingTaskId={respondingTaskId} onRespond={respondTaskAction} />
+                            <TaskTodayCard key={entry.task.id} entry={entry} C={C} t={t} styles={styles} respondingTaskId={respondingTaskId} onRespond={respondTaskAction} isRoutineMember={routineMemberTaskIds.has(entry.task.id)} />
                         ))}
                     </View>
                 )}
@@ -986,6 +1027,9 @@ export default function RecipientDashboard() {
 
                             {/* Title */}
                             <Text style={styles.reminderTitle}>{reminder.title}</Text>
+                            {routineMemberReminderIds.has(reminder.id) && (
+                                <Text style={styles.routineMemberLabel}>{t('routineDetails.heading')}</Text>
+                            )}
 
                             {/* Notes */}
                             {reminder.notes ? (
@@ -1096,10 +1140,10 @@ export default function RecipientDashboard() {
                 {(dueTodayTasks.length > 0 || openOtherTasks.length > 0) && (
                     <View style={styles.taskSectionBlock}>
                         {dueTodayTasks.map((entry) => (
-                            <TaskTodayCard key={entry.task.id} entry={entry} C={C} t={t} styles={styles} respondingTaskId={respondingTaskId} onRespond={respondTaskAction} />
+                            <TaskTodayCard key={entry.task.id} entry={entry} C={C} t={t} styles={styles} respondingTaskId={respondingTaskId} onRespond={respondTaskAction} isRoutineMember={routineMemberTaskIds.has(entry.task.id)} />
                         ))}
                         {openOtherTasks.map((entry) => (
-                            <TaskTodayCard key={entry.task.id} entry={entry} C={C} t={t} styles={styles} respondingTaskId={respondingTaskId} onRespond={respondTaskAction} />
+                            <TaskTodayCard key={entry.task.id} entry={entry} C={C} t={t} styles={styles} respondingTaskId={respondingTaskId} onRespond={respondTaskAction} isRoutineMember={routineMemberTaskIds.has(entry.task.id)} />
                         ))}
                     </View>
                 )}
@@ -1107,7 +1151,7 @@ export default function RecipientDashboard() {
                     <View style={styles.taskSectionBlock}>
                         <Text style={styles.taskSectionHeading}>{t('tasksSection.upcomingSection')}</Text>
                         {upcomingTasks.map((entry) => (
-                            <TaskTodayCard key={entry.task.id} entry={entry} C={C} t={t} styles={styles} respondingTaskId={respondingTaskId} onRespond={respondTaskAction} readOnly />
+                            <TaskTodayCard key={entry.task.id} entry={entry} C={C} t={t} styles={styles} respondingTaskId={respondingTaskId} onRespond={respondTaskAction} isRoutineMember={routineMemberTaskIds.has(entry.task.id)} readOnly />
                         ))}
                     </View>
                 )}
@@ -1115,7 +1159,7 @@ export default function RecipientDashboard() {
                     <View style={styles.taskSectionBlock}>
                         <Text style={styles.taskSectionHeading}>{t('tasksSection.completedSection')}</Text>
                         {terminalTodayTasks.map((entry) => (
-                            <TaskTodayCard key={entry.task.id} entry={entry} C={C} t={t} styles={styles} respondingTaskId={respondingTaskId} onRespond={respondTaskAction} readOnly />
+                            <TaskTodayCard key={entry.task.id} entry={entry} C={C} t={t} styles={styles} respondingTaskId={respondingTaskId} onRespond={respondTaskAction} isRoutineMember={routineMemberTaskIds.has(entry.task.id)} readOnly />
                         ))}
                     </View>
                 )}
@@ -1171,7 +1215,7 @@ const TASK_STATUS_TONE: Record<string, StatusTone> = {
 };
 
 function TaskTodayCard({
-    entry, C, t, styles, respondingTaskId, onRespond, readOnly = false,
+    entry, C, t, styles, respondingTaskId, onRespond, readOnly = false, isRoutineMember = false,
 }: {
     entry: TaskWithSummary;
     C: ThemeColors;
@@ -1180,6 +1224,7 @@ function TaskTodayCard({
     respondingTaskId: string | null;
     onRespond: (taskId: string, occurrenceDate: string, action: 'completed' | 'skipped') => void;
     readOnly?: boolean;
+    isRoutineMember?: boolean;
 }) {
     const { task, summary } = entry;
     const statusLabel = t(`taskStatus.${summary.status === 'completed_on_time' ? 'completedOnTime' : summary.status === 'completed_late' ? 'completedLate' : summary.status}`);
@@ -1209,6 +1254,7 @@ function TaskTodayCard({
                 {entry.organizerName ? `${t('tasksSection.organizerLabel', { name: entry.organizerName })} · ` : ''}
                 {scheduleContext}
                 {summary.overdueCount > 1 ? ` · ${t('tasksSection.overdueCountBadge', { n: summary.overdueCount })}` : ''}
+                {isRoutineMember ? ` · ${t('routineDetails.heading')}` : ''}
             </Text>
             {canRespond ? (
                 <View style={styles.taskCardActionRow}>
@@ -1402,6 +1448,13 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
         letterSpacing: -0.5,
         lineHeight: 32,
         marginBottom: 10,
+    },
+    routineMemberLabel: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: C.textMuted,
+        marginTop: -6,
+        marginBottom: 8,
     },
     notes: {
         fontSize: 16,

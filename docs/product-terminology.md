@@ -64,6 +64,38 @@ participant at a specific time" (Timed Reminder) and "Can be completed
 anytime within its assigned date or deadline" (Flexible Task) — chosen so
 neither option reads as the "default"/"other" choice.
 
+## Routine terminology (Week 3 product-expansion task #3)
+
+**Routine** is the generic UI word for a reusable accountability blueprint
+and its applied result — see `docs/routine-template-model.md` and
+`docs/routine-application-model.md` for the full architecture. Same rule as
+Task/Organizer/Participant: "Routine," "Template," and "Pack" never appear
+in a table, column, or route name beyond the `routine_*` table-name prefix
+itself (which, like `tasks`/`reminders`, names the feature directly rather
+than obscuring it — the obscured terms are specifically the *role* words
+Organizer/Participant, which still resolve to `caregiver_id`/`recipient_id`
+inside every routine table exactly as elsewhere).
+
+| Concept | Term |
+|---|---|
+| A reusable, non-actionable blueprint (personal or built-in) | **Template** |
+| A curated, built-in template supplied by Tavora | **Tavora Pack** (never "template" alone when referring to a built-in one, to keep it visually/verbally distinct from a personal template) |
+| The result of applying a template/pack to one participant | **Routine** |
+| The screen for browsing packs/templates | **Routine Library** |
+| The screen for customizing before creating | **Preview Routine** |
+| The screen for a single applied routine | **Routine** (heading), never "Routine Instance" — that phrase is internal/architectural only |
+
+**No combined success/adherence percentage is ever shown for a routine** —
+reminder adherence and task completion rates remain fully separate,
+existing, unmixed metrics (see `docs/routine-application-model.md`'s "no
+second lifecycle authority" principle). A routine's own summary only ever
+states plain counts ("2 reminders, 3 tasks"), never a blended score.
+
+Routine member items are always visually distinguished as **Reminder** or
+**Task** using each object's own existing terminology and status words from
+the sections above — a routine never invents a third, unified status
+vocabulary for its members.
+
 ## Contextual relationship labels
 
 Defined in `lib/onboardingCore.ts`'s `ROLE_LABEL_KEYS_BY_USE_CASE`, resolved

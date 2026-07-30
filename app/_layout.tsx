@@ -145,6 +145,7 @@ function RootLayoutNav() {
         const data = (response.notification.request.content.data ?? {}) as Record<string, unknown>;
         const reminderId = data.reminderId as string | undefined;
         const taskId = data.taskId as string | undefined;
+        const routineInstanceId = data.routineInstanceId as string | undefined;
 
         if (data.type === 'caregiver_reminder_event') {
             // Caregiver push notifications never open the recipient's full-screen
@@ -160,6 +161,16 @@ function RootLayoutNav() {
         // handled by that screen's own calm state, never a crash or a bypass.
         if (data.notificationType === 'task_assignment' && taskId) {
             router.push({ pathname: '/task-details', params: { taskId } });
+            return;
+        }
+
+        // Routine-assignment push — routine-details.tsx re-reads the routine
+        // instance's own current status/RLS-scoped visibility before
+        // rendering anything, so a stale notification tap after the routine
+        // was archived (or the connection ended) is always handled by that
+        // screen's own calm state, never a crash or a bypass.
+        if (data.notificationType === 'routine_assignment' && routineInstanceId) {
+            router.push({ pathname: '/routine-details', params: { routineInstanceId } });
             return;
         }
 

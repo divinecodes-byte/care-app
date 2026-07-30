@@ -238,6 +238,22 @@ account switch or participant switch by construction — it is always
 freshly resolved (or explicitly cleared) on every relevant transition,
 never carried over from a `useState` default.
 
+## Routine labels (Week 3 product-expansion task #3)
+
+Individual reminders/tasks created by applying a routine
+(`docs/routine-application-model.md`) remain fully independent, individually
+actionable items in Today — a routine never collapses its members into one
+action or one combined status. `app/recipient-dashboard.tsx` fetches a
+lightweight membership set (`routine_instance_items` scoped to the current
+`recipientId`, keyed on the same `recipientId` state used everywhere else
+for account-switch isolation, so it can never carry a prior account's
+membership set forward) and renders a subtle, purely cosmetic label
+("Routine") on a reminder/task card whose id happens to be a member — never
+a second card, never altered sorting, never a different action surface.
+This fetch is independent of the reminders/tasks load paths themselves: a
+failure to resolve routine membership never blocks or hides the underlying
+card, it just omits the label.
+
 ## Known limitations
 
 - Reminders and tasks are integrated at the group level, not fully
