@@ -27,19 +27,49 @@ const FIXTURE_PASSWORD = 'Tavora-Fixture-Pool!9x';
 export type FixtureIdentity = { role: FixtureRole; id: string; email: string };
 export type FixturePool = Record<FixtureRole, FixtureIdentity>;
 
+// organizerA/organizerB act as the caregiver side in every adopted
+// scenario (routine-audit H/I/CA, task-audit H); the three participant
+// roles act as the recipient side (task-audit J/AQ); unauthorizedUser
+// defaults to caregiver since "unrelated organizer" is the more common
+// pattern it stands in for, but nothing currently depends on that specific
+// choice -- it's set explicitly so a future role-checking RPC never fails
+// for the wrong reason the way scenario X did (see below).
+const FIXTURE_PROFILE_DEFAULTS: Record<FixtureRole, { role: 'caregiver' | 'recipient'; timezone: string }> = {
+    organizerA: { role: 'caregiver', timezone: 'America/Phoenix' },
+    organizerB: { role: 'caregiver', timezone: 'America/Phoenix' },
+    participantA: { role: 'recipient', timezone: 'America/Phoenix' },
+    participantB: { role: 'recipient', timezone: 'America/Phoenix' },
+    participantMultiOrg: { role: 'recipient', timezone: 'America/Phoenix' },
+    unauthorizedUser: { role: 'caregiver', timezone: 'America/Phoenix' },
+};
+
 function fixtureClientFor(email: string) {
     // A short-lived client signed in as the fixture, for scenarios that need
     // to act *as* that identity (e.g. an RLS check reading its own rows).
     return createClient(SUPABASE_URL, ANON_KEY);
 }
 
-/** Idempotent -- signs up any of the 6 identities that don't already exist, reuses the rest. Never destructive. */
+/**
+ * Idempotent -- signs up any of the 6 identities that don't already exist,
+ * reuses the rest. Never destructive. Also re-applies the role/timezone
+ * defaults on every call (not just at creation) -- this is what makes the
+ * pool self-healing: a real bug shipped in an earlier pass left every
+ * fixture's `profiles.role` null (the upsert only ever set `full_name`),
+ * which surfaced live as routine-audit scenario X getting rejected with
+ * `organizer_role_required` instead of the `connection_inactive` it was
+ * actually testing for. Re-asserting the defaults here means an already-
+ * provisioned (and already-broken) pool corrects itself the next time
+ * anything calls provisionFixturePool(), with no separate one-off fix
+ * script required.
+ */
 export async function provisionFixturePool(): Promise<FixturePool> {
     const pool = {} as FixturePool;
     for (const role of FIXTURE_ROLES) {
         const email = fixtureEmail(role);
+        const defaults = FIXTURE_PROFILE_DEFAULTS[role];
         const existing = dbQuery(`select id from auth.users where email = '${email}'`) as { id: string }[];
         if (existing.length > 0) {
+            dbQuery(`update public.profiles set role = '${defaults.role}', timezone = '${defaults.timezone}' where id = '${existing[0].id}'`);
             pool[role] = { role, id: existing[0].id, email };
             continue;
         }
@@ -50,7 +80,9 @@ export async function provisionFixturePool(): Promise<FixturePool> {
             options: { data: { audit_account: true, fixture: true, fixture_role: role } },
         });
         if (error || !data.user) throw new Error(`fixture provisioning failed for ${role}: ${error?.message}`);
-        const { error: profErr } = await client.from('profiles').upsert({ id: data.user.id, full_name: `Fixture ${role}` }, { onConflict: 'id' });
+        const { error: profErr } = await client
+            .from('profiles')
+            .upsert({ id: data.user.id, full_name: `Fixture ${role}`, role: defaults.role, timezone: defaults.timezone }, { onConflict: 'id' });
         if (profErr) throw new Error(`fixture profile upsert failed for ${role}: ${profErr.message}`);
         pool[role] = { role, id: data.user.id, email };
     }
@@ -135,6 +167,21 @@ export function verifyFixtureBaseline(): FixtureBaselineReport {
         `select id, server_push_enabled from public.profiles where id in (${FIXTURE_ROLES.map((r) => `'${pool[r].id}'`).join(',')})`
     ) as { id: string; server_push_enabled: boolean }[];
     if (pushFlags.some((p) => p.server_push_enabled)) problems.push('at least one fixture has server_push_enabled=true (must be false)');
+
+    // Confirmed live (Week 4 Task #1 checkpoint run): a null profiles.role
+    // on a fixture is a real, silent failure mode -- an RPC that gates on
+    // caregiver/recipient role rejects for the wrong reason (e.g.
+    // organizer_role_required instead of the connection_inactive a
+    // scenario was actually testing for), which looks exactly like a
+    // product regression until traced back to the fixture's own setup.
+    const roleRows = dbQuery(
+        `select id, role from public.profiles where id in (${FIXTURE_ROLES.map((r) => `'${pool[r].id}'`).join(',')})`
+    ) as { id: string; role: string | null }[];
+    for (const role of FIXTURE_ROLES) {
+        const expected = FIXTURE_PROFILE_DEFAULTS[role].role;
+        const actual = roleRows.find((r) => r.id === pool[role].id)?.role;
+        if (actual !== expected) problems.push(`${role} has role=${actual ?? 'null'}, expected ${expected}`);
+    }
 
     const tokens = dbQuery(
         `select count(*) as c from public.push_tokens where user_id in (${FIXTURE_ROLES.map((r) => `'${pool[r].id}'`).join(',')})`

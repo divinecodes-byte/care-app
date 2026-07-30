@@ -31,7 +31,7 @@ import {
 } from '../security-audit/helpers';
 import { installCrashSafety } from '../audit-infrastructure/cleanup';
 import { getZonedComputedStatus, isReminderEligibleOnZonedDate, ReminderScheduleLike } from '../../lib/reminderStatus';
-import { getZonedTodayString } from '../../lib/zonedTime';
+import { getZonedTodayString, getZonedDateString } from '../../lib/zonedTime';
 
 const RAND = randomSuffix();
 const PASSWORD = `TzRace!${RAND}9X`;
@@ -198,7 +198,20 @@ async function main() {
         // computation uses -- exactly the bug this task fixes when a
         // caregiver's screen used ITS OWN device zone instead of the
         // recipient's. ──────────────────────────────────────────────────────
-        const divergentTimeOfDay = `${wallClockMinutesAgoIn(NEW_YORK, 5)}:00`;
+        //
+        // The occurrence DATE used below must be derived from this SAME
+        // instant, in Phoenix's zone -- not from a separately-fetched
+        // "Phoenix today" (getZonedTodayString, which reflects real "now").
+        // Confirmed live: those two silently disagree for a ~3-hour window
+        // every day (whenever New York has crossed midnight into a new
+        // calendar day but Phoenix, 2-3h behind, hasn't yet), which made
+        // this exact scenario block deterministically fail every run that
+        // happened to execute between roughly 00:00 and 03:00 New York
+        // time -- a genuine test-harness bug, not a product regression
+        // (scenario C below never had this problem, since it derives its
+        // time-of-day and its "today" from the same single zone).
+        const divergentInstant = new Date(Date.now() - 5 * 60000);
+        const divergentTimeOfDay = `${wallClockTimeIn(NEW_YORK, divergentInstant)}:00`;
         const divergentReminder: ReminderScheduleLike = {
             days_of_week: allDays,
             time_of_day: divergentTimeOfDay,
@@ -206,9 +219,9 @@ async function main() {
             is_active: true,
             no_response_minutes: 1, // short window so "5 minutes ago" is already missed
         };
-        const phoenixToday = getZonedTodayString(PHOENIX);
-        const statusIfRecipientZoneUsed = getZonedComputedStatus(divergentReminder, phoenixToday, phoenixToday, PHOENIX);
-        const statusIfWrongCaregiverZoneUsed = getZonedComputedStatus(divergentReminder, phoenixToday, phoenixToday, NEW_YORK);
+        const phoenixDateForDivergent = getZonedDateString(divergentInstant, PHOENIX);
+        const statusIfRecipientZoneUsed = getZonedComputedStatus(divergentReminder, phoenixDateForDivergent, phoenixDateForDivergent, PHOENIX);
+        const statusIfWrongCaregiverZoneUsed = getZonedComputedStatus(divergentReminder, phoenixDateForDivergent, phoenixDateForDivergent, NEW_YORK);
         record('B', 'caregiver (New York) viewing a recipient in Arizona: using the WRONG (caregiver) zone would show a different status than using the correct (recipient) zone', statusIfWrongCaregiverZoneUsed !== statusIfRecipientZoneUsed, `wrong_zone=${statusIfWrongCaregiverZoneUsed} correct_zone=${statusIfRecipientZoneUsed}`);
         record('D', 'the recipient-zone (Arizona) computation shows the reminder as not yet missed (still within its actual local window)', statusIfRecipientZoneUsed === 'pending', statusIfRecipientZoneUsed);
         record('E', "the same reminder, interpreted correctly, is not prematurely shown as Missed under the recipient's own timezone", statusIfRecipientZoneUsed !== 'missed');
@@ -219,18 +232,37 @@ async function main() {
         record('C', 'caregiver (Arizona) viewing a recipient in New York: using the wrong (caregiver) zone again disagrees with the correct (recipient) zone', statusIfPhoenixWronglyUsed !== statusIfNyIsRecipient, `wrong_zone=${statusIfPhoenixWronglyUsed} correct_zone=${statusIfNyIsRecipient}`);
 
         // ── F: future status agrees with recipient timezone ──────────────────────
-        const futureReminder: ReminderScheduleLike = { ...divergentReminder, time_of_day: `${wallClockTimeIn(PHOENIX, new Date(Date.now() + 3 * 3600000))}:00` };
-        const futureStatusInPhoenix = getZonedComputedStatus(futureReminder, phoenixToday, phoenixToday, PHOENIX);
+        // Same fix: derive the occurrence date from the SAME future instant,
+        // in Phoenix's zone -- adding 3 hours to "now" can itself cross into
+        // Phoenix's next calendar day (whenever it's already past ~21:00
+        // Phoenix time), which the old code's reuse of `phoenixToday` (the
+        // OLD day) silently mis-evaluated as already past instead of future.
+        const futureInstant = new Date(Date.now() + 3 * 3600000);
+        const futureReminder: ReminderScheduleLike = { ...divergentReminder, time_of_day: `${wallClockTimeIn(PHOENIX, futureInstant)}:00` };
+        const phoenixDateForFuture = getZonedDateString(futureInstant, PHOENIX);
+        const futureStatusInPhoenix = getZonedComputedStatus(futureReminder, phoenixDateForFuture, phoenixDateForFuture, PHOENIX);
         record('F', 'a genuinely future scheduled time (recipient timezone) always computes as pending, never missed', futureStatusInPhoenix === 'pending', futureStatusInPhoenix);
 
         // ── G: historical timestamp remains unchanged after timezone change ─────
+        // recipientG's profile.timezone is NEW_YORK, not UTC -- time_of_day
+        // must be derived relative to NEW_YORK's own wall clock (as scenarios
+        // A-F already correctly do), not utcTimeString() (which produces the
+        // UTC clock's digits, relabeled with no zone conversion -- correct
+        // only for connA below, whose recipient's timezone really is 'UTC').
+        // Confirmed live via direct reproduction: utcTimeString(-5) here
+        // always produces a time_of_day 4-5 hours ahead of New York's actual
+        // current wall clock (the UTC/NY offset), so respond_to_reminder_
+        // occurrence always rejected with not_eligible_yet, no log row was
+        // ever created, and the next line's `.occurrence_date` access on the
+        // resulting `undefined` always crashed the whole suite -- a
+        // standing bug, not a rare timing coincidence.
         const { connectionId: connG, caregiver: caregiverG, recipient: recipientG } = await makeConnectedPair('g', NEW_YORK);
-        const reminderG = await createReminder(connG, caregiverG.id, recipientG.id, { daysOfWeek: allDays, timeOfDay: utcTimeString(-5) });
+        const reminderG = await createReminder(connG, caregiverG.id, recipientG.id, { daysOfWeek: allDays, timeOfDay: `${wallClockMinutesAgoIn(NEW_YORK, 5)}:00` });
         await respond(recipientG.client, reminderG, 'taken');
         const logBeforeTzChange = logFor(reminderG);
         dbQuery(`update public.profiles set timezone = 'Asia/Tokyo' where id = '${recipientG.id}';`);
         const logAfterTzChange = logFor(reminderG);
-        record('G', "an existing log's occurrence_date/scheduled_for/status are unchanged after the recipient later changes timezone", logBeforeTzChange.occurrence_date === logAfterTzChange.occurrence_date && logBeforeTzChange.scheduled_for === logAfterTzChange.scheduled_for && logBeforeTzChange.status === logAfterTzChange.status);
+        record('G', "an existing log's occurrence_date/scheduled_for/status are unchanged after the recipient later changes timezone", !!logBeforeTzChange && !!logAfterTzChange && logBeforeTzChange.occurrence_date === logAfterTzChange.occurrence_date && logBeforeTzChange.scheduled_for === logAfterTzChange.scheduled_for && logBeforeTzChange.status === logAfterTzChange.status, JSON.stringify({ logBeforeTzChange, logAfterTzChange }));
 
         // ── Shared pair for the schedule-edit-race scenarios ─────────────────────
         // Deliberately left with server_push_enabled = false (the default):
