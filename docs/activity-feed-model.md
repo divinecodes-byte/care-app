@@ -97,11 +97,28 @@ AA-AE.
 ## Organizer/participant display context
 
 Every event carries `organizer_name` (the connection's caregiver's
-`full_name`, or `null` after account deletion — the client falls back to
-a calm generic label, never a raw ID or email). The participant's own
-aggregate feed additionally distinguishes multiple organizers per event
-(verified scenario N), since a participant may see events from more than
-one organizer interleaved by time.
+`full_name`) plus, as of
+`20260801040000_activity_feed_organizer_deleted_state.sql` (Week 4
+launch-hardening task #2), `organizer_account_status`/`organizer_deleted_at`.
+Both `get_connection_activity_feed` and `get_participant_activity_feed`
+originally returned only `organizer_name`, and a `null` value there is
+genuinely ambiguous — it means either "this organizer was deleted" **or**
+"this organizer is active and simply never set a `full_name`." The two
+functions' return type changed (an added OUT column, not just a body edit)
+so they had to be `DROP`ped and recreated rather than `CREATE OR REPLACE`d;
+grants were re-verified identical afterward (`authenticated` + `postgres`
+only). `lib/activityFeedCore.ts#normalizeActivityRow()` now resolves the
+correct label from these explicit fields — `formerOrganizer` only when
+`organizer_account_status = 'deleted'` or `organizer_deleted_at` is set,
+`unavailableOrganizer` for a merely-unnamed active organizer — mirroring
+`lib/organizerDisplay.ts#resolveOrganizerDisplay()`'s identical rule for
+reminders/tasks. See `docs/multiple-organizer-model.md` for the full
+three-way resolution contract. The participant's own aggregate feed
+additionally distinguishes multiple organizers per event (verified scenario
+N), since a participant may see events from more than one organizer
+interleaved by time, and Week 4 Task #2's audit re-confirms this never
+merges or cross-attributes across organizers
+(`scripts/multi-organizer-audit/run.ts` scenario Q).
 
 ## Activity display timezone (correctness follow-up)
 
@@ -138,10 +155,13 @@ activity.
 ## Tombstone / deleted-account behavior
 
 `profiles.full_name` is scrubbed to `null` on account deletion (existing
-anonymization model, unchanged). The activity functions simply return
-whatever `full_name` currently is — `null` after deletion — and the
-client renders a calm, generic fallback (`activityFeed.formerOrganizer` /
-`activityFeed.formerParticipant`), never the old name, email, or a raw ID.
+anonymization model, unchanged), alongside `account_status = 'deleted'` and
+`deleted_at`. The activity functions return `full_name` plus those two
+explicit state fields; the client resolves `activityFeed.formerOrganizer`
+only when the explicit deleted-state fields say so (never inferred from a
+bare `null` name — see "Organizer/participant display context" above) and
+`activityFeed.formerParticipant` the same way for the connection-scoped
+view's participant side. Never the old name, email, or a raw ID.
 
 ## Refresh strategy
 

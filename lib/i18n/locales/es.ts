@@ -582,6 +582,23 @@ export const es: typeof en = {
         totalActiveReminders: 'Total de recordatorios activos',
     },
 
+    myConnections: {
+        back: 'Atrás',
+        title: 'Tus organizadores',
+        loading: 'Cargando tus conexiones…',
+        errorTitle: 'No se pudieron cargar tus conexiones',
+        retry: 'Reintentar',
+        emptyTitle: 'Aún no hay organizadores',
+        emptyText: 'Cuando alguien te invite y aceptes, aparecerá aquí.',
+        connectedSince: 'Conectado desde {{date}}',
+        reminderCount: '{{n}} recordatorio{{plural}} activo',
+        taskCount: '{{n}} tarea{{plural}} activa',
+        routineCount: '{{n}} rutina{{plural}} activa',
+        openActivityAction: 'Ver actividad',
+        openActivityHint: 'Abre la actividad de este organizador, independiente de cualquier otro organizador',
+        endConnectionHint: 'Termina solo esta conexión — tus otros organizadores no se ven afectados',
+    },
+
     connectionErrors: {
         notAuthorized: 'Algo salió mal. Inténtalo de nuevo.',
         notFound: 'Esta conexión ya no existe.',
@@ -629,6 +646,9 @@ export const es: typeof en = {
         sectionUseCase: 'Cómo usas Tavora',
         useCaseChangeHint: 'Esto solo cambia los ejemplos y sugerencias — no cómo funciona tu cuenta.',
         chooseOrganizerToEndTitle: '¿Qué conexión quieres terminar?',
+        manageConnectionsLabel: 'Gestionar conexiones con organizadores',
+        manageConnectionsCaption: 'Ve cada organizador por separado y termina una conexión',
+        manageConnectionsHint: 'Abre una pantalla con todos los organizadores conectados contigo',
         useCaseSavingErrorTitle: 'No se pudo guardar',
         useCaseSavingErrorMessage: 'Verifica tu conexión e inténtalo de nuevo.',
         sectionNotifications: 'Notificaciones',

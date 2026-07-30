@@ -12,6 +12,7 @@ import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
 import { classifyScreenError } from '@/lib/asyncStateCore';
 import { ERROR_CATEGORY_TRANSLATION_KEYS } from '@/lib/errorClassification';
 import { useTranslation } from '@/lib/i18n/context';
+import { resolveOrganizerDisplay } from '@/lib/organizerDisplay';
 import {
     summarizeTask,
     TaskDisplayStatus,
@@ -81,10 +82,10 @@ export default function TaskDetailsScreen() {
 
         const [{ data: recipientProfile }, { data: organizerProfile }] = await Promise.all([
             supabase.from('profiles').select('full_name, timezone').eq('id', row.recipient_id).maybeSingle(),
-            supabase.from('profiles').select('full_name').eq('id', row.caregiver_id).maybeSingle(),
+            supabase.from('profiles').select('full_name, account_status, deleted_at').eq('id', row.caregiver_id).maybeSingle(),
         ]);
         setParticipantName(recipientProfile?.full_name || t('common.participant'));
-        setOrganizerName(organizerProfile?.full_name || t('common.organizer'));
+        setOrganizerName(resolveOrganizerDisplay(row.caregiver_id, organizerProfile, t).displayName);
         setToday(getZonedTodayString(recipientProfile?.timezone || 'America/New_York'));
 
         const { data: occRows } = await supabase

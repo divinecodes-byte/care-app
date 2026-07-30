@@ -235,6 +235,13 @@ authority, etc.) are completely unchanged from Week 1 — see
 
 ## Multiple-organizer behavior (Phase 10 decision)
 
+**See `docs/multiple-organizer-model.md` and `docs/multiple-organizer-security.md`
+for the complete Week 4 launch-hardening task #2 audit** — organizer
+attribution resolution, the `app/my-connections.tsx` participant screen,
+connection-ending/account-deletion isolation, private-template privacy, and
+the 72-scenario `scripts/multi-organizer-audit/run.ts`. This section
+remains as the original Week 2 decision record.
+
 **Chosen: Option A — multiple organizers are allowed and supported.**
 
 The schema already structurally allows it (the only accepted-pair

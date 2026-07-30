@@ -21,6 +21,7 @@ accepted, contextual variation) during this task's full copy audit of
 | A reminder explicitly declined | **Skipped** |
 | A reminder whose window passed with no response | **Missed** |
 | A reminder awaiting a response | **Pending** |
+| The participant-facing screen listing every connected organizer separately | **Your Organizers** (`app/my-connections.tsx`, `myConnections.title`) |
 
 These five status words (`status.taken/pending/missed/skipped/snoozed` in
 both locale files) are the single source of truth for status vocabulary —

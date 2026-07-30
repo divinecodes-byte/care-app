@@ -42,7 +42,8 @@ export function ActivityPreviewCard({ connectionId }: { connectionId: string | n
         taskCompletedOnTime: t('activityFeed.outcomeCompletedOnTime'),
         taskCompletedLate: t('activityFeed.outcomeCompletedLate'),
         taskSkipped: t('activityFeed.outcomeTaskSkipped'),
-        unknownOrganizer: t('activityFeed.formerOrganizer'),
+        formerOrganizer: t('activityFeed.formerOrganizer'),
+        unavailableOrganizer: t('common.organizer'),
         summaryTemplate: (vars: { title: string; outcome: string; date: string; organizer: string }) => t('activityFeed.accessibleSummary', vars),
     }), [t]);
 

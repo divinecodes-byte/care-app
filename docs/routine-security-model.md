@@ -129,19 +129,45 @@ another function owned by that same role.
   *existing* mechanism, no new logic needed (`BN`). No new routine can be
   applied against an ended connection (`connection_inactive`, same as
   above).
-- **Organizer account deletion**: `delete-account` tombstones the
-  `profiles` row (`account_status = 'deleted'`, fields anonymized) — it
-  does **not** hard-delete the row. Since `routine_instances.organizer_id`
-  references `profiles(id) on delete cascade`, this matters: cascade only
-  fires on an actual row deletion, which tombstoning never triggers, so a
-  routine instance's grouping/history survives organizer account deletion
-  exactly like reminder/task history already does (`BO`).
-- **Participant account deletion**: identical reasoning — tombstoning, not
-  deletion, so `routine_instances.participant_id`'s cascade never fires
-  either. No future activity occurs (the underlying reminders/tasks are
-  already deactivated by the existing deletion flow), and no private
-  profile data is newly exposed by a routine instance beyond what the
-  existing reminder/task tombstone behavior already handles.
+- **Organizer/participant account deletion**: `delete-account` tombstones
+  the `profiles` row (`account_status = 'deleted'`, fields anonymized) — it
+  does **not** hard-delete the row, so `routine_instances`'
+  `organizer_id`/`participant_id on delete cascade` never fires either way;
+  routine history structurally cannot be cascade-deleted by an account
+  tombstone.
+- **Week 4 Task #2 fix**: until `20260801030000_multi_organizer_deletion_and_summary.sql`,
+  `delete_current_user_data()` pre-dated the routine-templates feature
+  entirely and never touched `routine_templates`/`routine_instances`/
+  `routine_notification_deliveries` at all — a deleted organizer's private
+  templates were never cleaned up, and their `routine_instances` never had
+  their `status` explicitly flipped away from `'active'` (it only survived
+  by the tombstone-not-cascade reasoning above, not by deliberate design).
+  Now, on account deletion, `delete_current_user_data()` explicitly:
+  - **Archives** (`status = 'archived'`, `archived_at = now()`) every
+    `routine_instances` row where the deleted account was `organizer_id` or
+    `participant_id` and `status = 'active'` — applied routines are shared,
+    participant-facing history, so they are archived, never deleted. Their
+    own `title`/`source_version`/`participant_timezone_snapshot` columns
+    are independent snapshots taken at apply-time, so archiving preserves
+    that history byte-for-byte regardless of what happens to the source
+    template.
+  - **Hard-deletes** `routine_templates where owner_id = <deleted account>`
+    (cascading to `routine_template_items` via the existing FK) — private,
+    never shared, no participant-facing history, matching
+    `delete_routine_template()`'s own existing owner-authorized hard-delete
+    policy exactly.
+  - **Deletes** pending/failed `routine_notification_deliveries` rows tied
+    to the deleted account's routines, mirroring the existing reminder/task
+    delivery-cleanup steps.
+  - Every one of these three steps is scoped strictly to the deleted
+    account's own `target_user_id` — another organizer's templates,
+    instances, or in-flight deliveries for the *same shared participant*
+    are structurally untouched (`routine_instances.source_template_id on
+    delete set null` safely nulls the reference on any instance whose
+    template gets hard-deleted, without ever touching the instance's own
+    snapshot columns). See `docs/multiple-organizer-security.md` for the
+    full cross-organizer isolation proof (`scripts/multi-organizer-audit/run.ts`
+    scenarios AP–AV, AW/AX).
 
 ## No weakening of existing policies
 

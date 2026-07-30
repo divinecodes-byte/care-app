@@ -31,16 +31,17 @@ invoking this). Suite order:
 7. `task-audit`
 8. `activity-audit`
 9. `routine-audit`
-10. `ui-state-audit`
-11. `accessibility-audit`
-12. `visual-consistency-audit`
-13. `ops-health`
-14. final global-cleanup verification (not a suite -- see below)
+10. `multi-organizer-audit` (added Week 4 Task #2 — see `docs/multiple-organizer-qa.md`)
+11. `ui-state-audit`
+12. `accessibility-audit`
+13. `visual-consistency-audit`
+14. `ops-health`
+15. final global-cleanup verification (not a suite -- see below)
 
 No suite depends on another's leftover state -- every suite cleans itself
-up (or, for the three fixture-using suites, resets the shared pool before
-using it). The order may change if a future suite introduces a genuine
-data dependency; it is not currently load-bearing.
+up (or, for the fixture-using suites, resets the shared pool before using
+it). The order may change if a future suite introduces a genuine data
+dependency; it is not currently load-bearing.
 
 ## Execution model
 

@@ -636,6 +636,17 @@ export function SettingsSheet({ visible, onClose, onConnectionEnded }: Props) {
                                 {profile.role === 'recipient' && organizerConnections.length > 0 && (
                                     <>
                                         <Sep />
+                                        <LinkRow
+                                            icon="people-outline"
+                                            label={t('settings.manageConnectionsLabel')}
+                                            caption={t('settings.manageConnectionsCaption')}
+                                            hint={t('settings.manageConnectionsHint')}
+                                            onPress={() => {
+                                                onClose();
+                                                router.push('/my-connections');
+                                            }}
+                                        />
+                                        <Sep />
                                         <TouchableOpacity
                                             style={styles.row}
                                             onPress={handleEndConnectionPress}

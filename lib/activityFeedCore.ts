@@ -20,6 +20,8 @@ export type ActivityRow = {
     outcome: string;
     title: string;
     organizer_name: string | null;
+    organizer_account_status: string | null;
+    organizer_deleted_at: string | null;
     participant_name?: string | null;
 };
 
@@ -32,7 +34,8 @@ export type ActivityEvent = {
     eventTimestamp: string;
     title: string;
     outcome: ReminderOutcome | TaskOutcome;
-    organizerName: string | null;
+    /** Always a resolved, display-ready label -- never a raw possibly-null name. See resolveOrganizerLabel. */
+    organizerName: string;
     participantName: string | null;
     /** Pre-built full sentence for screen readers — never just a number/status fragment read in isolation. */
     accessibleSummary: string;
@@ -53,8 +56,24 @@ type Labels = {
     taskSkipped: string;
     /** e.g. "{{title}} — {{outcome}} on {{date}}, for {{organizer}}" */
     summaryTemplate: (vars: { title: string; outcome: string; date: string; organizer: string }) => string;
-    unknownOrganizer: string;
+    /** Shown only when organizer_account_status/organizer_deleted_at mark the organizer as deleted -- never inferred from a bare null name. */
+    formerOrganizer: string;
+    /** Shown for a genuinely active organizer who simply has no full_name on file -- must never be conflated with formerOrganizer. */
+    unavailableOrganizer: string;
 };
+
+/**
+ * Resolves the one organizer label ever shown for a row -- distinguishes a
+ * deleted organizer (organizer_account_status/organizer_deleted_at
+ * explicitly set) from an active organizer who simply has no full_name,
+ * mirroring lib/organizerDisplay.ts#resolveOrganizerDisplay's rule. Never
+ * infers "deleted" from a bare null/undefined name.
+ */
+function resolveOrganizerLabel(row: ActivityRow, labels: Labels): string {
+    const isDeleted = row.organizer_account_status === 'deleted' || !!row.organizer_deleted_at;
+    if (isDeleted) return labels.formerOrganizer;
+    return row.organizer_name?.trim() || labels.unavailableOrganizer;
+}
 
 function outcomeLabel(row: ActivityRow, labels: Labels): string {
     if (row.source_kind === 'reminder') {
@@ -70,6 +89,7 @@ function outcomeLabel(row: ActivityRow, labels: Labels): string {
 /** Normalizes one raw RPC row into a display-ready ActivityEvent. Pure — the caller supplies already-localized label strings. */
 export function normalizeActivityRow(row: ActivityRow, labels: Labels): ActivityEvent {
     const outcomeText = outcomeLabel(row, labels);
+    const organizerName = resolveOrganizerLabel(row, labels);
     return {
         eventKind: row.source_kind === 'reminder' ? 'reminder_response' : 'task_response',
         sourceKind: row.source_kind,
@@ -79,13 +99,13 @@ export function normalizeActivityRow(row: ActivityRow, labels: Labels): Activity
         eventTimestamp: row.event_timestamp,
         title: row.title,
         outcome: row.outcome as ReminderOutcome | TaskOutcome,
-        organizerName: row.organizer_name,
+        organizerName,
         participantName: row.participant_name ?? null,
         accessibleSummary: labels.summaryTemplate({
             title: row.title,
             outcome: outcomeText,
             date: row.occurrence_date,
-            organizer: row.organizer_name ?? labels.unknownOrganizer,
+            organizer: organizerName,
         }),
         cursor: { eventTimestamp: row.event_timestamp, sourceKind: row.source_kind, sourceId: row.source_id },
     };

@@ -254,6 +254,24 @@ This fetch is independent of the reminders/tasks load paths themselves: a
 failure to resolve routine membership never blocks or hides the underlying
 card, it just omits the label.
 
+## Organizer attribution (Week 4 launch-hardening task #2)
+
+A participant's Today hub already aggregated reminders/tasks across every
+accepted organizer connection before this task (see "Participant dashboard
+integration" above) — the one gap was that reminder cards themselves never
+displayed *which* organizer a reminder came from (tasks already did, via
+`lib/taskData.ts#fetchTasksForRecipient`). `app/recipient-dashboard.tsx`
+now batch-fetches `id, full_name, account_status, deleted_at` for every
+distinct `caregiver_id` among the loaded reminders (one query, not N+1,
+mirroring the tasks fetch's own shape) and resolves each card's organizer
+label through `lib/organizerDisplay.ts#resolveOrganizerDisplay()` — the
+shared three-way resolver (`named` / `unavailable` / `deleted`) that
+replaces the null-vs-undefined-inference bug class documented in
+`docs/multiple-organizer-model.md`. The label renders on the same line as
+any routine-membership label above, exactly like `TaskTodayCard`'s existing
+organizer+schedule+routine subtitle, and is included in the card's
+`accessibilityLabel`.
+
 ## Known limitations
 
 - Reminders and tasks are integrated at the group level, not fully

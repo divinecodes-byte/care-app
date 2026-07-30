@@ -54,7 +54,8 @@ function has(content: string, pattern: RegExp): boolean {
 const LABELS = {
     reminderTaken: 'Completed', reminderSkipped: 'Skipped', reminderMissed: 'Missed',
     taskCompletedOnTime: 'Completed', taskCompletedLate: 'Completed late', taskSkipped: 'Skipped',
-    unknownOrganizer: 'A former organizer',
+    formerOrganizer: 'A former organizer',
+    unavailableOrganizer: 'Organizer',
     summaryTemplate: (v: { title: string; outcome: string; date: string; organizer: string }) => `${v.title} — ${v.outcome} on ${v.date}, for ${v.organizer}`,
 };
 
@@ -695,8 +696,8 @@ async function main() {
         record('Y', 'unrelated participant denied', !!deniedY.error && /not_authorized/.test(deniedY.error.message), deniedY.error?.message);
 
         // ── Z: reminder/task ID collision cannot collide in normalized keys ─────
-        const [rawEvent] = normalizeActivityRows([{ source_kind: 'reminder', source_id: 'same-uuid', occurrence_id: 'same-uuid', occurrence_date: today, event_timestamp: new Date().toISOString(), outcome: 'taken', title: 'X', organizer_name: null }], LABELS);
-        const [taskEvent] = normalizeActivityRows([{ source_kind: 'task', source_id: 'same-uuid', occurrence_id: 'same-uuid', occurrence_date: today, event_timestamp: new Date().toISOString(), outcome: 'completed_on_time', title: 'X', organizer_name: null }], LABELS);
+        const [rawEvent] = normalizeActivityRows([{ source_kind: 'reminder', source_id: 'same-uuid', occurrence_id: 'same-uuid', occurrence_date: today, event_timestamp: new Date().toISOString(), outcome: 'taken', title: 'X', organizer_name: null, organizer_account_status: null, organizer_deleted_at: null }], LABELS);
+        const [taskEvent] = normalizeActivityRows([{ source_kind: 'task', source_id: 'same-uuid', occurrence_id: 'same-uuid', occurrence_date: today, event_timestamp: new Date().toISOString(), outcome: 'completed_on_time', title: 'X', organizer_name: null, organizer_account_status: null, organizer_deleted_at: null }], LABELS);
         record('Z', 'reminder/task ID collision cannot collide in normalized keys', activityEventKey(rawEvent) !== activityEventKey(taskEvent), `${activityEventKey(rawEvent)} vs ${activityEventKey(taskEvent)}`);
 
         // ── AA/AB/AC: pagination ─────────────────────────────────────────────

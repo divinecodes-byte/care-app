@@ -585,6 +585,27 @@ export const en = {
         totalActiveReminders: 'Total active reminders',
     },
 
+    // Participant-facing screen listing every accepted organizer connection
+    // separately (Week 4 Task #2) — each connection is its own independent
+    // card with its own counts and its own "End Connection" action; never
+    // merged into one combined organizer view.
+    myConnections: {
+        back: 'Back',
+        title: 'Your Organizers',
+        loading: 'Loading your connections…',
+        errorTitle: 'Could not load your connections',
+        retry: 'Retry',
+        emptyTitle: 'No organizers yet',
+        emptyText: 'When someone invites you and you accept, they will appear here.',
+        connectedSince: 'Connected since {{date}}',
+        reminderCount: '{{n}} active reminder{{plural}}',
+        taskCount: '{{n}} active task{{plural}}',
+        routineCount: '{{n}} active routine{{plural}}',
+        openActivityAction: 'View activity',
+        openActivityHint: "Opens this organizer's activity, separate from any other organizer",
+        endConnectionHint: 'Ends only this one connection — your other organizers are not affected',
+    },
+
     connectionErrors: {
         notAuthorized: 'Something went wrong. Please try again.',
         notFound: 'This connection no longer exists.',
@@ -636,6 +657,9 @@ export const en = {
         sectionUseCase: 'How you use Tavora',
         useCaseChangeHint: 'This only changes examples and suggestions — not how your account works.',
         chooseOrganizerToEndTitle: 'Which connection do you want to end?',
+        manageConnectionsLabel: 'Manage Organizer Connections',
+        manageConnectionsCaption: 'View each organizer separately and end a connection',
+        manageConnectionsHint: 'Opens a screen listing every organizer connected to you',
         useCaseSavingErrorTitle: "Couldn't save",
         useCaseSavingErrorMessage: 'Please check your connection and try again.',
         sectionNotifications: 'Notifications',

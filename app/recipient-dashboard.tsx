@@ -39,6 +39,7 @@ import {
     syncRecipientReminderNotifications,
 } from '@/lib/notifications';
 import { isValidIanaTimezone, repairAndRefetchTimezone, syncCurrentUserTimezone } from '@/lib/timezone';
+import { resolveOrganizerDisplay } from '@/lib/organizerDisplay';
 import { showAlertOnce } from '@/lib/alertGuard';
 import { REMINDER_ERROR_TRANSLATION_KEYS } from '@/lib/reminderErrors';
 import { respondToReminderOccurrence } from '@/lib/reminderLifecycle';
@@ -65,6 +66,8 @@ type Reminder = {
     created_at: string;
     today_status?: ReminderStatus;
     snoozed_until?: string | null;
+    /** Populated after the fetch below -- which organizer created this reminder (multi-organizer attribution, Week 4 Task #2). */
+    organizerName?: string;
 };
 
 const TYPE_ICONS: Record<string, string> = {
@@ -520,6 +523,21 @@ export default function RecipientDashboard() {
 
         const reminderIds = todaysReminders.map((r) => r.id);
 
+        // Multi-organizer attribution (Week 4 Task #2): a participant's
+        // reminders already aggregate across every accepted connection —
+        // batch-fetch each distinct organizer's profile once (never one
+        // query per reminder) so the card can show who assigned it,
+        // mirroring lib/taskData.ts#fetchTasksForRecipient's identical
+        // pattern for tasks.
+        const caregiverIds = [...new Set(todaysReminders.map((r) => r.caregiver_id))];
+        const { data: organizerProfiles } = caregiverIds.length > 0
+            ? await supabase.from('profiles').select('id, full_name, account_status, deleted_at').in('id', caregiverIds)
+            : { data: [] as { id: string; full_name: string | null; account_status: string | null; deleted_at: string | null }[] };
+
+        if (!isLoadCurrent(generation)) return;
+
+        const organizerById = new Map((organizerProfiles ?? []).map((p) => [p.id, p]));
+
         const { data: logs, error: logsError } = await supabase
             .from('reminder_logs')
             .select('reminder_id, status, snoozed_until')
@@ -541,10 +559,14 @@ export default function RecipientDashboard() {
             const matchingLog  = logs?.find((log) => log.reminder_id === reminder.id);
             const logStatus    = matchingLog?.status as ReminderStatus | undefined;
             const snoozedUntil = (matchingLog as any)?.snoozed_until as string | null | undefined;
+            // undefined (not null) when the profile row itself wasn't found —
+            // resolveOrganizerDisplay() treats that as "unavailable," never
+            // as "deleted" (see lib/organizerDisplay.ts).
+            const organizerName = resolveOrganizerDisplay(reminder.caregiver_id, organizerById.get(reminder.caregiver_id), t).displayName;
 
             // Keep any terminal status (taken / snoozed / skipped / missed already in DB).
             if (logStatus && logStatus !== 'pending') {
-                return { ...reminder, today_status: logStatus, snoozed_until: snoozedUntil ?? null };
+                return { ...reminder, today_status: logStatus, snoozed_until: snoozedUntil ?? null, organizerName };
             }
             // No log yet, or still pending — check if the response window has
             // expired. The scheduled instant is computed in the
@@ -556,7 +578,7 @@ export default function RecipientDashboard() {
             const today_status: ReminderStatus = isPastNoResponseWindowAt(scheduledFor, reminder.no_response_minutes)
                 ? 'missed'
                 : 'pending';
-            return { ...reminder, today_status, snoozed_until: null };
+            return { ...reminder, today_status, snoozed_until: null, organizerName };
         });
 
         if (!isLoadCurrent(generation)) return;
@@ -996,7 +1018,7 @@ export default function RecipientDashboard() {
                     const statusInfo = getStatusColors(reminder.today_status, C);
                     const typeIcon   = TYPE_ICONS[reminder.reminder_type] ?? '•';
 
-                    const cardLabel = `${TYPE_LABEL_KEYS[reminder.reminder_type] ? t(TYPE_LABEL_KEYS[reminder.reminder_type]) : reminder.reminder_type}, ${reminder.title}, ${formatTime(reminder.time_of_day)}, ${formatStatus(reminder.today_status ?? 'pending')}`;
+                    const cardLabel = `${TYPE_LABEL_KEYS[reminder.reminder_type] ? t(TYPE_LABEL_KEYS[reminder.reminder_type]) : reminder.reminder_type}, ${reminder.title}, ${reminder.organizerName ? `${t('tasksSection.organizerLabel', { name: reminder.organizerName })}, ` : ''}${formatTime(reminder.time_of_day)}, ${formatStatus(reminder.today_status ?? 'pending')}`;
 
                     return (
                         <TouchableOpacity
@@ -1027,9 +1049,15 @@ export default function RecipientDashboard() {
 
                             {/* Title */}
                             <Text style={styles.reminderTitle}>{reminder.title}</Text>
-                            {routineMemberReminderIds.has(reminder.id) && (
-                                <Text style={styles.routineMemberLabel}>{t('routineDetails.heading')}</Text>
-                            )}
+                            {/* Organizer attribution (Week 4 Task #2) -- always shown, since a
+                                participant may have several organizers and two reminders can
+                                otherwise share an identical title. Combined with the existing
+                                routine-membership label on one line, matching tasks.tsx's
+                                equivalent subtitle pattern. */}
+                            <Text style={styles.routineMemberLabel}>
+                                {reminder.organizerName ? t('tasksSection.organizerLabel', { name: reminder.organizerName }) : ''}
+                                {routineMemberReminderIds.has(reminder.id) ? `${reminder.organizerName ? ' · ' : ''}${t('routineDetails.heading')}` : ''}
+                            </Text>
 
                             {/* Notes */}
                             {reminder.notes ? (

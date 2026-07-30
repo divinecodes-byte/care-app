@@ -64,7 +64,22 @@ export function sanitize(message: string): string {
 
 export function classify(err: unknown): Classification {
     const raw = err instanceof Error ? err.message : String(err);
-    const message = raw.slice(0, 500);
+    // The LAST 500 characters, not the first. An infra signature (rate
+    // limit, 502/503/504, ECONNRESET, etc.) is printed as the final line(s)
+    // before a process exits, whether `raw` is a short synthetic message
+    // (e.g. `child_process_inactivity_timeout` -- unaffected either way,
+    // it's under 500 chars) or, as scripts/final-regression/run.ts's own
+    // exit-code-nonzero path does, an already-tail-extracted log excerpt
+    // (`fullLog.slice(-2000)`). Slicing THAT excerpt from the front again
+    // re-truncates back toward the middle of the log, discarding the actual
+    // final error line the classifier exists to find -- confirmed live: five
+    // suites (participant-audit, reminder-audit-tz-race, task-audit,
+    // activity-audit, routine-audit) that crashed on an explicit rate-limit
+    // or 502 gateway message were misclassified 'unknown' -> FAIL by this
+    // exact double-truncation, while the one suite whose full log happened
+    // to be under 500 bytes classified correctly by accident. See
+    // docs/multi-organizer-audit-reconciliation.md.
+    const message = raw.slice(-500);
     for (const rule of RULES) {
         if (rule.test.test(message)) {
             return { code: rule.code, category: 'infrastructure', retryable: rule.retryable, sanitizedMessage: sanitize(message) };

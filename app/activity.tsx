@@ -66,7 +66,8 @@ export default function ActivityScreen() {
         taskCompletedOnTime: t('activityFeed.outcomeCompletedOnTime'),
         taskCompletedLate: t('activityFeed.outcomeCompletedLate'),
         taskSkipped: t('activityFeed.outcomeTaskSkipped'),
-        unknownOrganizer: t('activityFeed.formerOrganizer'),
+        formerOrganizer: t('activityFeed.formerOrganizer'),
+        unavailableOrganizer: t('common.organizer'),
         summaryTemplate: (vars: { title: string; outcome: string; date: string; organizer: string }) =>
             t('activityFeed.accessibleSummary', vars),
     }), [t]);
@@ -272,7 +273,7 @@ function ActivityEventCard({ event, C, t, styles, showOrganizer }: {
             <Text style={styles.cardTitle} numberOfLines={2}>{event.title}</Text>
             <Text style={styles.cardSubtitle}>
                 {formatDateStringForDisplay(event.occurrenceDate)}
-                {showOrganizer && event.organizerName !== undefined ? ` · ${t('activityFeed.organizerPrefix', { name: event.organizerName ?? t('activityFeed.formerOrganizer') })}` : ''}
+                {showOrganizer ? ` · ${t('activityFeed.organizerPrefix', { name: event.organizerName })}` : ''}
             </Text>
         </View>
     );
