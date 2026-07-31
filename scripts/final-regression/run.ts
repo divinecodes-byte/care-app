@@ -57,6 +57,7 @@ const SUITES: SuiteConfig[] = [
     { suite: 'activity-audit', script: 'scripts/activity-audit/run.ts', category: 'signup-heavy', absoluteTimeoutMs: DEFAULT_ABSOLUTE_TIMEOUT_MS, inactivityTimeoutMs: DEFAULT_INACTIVITY_TIMEOUT_MS },
     { suite: 'routine-audit', script: 'scripts/routine-audit/run.ts', category: 'signup-heavy', absoluteTimeoutMs: DEFAULT_ABSOLUTE_TIMEOUT_MS, inactivityTimeoutMs: DEFAULT_INACTIVITY_TIMEOUT_MS },
     { suite: 'multi-organizer-audit', script: 'scripts/multi-organizer-audit/run.ts', category: 'signup-heavy', absoluteTimeoutMs: DEFAULT_ABSOLUTE_TIMEOUT_MS, inactivityTimeoutMs: DEFAULT_INACTIVITY_TIMEOUT_MS },
+    { suite: 'task-overdue-audit', script: 'scripts/task-overdue-audit/run.ts', category: 'signup-heavy', absoluteTimeoutMs: DEFAULT_ABSOLUTE_TIMEOUT_MS, inactivityTimeoutMs: DEFAULT_INACTIVITY_TIMEOUT_MS },
     { suite: 'ui-state-audit', script: 'scripts/ui-state-audit/run.ts', category: 'signup-heavy', absoluteTimeoutMs: DEFAULT_ABSOLUTE_TIMEOUT_MS, inactivityTimeoutMs: DEFAULT_INACTIVITY_TIMEOUT_MS },
     { suite: 'accessibility-audit', script: 'scripts/accessibility-audit/run.ts', category: 'static', absoluteTimeoutMs: 5 * 60 * 1000, inactivityTimeoutMs: 3 * 60 * 1000 },
     { suite: 'visual-consistency-audit', script: 'scripts/visual-consistency-audit/run.ts', category: 'static', absoluteTimeoutMs: 5 * 60 * 1000, inactivityTimeoutMs: 3 * 60 * 1000 },

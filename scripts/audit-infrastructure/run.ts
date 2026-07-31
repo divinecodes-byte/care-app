@@ -21,11 +21,20 @@ import { newRunId, runDir, writeSuiteResult, writeSummary } from './artifacts';
 
 const RAND = randomSuffix();
 const PASSWORD = `AuditInfra!${RAND}9X`;
-const EMAIL_PREFIX = 'tavora.fixture'; // this suite's own disposable accounts also live under an approved namespace
+// Its own dedicated namespace (Week 4 Task #3 fix) -- previously
+// 'tavora.fixture' (the fixture pool's own reserved namespace), which
+// detectOrphans()/globalSyntheticSweep() EXCLUDE by default to protect the
+// six real persistent fixture identities. That made scenario X's own
+// orphan-detection target structurally invisible to the very check it
+// exists to validate, leaking one disposable account per run. This
+// namespace is registered in SYNTHETIC_NAMESPACES (cleanup.ts) and is
+// covered by default-scoped detection/sweep like every other disposable
+// account -- see docs/audit-infrastructure-model.md.
+const EMAIL_PREFIX = 'tavora.metasuite';
 
 async function signUpDisposable(label: string) {
     const client = newClient();
-    const email = `${EMAIL_PREFIX}.metasuite-${label}.${RAND}@example.com`;
+    const email = `${EMAIL_PREFIX}.${label}.${RAND}@example.com`;
     const { data, error } = await client.auth.signUp({ email, password: PASSWORD, options: { data: { audit_account: true } } });
     if (error || !data.user) throw new Error(`signup failed for ${email}: ${error?.message}`);
     return { id: data.user.id, email, client };
@@ -41,7 +50,7 @@ async function main() {
         cleaned = true;
         console.log('\nCleaning up synthetic test data...');
         if (testUserIds.length > 0) scopedCleanup(testUserIds);
-        const remaining = dbQuery(`select count(*) as c from auth.users where email like '${EMAIL_PREFIX}.metasuite-%.${RAND}@example.com'`) as { c: number }[];
+        const remaining = dbQuery(`select count(*) as c from auth.users where email like '${EMAIL_PREFIX}.%.${RAND}@example.com'`) as { c: number }[];
         record('cleanup', 'all synthetic auth users removed', Number(remaining[0]?.c ?? 1) === 0, `remaining: ${remaining[0]?.c}`);
     }
     installCrashSafety(cleanup);

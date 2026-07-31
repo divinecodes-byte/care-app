@@ -1667,7 +1667,7 @@ export default function CaregiverDashboard() {
                     </>
                 )}
                 {connectionSummary.status === 'accepted' && recipientTimeZone && (
-                    <TasksSummaryCard connectionId={connectionSummary.id} recipientTimeZone={recipientTimeZone} canCreate />
+                    <TasksSummaryCard connectionId={connectionSummary.id} canCreate />
                 )}
                 {connectionSummary.status === 'accepted' && (
                     <ActivityPreviewCard connectionId={connectionSummary.id} />

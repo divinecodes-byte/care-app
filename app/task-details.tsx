@@ -13,8 +13,8 @@ import { classifyScreenError } from '@/lib/asyncStateCore';
 import { ERROR_CATEGORY_TRANSLATION_KEYS } from '@/lib/errorClassification';
 import { useTranslation } from '@/lib/i18n/context';
 import { resolveOrganizerDisplay } from '@/lib/organizerDisplay';
+import { TaskSummary } from '@/lib/taskData';
 import {
-    summarizeTask,
     TaskDisplayStatus,
     TaskOccurrenceLike,
     TaskScheduleLike,
@@ -22,7 +22,6 @@ import {
 import { showAlertOnce } from '@/lib/alertGuard';
 import { supabase } from '@/lib/supabase';
 import { useThemeColors } from '@/lib/theme';
-import { getZonedTodayString } from '@/lib/zonedTime';
 
 type TaskRow = TaskScheduleLike & {
     id: string;
@@ -50,12 +49,12 @@ export default function TaskDetailsScreen() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [task, setTask] = useState<TaskRow | null>(null);
+    const [summary, setSummary] = useState<TaskSummary | null>(null);
     const [occurrences, setOccurrences] = useState<TaskOccurrenceLike[]>([]);
     const [participantName, setParticipantName] = useState('');
     const [organizerName, setOrganizerName] = useState('');
     const [viewerIsOrganizer, setViewerIsOrganizer] = useState(false);
     const [connectionEnded, setConnectionEnded] = useState(false);
-    const [today, setToday] = useState('');
     const [responding, setResponding] = useState(false);
     const [justResponded, setJustResponded] = useState<'completed' | 'skipped' | null>(null);
 
@@ -80,13 +79,34 @@ export default function TaskDetailsScreen() {
         const { data: connection } = await supabase.from('connections').select('status').eq('id', (taskRow as any).connection_id).maybeSingle();
         setConnectionEnded(!connection || connection.status !== 'accepted');
 
-        const [{ data: recipientProfile }, { data: organizerProfile }] = await Promise.all([
-            supabase.from('profiles').select('full_name, timezone').eq('id', row.recipient_id).maybeSingle(),
+        const [{ data: recipientProfile }, { data: organizerProfile }, { data: summaryRows, error: summaryError }] = await Promise.all([
+            supabase.from('profiles').select('full_name').eq('id', row.recipient_id).maybeSingle(),
             supabase.from('profiles').select('full_name, account_status, deleted_at').eq('id', row.caregiver_id).maybeSingle(),
+            // Server-authoritative status/overdue-count for this one task,
+            // via the same schedule-version-aware RPC the list screens use
+            // (get_connection_task_summaries authorizes either party of the
+            // connection) -- never a local, schedule-version-blind
+            // recomputation. See docs/task-overdue-occurrence-model.md.
+            supabase.rpc('get_connection_task_summaries', { p_connection_id: (taskRow as any).connection_id }),
         ]);
         setParticipantName(recipientProfile?.full_name || t('common.participant'));
         setOrganizerName(resolveOrganizerDisplay(row.caregiver_id, organizerProfile, t).displayName);
-        setToday(getZonedTodayString(recipientProfile?.timezone || 'America/New_York'));
+
+        if (summaryError) {
+            setError(t('taskDetails.somethingWrong'));
+            setLoading(false);
+            return;
+        }
+        const summaryRow = ((summaryRows ?? []) as any[]).find((s) => s.task_id === taskId);
+        setSummary(summaryRow ? {
+            status: summaryRow.status,
+            overdueCount: summaryRow.overdue_count,
+            actionableDate: summaryRow.actionable_date,
+            upcomingDate: summaryRow.upcoming_date,
+            lastResolved: summaryRow.last_resolved_date && summaryRow.last_resolved_status
+                ? { occurrence_date: summaryRow.last_resolved_date, status: summaryRow.last_resolved_status }
+                : null,
+        } : null);
 
         const { data: occRows } = await supabase
             .from('task_occurrences')
@@ -99,8 +119,6 @@ export default function TaskDetailsScreen() {
     }, [taskId, t]);
 
     useEffect(() => { load(); }, [load]);
-
-    const summary = task ? summarizeTask(task, occurrences, today || getZonedTodayString('America/New_York')) : null;
 
     async function respond(status: 'completed' | 'skipped') {
         if (!task || !summary?.actionableDate || responding) return;

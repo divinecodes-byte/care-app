@@ -1,10 +1,21 @@
 import { isoWeekdayOfDateString } from '@/lib/reminderStatus';
 
 // ─── Flexible-task lifecycle (pure, zero react-native import) ───────────────
-// Mirrors this exact SQL logic server-side: respond_to_task_occurrence's
-// eligibility check and task_analytics_summary's date enumeration
-// (supabase/migrations/20260728000000_flexible_tasks.sql). Any change here
-// must be mirrored there, and vice versa — see docs/flexible-task-model.md.
+// As of Week 4 Task #3, eligibility/overdue AUTHORITY for every real
+// production surface lives server-side (public.task_schedule_versions +
+// public._task_eligible_dates, consumed by respond_to_task_occurrence,
+// task_analytics_summary, get_participant_task_summaries/
+// get_connection_task_summaries, and get_participant_overdue_task_occurrences
+// — see docs/task-overdue-occurrence-model.md). The functions below are
+// pure, single-flat-schedule, non-schedule-version-aware helpers — safe for
+// lightweight single-date hints (isTaskOccurrenceEligible/
+// getComputedTaskStatus) and for lib/todayFeedCore.ts's pure composition
+// model (enumerateBegunOccurrenceDates/summarizeTask, never invoked by
+// production app code, only by scripts/activity-audit/run.ts's own
+// synthetic-schedule test scenarios) — but NEVER authoritative for a real
+// task whose schedule may have been edited. No production code path calls
+// enumerateBegunOccurrenceDates/summarizeTask; if you're about to add one,
+// use the server RPCs instead.
 //
 // Distinct from lib/reminderStatus.ts's DisplayReminderStatus on purpose:
 // a task has no exact time, no snooze, and "overdue" is never terminal the
@@ -29,9 +40,6 @@ export type TaskOccurrenceLike = {
     occurrence_date: string;
     status: TaskTerminalStatus;
 };
-
-/** Bounded lookback for enumerating past unresolved occurrences — matches task_analytics_summary's p_days default. Never used to bound *future* generation (there is none — see the migration's header comment). */
-export const TASK_LOOKBACK_DAYS = 60;
 
 /** Whether `dateString` is a legitimate occurrence date for this task's schedule — identical rule to respond_to_task_occurrence's server-side check, minus the "not in the future" rule (checked separately, since that depends on "today"). */
 export function isTaskOccurrenceEligible(task: TaskScheduleLike, dateString: string): boolean {
@@ -68,17 +76,31 @@ export function getComputedTaskStatus(
 
 /**
  * Every eligible occurrence date that has already "begun" (start_date <=
- * today), bounded to the trailing TASK_LOOKBACK_DAYS — never further back,
- * and never into the future (no eager generation). For a one-time task this
- * is at most a single date.
+ * today) under this ONE flat schedule — bounded only by `task.start_date`
+ * itself (a real, task-existence-derived floor, never an arbitrary day
+ * constant — see docs/task-overdue-occurrence-model.md for why this
+ * function's previous fixed 60-day lookback bound was removed) and never
+ * into the future (no eager generation). For a one-time task this is at
+ * most a single date.
+ *
+ * NOT schedule-version-aware — this assumes ONE schedule applied for the
+ * task's entire history, which is not authoritative for a task whose
+ * frequency/days_of_week has ever changed (see
+ * public.task_schedule_versions / public._task_eligible_dates for the real,
+ * segment-aware server-side equivalent). Kept only because
+ * lib/todayFeedCore.ts#buildTodayItems (exercised directly by
+ * scripts/activity-audit/run.ts's own pure-composition test scenarios) is
+ * never invoked by production app code — every real production surface
+ * (lib/taskData.ts, app/task-details.tsx) calls the server-authoritative
+ * get_participant_task_summaries/get_connection_task_summaries RPCs
+ * instead, never this function.
  */
 export function enumerateBegunOccurrenceDates(task: TaskScheduleLike, todayString: string): string[] {
     if (task.frequency === 'one_time') {
         return task.start_date <= todayString ? [task.start_date] : [];
     }
 
-    const windowStartString = addDaysToDateString(todayString, -TASK_LOOKBACK_DAYS);
-    const rangeStart = task.start_date > windowStartString ? task.start_date : windowStartString;
+    const rangeStart = task.start_date;
     const rangeEndCandidates = [todayString, task.recurrence_end_date].filter((d): d is string => !!d);
     const rangeEnd = rangeEndCandidates.reduce((min, d) => (d < min ? d : min));
 
@@ -86,9 +108,6 @@ export function enumerateBegunOccurrenceDates(task: TaskScheduleLike, todayStrin
 
     const dates: string[] = [];
     let cursor = rangeStart;
-    // Bounded by TASK_LOOKBACK_DAYS + calendar days between rangeStart/rangeEnd
-    // (never unbounded) — a loop, not generate_series, since this runs
-    // client-side; the equivalent SQL uses generate_series directly.
     while (cursor <= rangeEnd) {
         if (task.days_of_week.includes(isoWeekdayOfDateString(cursor))) dates.push(cursor);
         cursor = addDaysToDateString(cursor, 1);
@@ -120,6 +139,10 @@ export type TaskSummary = {
  * `occurrences` need only include rows relevant to this task (already
  * filtered by task_id by the caller) — this function does the date
  * matching itself.
+ *
+ * Non-authoritative (see module header) — matches the shape returned by
+ * get_participant_task_summaries()/get_connection_task_summaries(), which
+ * is what every real production surface uses instead of calling this.
  */
 export function summarizeTask(
     task: TaskScheduleLike,

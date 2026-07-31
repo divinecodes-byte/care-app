@@ -1,15 +1,8 @@
 import { supabase } from '@/lib/supabase';
-import {
-    summarizeTask,
-    TaskFrequency,
-    TaskOccurrenceLike,
-    TaskScheduleLike,
-    TASK_LOOKBACK_DAYS,
-} from '@/lib/taskLifecycle';
-import { getZonedTodayString } from '@/lib/zonedTime';
-import { addDaysToDateString, todayDateString } from '@/components/DatePickerField';
+import { TaskDisplayStatus, TaskFrequency, TaskOccurrenceLike, TaskTerminalStatus } from '@/lib/taskLifecycle';
+import { OrganizerProfileForDisplay } from '@/lib/organizerDisplay';
 
-export type TaskRow = TaskScheduleLike & {
+export type TaskRow = {
     id: string;
     connection_id: string;
     caregiver_id: string;
@@ -17,87 +10,129 @@ export type TaskRow = TaskScheduleLike & {
     title: string;
     notes: string | null;
     frequency: TaskFrequency;
+    days_of_week: number[];
+    start_date: string;
+    due_date: string | null;
+    recurrence_end_date: string | null;
+    is_active: boolean;
     created_at: string;
+};
+
+export type TaskSummary = {
+    status: TaskDisplayStatus;
+    overdueCount: number;
+    actionableDate: string | null;
+    upcomingDate: string | null;
+    lastResolved: TaskOccurrenceLike | null;
 };
 
 export type TaskWithSummary = {
     task: TaskRow;
-    summary: ReturnType<typeof summarizeTask>;
-    /** Only populated by fetchTasksForRecipient (participant's own multi-organizer view). */
-    organizerName?: string;
+    summary: TaskSummary;
+    /**
+     * Only populated by fetchTasksForRecipient (participant's own
+     * multi-organizer view) — the raw profile triple, never a pre-resolved
+     * name. The caller resolves display text via
+     * lib/organizerDisplay.ts#resolveOrganizerDisplay(), exactly like every
+     * other attribution surface fixed in Week 4 Task #2 — a bare name here
+     * would silently reintroduce the deleted-vs-merely-unnamed conflation
+     * bug that fix eliminated everywhere else.
+     */
+    organizerProfile?: OrganizerProfileForDisplay;
 };
 
 const TASK_COLUMNS = 'id, connection_id, caregiver_id, recipient_id, title, notes, frequency, days_of_week, start_date, due_date, recurrence_end_date, is_active, created_at';
 
-async function summarizeRows(taskRows: TaskRow[], recipientTimeZone: string): Promise<TaskWithSummary[]> {
-    if (taskRows.length === 0) return [];
-    const today = getZonedTodayString(recipientTimeZone || 'America/New_York');
-    const windowStart = addDaysToDateString(today, -TASK_LOOKBACK_DAYS);
+type SummaryRow = {
+    task_id: string;
+    status: TaskDisplayStatus;
+    overdue_count: number;
+    actionable_date: string | null;
+    upcoming_date: string | null;
+    last_resolved_date: string | null;
+    last_resolved_status: TaskTerminalStatus | null;
+    organizer_full_name?: string | null;
+    organizer_account_status?: string | null;
+    organizer_deleted_at?: string | null;
+};
 
-    const { data: occRows, error: occError } = await supabase
-        .from('task_occurrences')
-        .select('task_id, occurrence_date, status')
-        .in('task_id', taskRows.map((t) => t.id))
-        .gte('occurrence_date', windowStart);
-
-    if (occError) throw occError;
-
-    const occByTask = new Map<string, TaskOccurrenceLike[]>();
-    for (const row of (occRows ?? []) as { task_id: string; occurrence_date: string; status: TaskOccurrenceLike['status'] }[]) {
-        const list = occByTask.get(row.task_id) ?? [];
-        list.push({ occurrence_date: row.occurrence_date, status: row.status });
-        occByTask.set(row.task_id, list);
+function toSummary(row: SummaryRow | undefined): TaskSummary {
+    if (!row) {
+        // No summary row means the task has no bounded-active-task match
+        // server-side (shouldn't normally happen for a task the caller
+        // already fetched) -- fail safe to a harmless "open, nothing
+        // actionable yet known" shape rather than throwing.
+        return { status: 'open', overdueCount: 0, actionableDate: null, upcomingDate: null, lastResolved: null };
     }
-
-    return taskRows.map((task) => ({
-        task,
-        summary: summarizeTask(task, occByTask.get(task.id) ?? [], today),
-    }));
+    return {
+        status: row.status,
+        overdueCount: row.overdue_count,
+        actionableDate: row.actionable_date,
+        upcomingDate: row.upcoming_date,
+        lastResolved: row.last_resolved_date && row.last_resolved_status
+            ? { occurrence_date: row.last_resolved_date, status: row.last_resolved_status }
+            : null,
+    };
 }
 
 /**
  * Organizer view: every task for one connection (active + archived, caller
- * filters) plus enough occurrence history (bounded to TASK_LOOKBACK_DAYS,
- * matching lib/taskLifecycle.ts's own bound) to compute an accurate summary
- * for each — one round trip for tasks, one for occurrences, never N+1 per
- * task.
+ * filters) with a bounded, server-computed summary per task — one round
+ * trip for tasks, one for summaries (get_connection_task_summaries),
+ * never N+1 per task and never a client-side date-range scan (see
+ * docs/task-overdue-occurrence-model.md).
  */
-export async function fetchTasksWithSummaries(connectionId: string, recipientTimeZone: string): Promise<TaskWithSummary[]> {
-    const { data: tasks, error: tasksError } = await supabase
-        .from('tasks')
-        .select(TASK_COLUMNS)
-        .eq('connection_id', connectionId)
-        .order('created_at', { ascending: false });
+export async function fetchTasksWithSummaries(connectionId: string): Promise<TaskWithSummary[]> {
+    const [{ data: tasks, error: tasksError }, { data: summaries, error: summaryError }] = await Promise.all([
+        supabase
+            .from('tasks')
+            .select(TASK_COLUMNS)
+            .eq('connection_id', connectionId)
+            .order('created_at', { ascending: false }),
+        supabase.rpc('get_connection_task_summaries', { p_connection_id: connectionId }),
+    ]);
 
     if (tasksError) throw tasksError;
-    return summarizeRows((tasks ?? []) as TaskRow[], recipientTimeZone);
+    if (summaryError) throw summaryError;
+
+    const taskRows = (tasks ?? []) as TaskRow[];
+    const summaryById = new Map(((summaries ?? []) as SummaryRow[]).map((s) => [s.task_id, s]));
+    return taskRows.map((task) => ({ task, summary: toSummary(summaryById.get(task.id)) }));
 }
 
 /**
  * Participant view: every task assigned to this recipient across ALL of
  * their organizers/connections (mirrors how recipient-dashboard.tsx already
  * aggregates reminders across multiple accepted connections, rather than
- * scoping to a single one) — includes each organizer's name so multiple
- * organizers remain distinguishable in the UI.
+ * scoping to a single one), with a bounded, server-computed summary per
+ * task (get_participant_task_summaries) — includes each organizer's raw
+ * profile fields so multiple organizers remain correctly distinguishable
+ * and correctly attributed (deleted vs. merely-unnamed) in the UI.
  */
-export async function fetchTasksForRecipient(recipientId: string, recipientTimeZone: string): Promise<TaskWithSummary[]> {
-    const { data: tasks, error: tasksError } = await supabase
-        .from('tasks')
-        .select(TASK_COLUMNS)
-        .eq('recipient_id', recipientId)
-        .order('created_at', { ascending: false });
+export async function fetchTasksForRecipient(recipientId: string): Promise<TaskWithSummary[]> {
+    const [{ data: tasks, error: tasksError }, { data: summaries, error: summaryError }] = await Promise.all([
+        supabase
+            .from('tasks')
+            .select(TASK_COLUMNS)
+            .eq('recipient_id', recipientId)
+            .order('created_at', { ascending: false }),
+        supabase.rpc('get_participant_task_summaries'),
+    ]);
 
     if (tasksError) throw tasksError;
+    if (summaryError) throw summaryError;
+
     const taskRows = (tasks ?? []) as TaskRow[];
-    const summarized = await summarizeRows(taskRows, recipientTimeZone);
+    const summaryById = new Map(((summaries ?? []) as SummaryRow[]).map((s) => [s.task_id, s]));
 
-    const caregiverIds = [...new Set(taskRows.map((t) => t.caregiver_id))];
-    if (caregiverIds.length === 0) return summarized;
-
-    const { data: organizers } = await supabase.from('profiles').select('id, full_name').in('id', caregiverIds);
-    const nameById = new Map((organizers ?? []).map((p) => [p.id, p.full_name]));
-
-    return summarized.map((row) => ({ ...row, organizerName: nameById.get(row.task.caregiver_id) ?? undefined }));
+    return taskRows.map((task) => {
+        const summaryRow = summaryById.get(task.id);
+        return {
+            task,
+            summary: toSummary(summaryRow),
+            organizerProfile: summaryRow
+                ? { full_name: summaryRow.organizer_full_name ?? null, account_status: summaryRow.organizer_account_status ?? null, deleted_at: summaryRow.organizer_deleted_at ?? null }
+                : undefined,
+        };
+    });
 }
-
-export { todayDateString };

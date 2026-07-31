@@ -11,6 +11,7 @@ import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
 import { useTranslation } from '@/lib/i18n/context';
 import { fetchTasksForRecipient, fetchTasksWithSummaries, TaskWithSummary } from '@/lib/taskData';
 import { TaskDisplayStatus } from '@/lib/taskLifecycle';
+import { resolveOrganizerDisplay } from '@/lib/organizerDisplay';
 import { showAlertOnce } from '@/lib/alertGuard';
 import { supabase } from '@/lib/supabase';
 import { useThemeColors } from '@/lib/theme';
@@ -56,10 +57,10 @@ export default function TasksScreen() {
                 setViewerIsOrganizer(connection.caregiver_id === user.id);
                 setConnectionEnded(connection.status !== 'accepted');
 
-                const { data: profile } = await supabase.from('profiles').select('full_name, timezone').eq('id', connection.recipient_id).maybeSingle();
+                const { data: profile } = await supabase.from('profiles').select('full_name').eq('id', connection.recipient_id).maybeSingle();
                 setParticipantName(profile?.full_name || t('common.participant'));
 
-                const result = await fetchTasksWithSummaries(connectionId, profile?.timezone || 'America/New_York');
+                const result = await fetchTasksWithSummaries(connectionId);
                 setRows(result);
 
                 // Analytics failing never blocks the task list itself from
@@ -75,10 +76,9 @@ export default function TasksScreen() {
                 }
             } else {
                 // Participant viewing their own tasks across every organizer.
-                const { data: ownProfile } = await supabase.from('profiles').select('timezone').eq('id', user.id).maybeSingle();
                 setViewerIsOrganizer(false);
                 setConnectionEnded(false);
-                const result = await fetchTasksForRecipient(user.id, ownProfile?.timezone || 'America/New_York');
+                const result = await fetchTasksForRecipient(user.id);
                 setRows(result);
             }
             setStatus('ready');
@@ -231,7 +231,8 @@ function TaskSection({ title, items, respondingTaskId, onRespond, viewerIsOrgani
     return (
         <View style={styles.sectionBlock}>
             <AccessibleSectionHeader title={title} style={styles.sectionHeaderSpacing} />
-            {items.map(({ task, summary, organizerName }) => {
+            {items.map(({ task, summary, organizerProfile }) => {
+                const organizerName = organizerProfile ? resolveOrganizerDisplay(task.caregiver_id, organizerProfile, t).displayName : undefined;
                 const statusLabel = t(`taskStatus.${summary.status === 'completed_on_time' ? 'completedOnTime' : summary.status === 'completed_late' ? 'completedLate' : summary.status}`);
                 const scheduleContext = task.frequency === 'one_time'
                     ? (task.due_date ? t('tasksSection.dueLabel', { date: formatDateStringForDisplay(task.due_date) }) : t('tasksSection.noDueDate'))

@@ -36,6 +36,8 @@ export const SYNTHETIC_NAMESPACES = [
     'tavora.participantaudit.%',
     'tavora.uistateaudit.%',
     'tavora.multiorgaudit.%',
+    'tavora.metasuite.%',
+    'tavora.overdueaudit.%',
 ] as const;
 
 // Accounts created before the `audit_account` user_metadata flag existed.

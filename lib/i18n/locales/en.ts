@@ -855,6 +855,13 @@ export const en = {
         analyticsSkipped: '{{n}} skipped',
         analyticsOverdue: '{{n}} currently overdue',
         analyticsNoData: 'No task activity yet',
+        viewAllOverdue: 'View all overdue',
+        viewAllOverdueCount: 'View all {{n}} overdue',
+        overdueScreenHeading: 'Overdue Tasks',
+        overdueEmptyTitle: 'No overdue tasks',
+        overdueEmptyText: "You're all caught up — nothing overdue right now.",
+        overdueLoadFailedText: "We couldn't load your overdue tasks. Please check your connection and try again.",
+        overdueLoadingMore: 'Loading more…',
     },
 
     taskDetails: {

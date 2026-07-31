@@ -117,13 +117,31 @@ explicit, inventoried namespace list (`SYNTHETIC_NAMESPACES` in `cleanup.ts`
 -- `tavora.fixture.%`, `tavora.secaudit.%`, `tavora.authaudit.%`,
 `tavora.reminderaudit.%`, `tavora.tzrace.%`, `tavora.taskaudit.%`,
 `tavora.activityaudit.%`, `tavora.routineaudit.%`, `tavora.onboardingaudit.%`,
-`tavora.participantaudit.%`, `tavora.uistateaudit.%` -- enumerated from a
-`grep` of every script's actual email prefix, not a bare `tavora.%`
-wildcard), **and**, where available, `raw_user_meta_data->>'audit_account' = 'true'`.
-Every signup helper across all 10 signup-heavy scripts now sets this flag.
-Legacy accounts (namespace-matched, no metadata -- created before this flag
-existed) are reported separately and still require `--destructive`, never
-silently merged into the metadata-confirmed set.
+`tavora.participantaudit.%`, `tavora.uistateaudit.%`, `tavora.multiorgaudit.%`
+(Week 4 Task #2), `tavora.metasuite.%`, `tavora.overdueaudit.%` (both added
+Week 4 Task #3) -- enumerated from a `grep` of every script's actual email
+prefix, not a bare `tavora.%` wildcard), **and**, where available,
+`raw_user_meta_data->>'audit_account' = 'true'`. Every signup helper across
+all signup-heavy scripts now sets this flag. Legacy accounts
+(namespace-matched, no metadata -- created before this flag existed) are
+reported separately and still require `--destructive`, never silently
+merged into the metadata-confirmed set.
+
+### Meta-suite's own orphan-detection leak (fixed Week 4 Task #3)
+
+`scripts/audit-infrastructure/run.ts`'s own orphan-detection scenario used
+to create its disposable synthetic target under `EMAIL_PREFIX =
+'tavora.fixture'` — the `tavora.fixture.%` namespace is deliberately
+excluded from orphan detection **by default** to protect the six real,
+persistent fixture identities (`provisionFixturePool()`), so this
+suite's own test target was invisible to the very check it exists to
+validate, leaking one disposable account per run. Fixed by moving the
+meta-suite's own disposable accounts to their own dedicated namespace,
+`tavora.metasuite.%` (registered above), which participates in orphan
+detection normally. Verified live: two consecutive full meta-suite runs,
+56/56 PASS both times, zero accumulated leftovers after either run, six
+real fixture identities unchanged (`fixtures.ts` verify) before and after
+both runs. See `docs/task-overdue-qa.md` for the full verification record.
 
 ## Live-cron isolation during audits
 

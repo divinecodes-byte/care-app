@@ -272,12 +272,29 @@ any routine-membership label above, exactly like `TaskTodayCard`'s existing
 organizer+schedule+routine subtitle, and is included in the card's
 `accessibilityLabel`.
 
+## Overdue task preview cap (Week 4 Task #3)
+
+`app/recipient-dashboard.tsx`'s overdue task block (group 1) shows at most
+`OVERDUE_PREVIEW_CAP = 5` items, newest-overdue first, followed by a "View
+all overdue" link to the dedicated, cursor-paginated `/overdue-tasks`
+screen whenever any overdue task exists — including exactly at the cap,
+since one task card can hide many unresolved *occurrences* that only the
+dedicated screen enumerates individually. Today itself never fetches a
+participant's unbounded overdue history on mount; it reads the same
+bounded `overdue_count`/`overdueTasks` summary the task-list screens use
+(see `docs/task-overdue-occurrence-model.md`). This replaces the previous
+behavior where the 60-day lookback bound implicitly (and silently) capped
+what Today could ever show.
+
 ## Known limitations
 
 - Reminders and tasks are integrated at the group level, not fully
   interleaved item-by-item (see above).
 - Upcoming tasks are bounded to a 3-day lookahead; a task starting further
   out never appears on Today (by design).
+- The overdue task block itself is capped at 5 preview items (see above) —
+  a deliberate UX bound, not a data limitation; the true count and full
+  history are always available via "View all overdue."
 - "Open, due later" one-time tasks share a bucket with "no deadline" tasks
   rather than getting a distinct priority tier.
 - `profiles.timezone` is `NOT NULL` at the schema level, so a genuinely

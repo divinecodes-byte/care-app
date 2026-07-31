@@ -329,8 +329,26 @@ async function main() {
         record('U', 'a deactivated reminder never gets a snooze delivery claimed, even with a due snoozed_until', Number(uSnoozeDeliveries.c) === 0, `claimed=${uSnoozeDeliveries.c}`);
 
         // ── V: no future missed after deactivate ─────────────────────────────────
-        const reminderV = await createReminder(connA, caregiverA.id, recipientA.id, { daysOfWeek: [1, 2, 3, 4, 5, 6, 7], scheduledOffsetMinutes: -30, noResponseMinutes: 1 });
+        // Originally created the reminder ALREADY overdue (scheduledOffsetMinutes:
+        // -30, a 1-minute window) and only deactivated it in a separate
+        // statement afterward -- during that window it was both active and
+        // genuinely missed-eligible, which the real production
+        // sync_missed_reminders_db cron (ticking independently against this
+        // same linked project, per docs/audit-infrastructure-model.md's
+        // "Live-cron isolation during audits") could race and write a real
+        // missed row for before deactivation ever took effect, producing an
+        // occasional false assertion failure unrelated to any product bug.
+        // Fixed by reversing the order: create the reminder with a schedule
+        // that can never be missed-eligible while active (a full hour in
+        // the future), deactivate it first (nothing to race, since it was
+        // never overdue), and only then backdate its schedule directly via
+        // SQL -- entirely after is_active=false, so there is no window in
+        // which the real cron could ever select it (sync_missed_reminders_db
+        // scopes to is_active=true reminders, matching every other
+        // reminder-lifecycle RPC's convention).
+        const reminderV = await createReminder(connA, caregiverA.id, recipientA.id, { daysOfWeek: [1, 2, 3, 4, 5, 6, 7], scheduledOffsetMinutes: 60, noResponseMinutes: 1 });
         dbQuery(`update public.reminders set is_active = false where id = '${reminderV}';`);
+        dbQuery(`update public.reminders set time_of_day = ((now() - interval '30 minutes') at time zone 'UTC')::time where id = '${reminderV}';`);
         dbQuery(`select public.sync_missed_reminders_db();`);
         const vLog = logFor(reminderV);
         record('V', 'a deactivated reminder never gets a missed row written for it', !vLog);
@@ -372,16 +390,36 @@ async function main() {
         // current clock, not the dateString/todayString parameters, so a
         // "today, no log, still pending" case needs a genuinely
         // not-yet-due time_of_day to land on 'pending' rather than 'missed'.
+        // buildScheduledDateTime (lib/reminderStatus.ts) constructs this
+        // via the LOCAL Date constructor, so "an hour from now" must be
+        // derived the same way -- computing it as `(hour + 1) % 24` wraps
+        // to "00:00:00" during the real 23:00-23:59 local hour, which is
+        // EARLIER than "now", not later, silently turning this into a
+        // 'missed' (or worse, ambiguous) case instead of 'pending' (a real
+        // bug found via an actual failure at that hour, not hypothetical).
+        // Fixed by computing a genuine future Date via arithmetic and
+        // deriving the date string from THAT instant -- which correctly
+        // rolls over to tomorrow when the +1 hour crosses midnight, so the
+        // dateString/time_of_day pair passed to getComputedStatus is
+        // always self-consistent, at every hour of the day.
         const realNow = new Date();
         const realTodayStr = `${realNow.getFullYear()}-${String(realNow.getMonth() + 1).padStart(2, '0')}-${String(realNow.getDate()).padStart(2, '0')}`;
+        const oneHourFromNow = new Date(realNow.getTime() + 60 * 60 * 1000);
+        const oneHourFromNowDateStr = `${oneHourFromNow.getFullYear()}-${String(oneHourFromNow.getMonth() + 1).padStart(2, '0')}-${String(oneHourFromNow.getDate()).padStart(2, '0')}`;
         const notYetDueReminder = {
             ...analyticsReminder,
-            time_of_day: `${String((realNow.getHours() + 1) % 24).padStart(2, '0')}:00:00`, // an hour from now
+            time_of_day: `${String(oneHourFromNow.getHours()).padStart(2, '0')}:${String(oneHourFromNow.getMinutes()).padStart(2, '0')}:00`,
         };
         const realFutureYear = realNow.getFullYear() + 1;
         const displays = [
             { status: getComputedStatus(analyticsReminder, realTodayStr, realTodayStr, { status: 'taken' } as any) },
-            { status: getComputedStatus(notYetDueReminder, realTodayStr, realTodayStr, undefined) }, // today, no log, window not reached yet -> pending
+            // dateString is the real calendar date of the future instant --
+            // becomes tomorrow (not today) when the +1 hour crosses
+            // midnight, correctly exercising getComputedStatus's own
+            // `dateString > todayString -> pending` path in that case, and
+            // the scheduled-time window check otherwise. Never assumes
+            // "today" when the instant actually rolled over.
+            { status: getComputedStatus(notYetDueReminder, oneHourFromNowDateStr, realTodayStr, undefined) }, // genuinely an hour from now, still not due -> pending
             { status: getComputedStatus(analyticsReminder, `${realFutureYear}-01-01`, realTodayStr, undefined) }, // future date -> pending
         ];
         const countable = displays.filter((d) => d.status !== 'pending').length;

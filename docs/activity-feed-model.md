@@ -170,6 +170,17 @@ navigation (opening the screen, or the dashboard's bounded reminder/task
 refresh triggers) is the only way it re-fetches — consistent with this
 codebase's conservative, non-aggressive refresh philosophy elsewhere.
 
+## Unaffected by the Week 4 Task #3 overdue-history rework
+
+`get_connection_activity_feed`/`get_participant_activity_feed` read
+`task_occurrences` directly (terminal rows only) and have zero dependency
+on the removed `TASK_LOOKBACK_DAYS` bound or on `task_schedule_versions` —
+a task occurrence's activity entry is unaffected by which schedule version
+happened to govern its eligibility. Old overdue occurrences resolved via
+the new `/overdue-tasks` screen appear in Activity exactly like any other
+response, with no special-casing required (verified directly:
+`scripts/task-overdue-audit/run.ts` scenario AS).
+
 ## Activity vs. analytics contract
 
 See `docs/activity-feed-security.md` for the full, explicit contract —

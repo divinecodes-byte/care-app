@@ -76,26 +76,43 @@ revoked — every mutation goes through a `SECURITY DEFINER` RPC. This is
 `INSERT`), chosen deliberately per Phase 4's "server-authoritative task
 operations" requirement.
 
-## Occurrence strategy (Phase 6)
+## Occurrence strategy (Phase 6, revised Week 4 Task #3)
 
 **Computed dynamically, persisted only on interaction.** A task occurrence
 becomes a real database row *only* when a participant completes or skips
 it. Upcoming/open/overdue are pure functions of
 `(schedule config, today-in-participant-timezone, whether a terminal row
-exists for that date)` — see `lib/taskLifecycle.ts` (client) and
-`task_analytics_summary()` (server, SQL). This mirrors how `reminders`
-already treats "pending" (no `reminder_logs` row = pending) — the one
-difference is reminders eventually freeze an unanswered occurrence as
-`missed` via a 5-minute cron; **tasks have no such cron at all**, because
-overdue is never terminal. This is what makes "flexible tasks do not
-automatically become Missed at midnight" true by construction, not by a
-special case.
+exists for that date)`. This mirrors how `reminders` already treats
+"pending" (no `reminder_logs` row = pending) — the one difference is
+reminders eventually freeze an unanswered occurrence as `missed` via a
+5-minute cron; **tasks have no such cron at all**, because overdue is never
+terminal. This is what makes "flexible tasks do not automatically become
+Missed at midnight" true by construction, not by a special case.
 
-For recurring tasks, `lib/taskLifecycle.ts#enumerateBegunOccurrenceDates`
-enumerates eligible dates from `max(start_date, today - 60 days)` to
-`min(today, recurrence_end_date)` — bounded lookback (`TASK_LOOKBACK_DAYS`),
-never unbounded, and never generates *future* rows. `task_analytics_summary`
-mirrors this exactly via `generate_series` in SQL.
+**This computation is now entirely server-authoritative, with no arbitrary
+day-window bound anywhere in the authoritative path** — see
+`docs/task-overdue-occurrence-model.md`, `docs/task-overdue-pagination.md`,
+and `docs/task-schedule-versioning.md` for the full model. In short:
+
+- `lib/taskLifecycle.ts#enumerateBegunOccurrenceDates` (client, pure) is
+  bounded only by the task's own `start_date` — the old
+  `TASK_LOOKBACK_DAYS = 60` constant that previously floored the range at
+  `today - 60 days` has been removed entirely. This function is a
+  non-authoritative reference implementation only (no production screen
+  calls it); every production surface instead calls a server RPC.
+- `get_participant_task_summaries()` / `get_connection_task_summaries()`
+  return one bounded row per active task, with an exact `overdue_count`
+  computed via closed-form modular-arithmetic weekday counting (no
+  `generate_series`, no per-day scan — cost is O(schedule segments), not
+  O(days), so a five-year-old daily task costs the same as a five-day-old
+  one).
+- `get_participant_overdue_task_occurrences()` is a cursor-paginated RPC
+  returning the complete, exact overdue history, one bounded page at a
+  time — a participant's full backlog is never fetched in one response,
+  and no unresolved occurrence disappears merely for being old.
+- `task_analytics_summary`'s caller-supplied `p_days` window (default 30)
+  is unrelated and untouched by this change — see
+  `docs/task-analytics-model.md`.
 
 ## Lifecycle states
 
@@ -181,10 +198,15 @@ validation bounded.
 - No monthly/custom-interval recurrence (explicitly out of scope).
 - No local notification fallback if `server_push_enabled` is off — matches
   reminders' existing server-authoritative-only design for recipient push.
-- `enumerateBegunOccurrenceDates`'s 60-day lookback means a recurring task
-  ignored for longer than 60 days will undercount its true overdue-occurrence
-  history in the UI (analytics uses the same bound, for consistency) — a
-  deliberate, documented bound against unbounded backlog growth, not a bug.
+- The prior 60-day overdue-occurrence lookback limitation was removed in
+  Week 4 Task #3 — see `docs/task-overdue-occurrence-model.md`. The
+  card-level summary RPCs' `actionable_date` quick-tap field originally
+  used a fixed 180-day backward window as a bounded-search shortcut; this
+  was found to occasionally target the *wrong* (more recent) occurrence
+  rather than the true earliest unresolved one, and was replaced with an
+  exact O(log days) binary search (`_task_earliest_unresolved_date`) — see
+  `docs/task-overdue-occurrence-model.md`. No arbitrary day bound remains
+  anywhere in the overdue-occurrence path.
 
 ## Weekend QA checklist
 

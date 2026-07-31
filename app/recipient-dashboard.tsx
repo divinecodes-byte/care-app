@@ -70,6 +70,14 @@ type Reminder = {
     organizerName?: string;
 };
 
+// Today shows only a small, bounded preview of overdue tasks (newest-overdue
+// first) — never a participant's entire overdue lifetime on dashboard mount
+// (Week 4 Task #3). The complete, cursor-paginated history is always
+// reachable via the "View all overdue" link to app/overdue-tasks.tsx, which
+// calls get_participant_overdue_task_occurrences directly — see
+// docs/task-overdue-occurrence-model.md.
+const OVERDUE_PREVIEW_CAP = 5;
+
 const TYPE_ICONS: Record<string, string> = {
     medication:  '💊',
     hydration:   '💧',
@@ -311,7 +319,7 @@ export default function RecipientDashboard() {
                 return;
             }
 
-            const rows = await fetchTasksForRecipient(user.id, taskTimezone);
+            const rows = await fetchTasksForRecipient(user.id);
             if (!isTaskLoadCurrent(generation)) return;
 
             setTaskSummaries(rows.filter((r) => r.task.is_active));
@@ -744,18 +752,17 @@ export default function RecipientDashboard() {
 
     // ── Task bucketing (Phase 4 Today hierarchy, task side) ────────────────
     // Operates on the already-computed TaskWithSummary[] from loadTasks
-    // (lib/taskLifecycle.ts#summarizeTask already ran once inside
-    // fetchTasksForRecipient, itself already using the participant's own
-    // validated timezone — see loadTasks above) — grouping rules mirror
+    // (get_participant_task_summaries already ran server-side inside
+    // fetchTasksForRecipient — see loadTasks above) — grouping rules mirror
     // lib/todayFeedCore.ts#buildTodayItems exactly (same bucket names,
     // same TASK_UPCOMING_LOOKAHEAD_DAYS bound) without a second redundant
-    // summarizeTask pass, since the summary is already in hand.
+    // summary pass, since the summary is already in hand.
     //
     // Gated on participantTimezone being loaded (Phase 3: "do not briefly
     // classify items using another timezone") — every bucket is empty
     // until then, rather than momentarily computing against any fallback.
     const todayStr = participantTimezone ? getParticipantLocalDateKey(new Date(), participantTimezone) : null;
-    const { overdueTasks, dueTodayTasks, openOtherTasks, upcomingTasks, terminalTodayTasks } = useMemo(() => {
+    const { overdueTasks, overdueTaskCount, dueTodayTasks, openOtherTasks, upcomingTasks, terminalTodayTasks } = useMemo(() => {
         const overdue: TaskWithSummary[] = [];
         const dueToday: TaskWithSummary[] = [];
         const openOther: TaskWithSummary[] = [];
@@ -763,7 +770,7 @@ export default function RecipientDashboard() {
         const terminalToday: TaskWithSummary[] = [];
 
         if (!todayStr) {
-            return { overdueTasks: overdue, dueTodayTasks: dueToday, openOtherTasks: openOther, upcomingTasks: upcoming, terminalTodayTasks: terminalToday };
+            return { overdueTasks: overdue, overdueTaskCount: 0, dueTodayTasks: dueToday, openOtherTasks: openOther, upcomingTasks: upcoming, terminalTodayTasks: terminalToday };
         }
 
         for (const entry of taskSummaries) {
@@ -783,7 +790,19 @@ export default function RecipientDashboard() {
                 terminalToday.push(entry);
             }
         }
-        return { overdueTasks: overdue, dueTodayTasks: dueToday, openOtherTasks: openOther, upcomingTasks: upcoming, terminalTodayTasks: terminalToday };
+
+        // Today shows only a small, bounded, newest-overdue-first preview
+        // (see OVERDUE_PREVIEW_CAP) — the full count and complete history
+        // remain reachable via "View all overdue" regardless of the cap.
+        overdue.sort((a, b) => {
+            const ad = a.summary.actionableDate ?? '';
+            const bd = b.summary.actionableDate ?? '';
+            return ad < bd ? 1 : ad > bd ? -1 : a.task.id < b.task.id ? -1 : 1;
+        });
+        const overdueTaskCount = overdue.length;
+        const overduePreview = overdue.slice(0, OVERDUE_PREVIEW_CAP);
+
+        return { overdueTasks: overduePreview, overdueTaskCount, dueTodayTasks: dueToday, openOtherTasks: openOther, upcomingTasks: upcoming, terminalTodayTasks: terminalToday };
     }, [taskSummaries, todayStr]);
 
     const [respondingTaskId, setRespondingTaskId] = useState<string | null>(null);
@@ -847,6 +866,23 @@ export default function RecipientDashboard() {
                         {overdueTasks.map((entry) => (
                             <TaskTodayCard key={entry.task.id} entry={entry} C={C} t={t} styles={styles} respondingTaskId={respondingTaskId} onRespond={respondTaskAction} isRoutineMember={routineMemberTaskIds.has(entry.task.id)} />
                         ))}
+                        <TouchableOpacity
+                            style={styles.viewAllOverdueRow}
+                            onPress={() => router.push('/overdue-tasks')}
+                            accessibilityRole="button"
+                            accessibilityLabel={
+                                overdueTaskCount > overdueTasks.length
+                                    ? t('tasksSection.viewAllOverdueCount', { n: overdueTaskCount })
+                                    : t('tasksSection.viewAllOverdue')
+                            }
+                        >
+                            <Text style={styles.viewAllOverdueText}>
+                                {overdueTaskCount > overdueTasks.length
+                                    ? t('tasksSection.viewAllOverdueCount', { n: overdueTaskCount })
+                                    : t('tasksSection.viewAllOverdue')}
+                            </Text>
+                            <Ionicons name="chevron-forward" size={16} color={C.primary} />
+                        </TouchableOpacity>
                     </View>
                 )}
 
@@ -1254,7 +1290,8 @@ function TaskTodayCard({
     readOnly?: boolean;
     isRoutineMember?: boolean;
 }) {
-    const { task, summary } = entry;
+    const { task, summary, organizerProfile } = entry;
+    const organizerName = organizerProfile ? resolveOrganizerDisplay(task.caregiver_id, organizerProfile, t).displayName : undefined;
     const statusLabel = t(`taskStatus.${summary.status === 'completed_on_time' ? 'completedOnTime' : summary.status === 'completed_late' ? 'completedLate' : summary.status}`);
     const canRespond = !readOnly && !!summary.actionableDate;
     const isResponding = respondingTaskId === task.id;
@@ -1279,7 +1316,7 @@ function TaskTodayCard({
             </View>
             <Text style={styles.taskCardTitle} numberOfLines={2}>{task.title}</Text>
             <Text style={styles.taskCardSubtitle}>
-                {entry.organizerName ? `${t('tasksSection.organizerLabel', { name: entry.organizerName })} · ` : ''}
+                {organizerName ? `${t('tasksSection.organizerLabel', { name: organizerName })} · ` : ''}
                 {scheduleContext}
                 {summary.overdueCount > 1 ? ` · ${t('tasksSection.overdueCountBadge', { n: summary.overdueCount })}` : ''}
                 {isRoutineMember ? ` · ${t('routineDetails.heading')}` : ''}
@@ -1662,6 +1699,8 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
     // ── Flexible tasks (Today hub integration) ─────────────────────────────
     taskSectionBlock: { marginBottom: 8 },
     taskSectionHeading: { fontSize: 15, fontWeight: '800', color: C.textPrimary, marginBottom: 10, marginTop: 4 },
+    viewAllOverdueRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 10, minHeight: 44 },
+    viewAllOverdueText: { fontSize: 14, fontWeight: '700', color: C.primary },
     taskCard: { backgroundColor: C.bgSurface, borderRadius: RADIUS.xl, padding: 16, marginBottom: 12 },
     taskCardTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
     taskKindPill: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: RADIUS.full, backgroundColor: C.bgAlt },

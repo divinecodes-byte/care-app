@@ -65,6 +65,23 @@ of week eligible, `today-3` also eligible:
 occurrence date). Verified exactly this way in
 `scripts/task-audit/run.ts` scenarios AE/AF.
 
+## Schedule-version-aware windows (Week 4 Task #3)
+
+Editing a recurring task's schedule (`update_task`) no longer retroactively
+changes how a *past* date's eligibility is evaluated. `task_analytics_summary`'s
+recurring-task branch resolves each date in its window through
+`public._task_eligible_dates()` — the same shared, single-source-of-truth
+helper `get_participant_overdue_task_occurrences` and the summary RPCs use
+(see `docs/task-schedule-versioning.md`) — rather than always evaluating
+every historical date against the task's *current* `days_of_week`/`frequency`.
+Concretely: if an organizer changes a daily task to weekdays-only today, a
+`tasks_due`/`completion_rate` calculation over a window that includes last
+month is still computed against the schedule that actually governed each of
+those past dates, not the schedule as it reads today. This closes a real,
+previously-reproducible correctness defect (verified live before the fix);
+the `p_days` window parameter and every metric definition below are
+otherwise unchanged.
+
 ## Participant-timezone determination
 
 The window (`p_days` back from "today") and every occurrence date are

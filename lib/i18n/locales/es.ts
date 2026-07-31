@@ -844,6 +844,13 @@ export const es: typeof en = {
         analyticsSkipped: '{{n}} omitida(s)',
         analyticsOverdue: '{{n}} atrasada(s) actualmente',
         analyticsNoData: 'Aún no hay actividad de tareas',
+        viewAllOverdue: 'Ver todas las atrasadas',
+        viewAllOverdueCount: 'Ver las {{n}} atrasadas',
+        overdueScreenHeading: 'Tareas atrasadas',
+        overdueEmptyTitle: 'No hay tareas atrasadas',
+        overdueEmptyText: 'Estás al día — nada atrasado por ahora.',
+        overdueLoadFailedText: 'No pudimos cargar tus tareas atrasadas. Revisa tu conexión e inténtalo de nuevo.',
+        overdueLoadingMore: 'Cargando más…',
     },
 
     taskDetails: {

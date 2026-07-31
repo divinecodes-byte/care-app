@@ -32,11 +32,12 @@ invoking this). Suite order:
 8. `activity-audit`
 9. `routine-audit`
 10. `multi-organizer-audit` (added Week 4 Task #2 — see `docs/multiple-organizer-qa.md`)
-11. `ui-state-audit`
-12. `accessibility-audit`
-13. `visual-consistency-audit`
-14. `ops-health`
-15. final global-cleanup verification (not a suite -- see below)
+11. `task-overdue-audit` (added Week 4 Task #3 — see `docs/task-overdue-qa.md`)
+12. `ui-state-audit`
+13. `accessibility-audit`
+14. `visual-consistency-audit`
+15. `ops-health`
+16. final global-cleanup verification (not a suite -- see below)
 
 No suite depends on another's leftover state -- every suite cleans itself
 up (or, for the fixture-using suites, resets the shared pool before using

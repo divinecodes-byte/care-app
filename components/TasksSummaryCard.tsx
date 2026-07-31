@@ -23,11 +23,10 @@ import { useThemeColors } from '@/lib/theme';
 type Props = {
     connectionId?: string | null;
     recipientId?: string | null;
-    recipientTimeZone: string;
     canCreate: boolean;
 };
 
-export function TasksSummaryCard({ connectionId, recipientId, recipientTimeZone, canCreate }: Props) {
+export function TasksSummaryCard({ connectionId, recipientId, canCreate }: Props) {
     const C = useThemeColors();
     const t = useTranslation();
     const styles = useMemo(() => createStyles(C), [C]);
@@ -41,8 +40,8 @@ export function TasksSummaryCard({ connectionId, recipientId, recipientTimeZone,
 
         setStatus('loading');
         const fetchPromise = connectionId
-            ? fetchTasksWithSummaries(connectionId, recipientTimeZone)
-            : fetchTasksForRecipient(recipientId!, recipientTimeZone);
+            ? fetchTasksWithSummaries(connectionId)
+            : fetchTasksForRecipient(recipientId!);
 
         fetchPromise
             .then((rows) => {
@@ -58,7 +57,7 @@ export function TasksSummaryCard({ connectionId, recipientId, recipientTimeZone,
             .catch(() => { if (!cancelled) setStatus('error'); });
 
         return () => { cancelled = true; };
-    }, [connectionId, recipientId, recipientTimeZone]);
+    }, [connectionId, recipientId]);
 
     if (!connectionId && !recipientId) return null;
 
