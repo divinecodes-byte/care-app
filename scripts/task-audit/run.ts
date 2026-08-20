@@ -166,6 +166,39 @@ async function main() {
         const dResult = await createTask(cgA.client, connA, { frequency: 'custom', daysOfWeek: [2, 4], startDate: today });
         record('D', 'organizer creates selected-weekday task', !dResult.error && JSON.stringify((dResult.data?.days_of_week ?? []).slice().sort()) === JSON.stringify([2, 4]), dResult.error?.message ?? JSON.stringify({ days_of_week: dResult.data?.days_of_week }));
 
+        // ── AR-AU: recurring task creation WITH a recurrence_end_date ─────────
+        // Regression for a real build-5 blocker: tasks_recurrence_end_recurring_
+        // only_check shipped with inverted polarity (`frequency = 'one_time' or
+        // recurrence_end_date is null`), which required recurrence_end_date to
+        // be NULL on every RECURRING task -- exactly backwards -- so any
+        // recurring task created with an end-repeating date (the ordinary
+        // "End repeating" field in app/create-task.tsx) failed 23514 at the
+        // `tasks` INSERT inside _create_task_core. Fixed in
+        // 20260819230000_fix_recurrence_end_date_check_constraint.sql. One
+        // scenario per frequency that supports an end date, since the bug hit
+        // all of them identically.
+        const arResult = await createTask(cgA.client, connA, { frequency: 'daily', daysOfWeek: [1, 2, 3, 4, 5, 6, 7], startDate: today, recurrenceEndDate: addDays(today, 2) });
+        record('AR', 'organizer creates daily recurring task with recurrence_end_date', !arResult.error && arResult.data?.recurrence_end_date === addDays(today, 2), arResult.error?.message ?? JSON.stringify({ recurrence_end_date: arResult.data?.recurrence_end_date }));
+
+        const asResult = await createTask(cgA.client, connA, { frequency: 'weekdays', daysOfWeek: [1, 2, 3, 4, 5], startDate: today, recurrenceEndDate: addDays(today, 10) });
+        record('AS', 'organizer creates weekdays recurring task with recurrence_end_date', !asResult.error && asResult.data?.recurrence_end_date === addDays(today, 10), asResult.error?.message ?? JSON.stringify({ recurrence_end_date: asResult.data?.recurrence_end_date }));
+
+        const atResult = await createTask(cgA.client, connA, { frequency: 'weekends', daysOfWeek: [6, 7], startDate: today, recurrenceEndDate: addDays(today, 10) });
+        record('AT', 'organizer creates weekends recurring task with recurrence_end_date', !atResult.error && atResult.data?.recurrence_end_date === addDays(today, 10), atResult.error?.message ?? JSON.stringify({ recurrence_end_date: atResult.data?.recurrence_end_date }));
+
+        const auResult = await createTask(cgA.client, connA, { frequency: 'custom', daysOfWeek: [2, 4], startDate: today, recurrenceEndDate: addDays(today, 10) });
+        record('AU', 'organizer creates selected-days recurring task with recurrence_end_date', !auResult.error && auResult.data?.recurrence_end_date === addDays(today, 10), auResult.error?.message ?? JSON.stringify({ recurrence_end_date: auResult.data?.recurrence_end_date }));
+
+        // ── AV: one-time task with a recurrence_end_date is correctly rejected ─
+        // The other half of the corrected constraint's polarity: a one-time
+        // task must never carry a recurrence_end_date (only app/create-task.tsx
+        // enforces this client-side by always sending null for one_time; the
+        // RPC parameter itself has no independent guard, so the database
+        // constraint is the real backstop).
+        const avResult = await createTask(cgA.client, connA, { frequency: 'one_time', startDate: today, dueDate: addDays(today, 1), recurrenceEndDate: addDays(today, 2) });
+        const avErrorText = `${avResult.error?.message ?? ''} ${(avResult.error as any)?.code ?? ''}`;
+        record('AV', 'reject one-time task with a recurrence_end_date', !!avResult.error && /violates check constraint|check_violation|23514/i.test(avErrorText), avResult.error?.message ?? JSON.stringify(avResult.data));
+
         // ── E: reject due date before start date ─────────────────────────────
         const eResult = await createTask(cgA.client, connA, { frequency: 'one_time', startDate: today, dueDate: addDays(today, -3) });
         record('E', 'reject due date before start date', !!eResult.error && /due_date_before_start_date/.test(eResult.error.message), eResult.error?.message);

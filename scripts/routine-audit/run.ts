@@ -874,6 +874,27 @@ async function main() {
         const { data: crossAccountRead } = await cgH.from('routine_template_items').select('id').eq('template_id', templateE.templateId);
         record('CA', 'RLS cross-account isolation', (crossAccountRead ?? []).length === 0, `rows=${(crossAccountRead ?? []).length}`);
 
+        // ── CM: routine-created recurring task with a recurrence_end_date ───
+        // Regression for a real build-5 blocker (see task-audit's AR-AV):
+        // tasks_recurrence_end_recurring_only_check shipped with inverted
+        // polarity, so _create_task_core failed 23514 for any RECURRING task
+        // with a non-null recurrence_end_date -- including one applied via a
+        // routine template item (app/routine-preview.tsx passes
+        // item.recurrenceEndDate straight through to apply_routine_template).
+        // Fixed in 20260819230000_fix_recurrence_end_date_check_constraint.sql.
+        // (Using a fresh id, not CB, since CB-CL is documented above as a
+        // deliberately-removed range from an earlier refactor.)
+        const { caregiver: cgCM, connectionId: connCM } = await makeConnectedPair('cm');
+        const startCM = todayDateString();
+        const { data: applyCM, error: applyCMError } = await cgCM.client.rpc('apply_routine_template', {
+            p_connection_id: connCM, p_source_template_id: null, p_source_template_revision: null,
+            p_built_in_pack_id: 'morning_routine', p_built_in_pack_version: '1', p_title: 'CM Routine', p_start_date: startCM,
+            p_items: [applyTaskItem('t1', startCM, { title: 'CM recurring task', frequency: 'daily', days_of_week: [1, 2, 3, 4, 5, 6, 7], due_date: null, recurrence_end_date: addParticipantCalendarDays(startCM, 10) })],
+            p_apply_request_id: `apply-cm-${RAND}`,
+        });
+        const cmTask = applyCM ? dbQuery(`select frequency, recurrence_end_date from public.tasks where id = (select task_id from public.routine_instance_items where routine_instance_id = '${applyCM.routineInstanceId}' and item_kind = 'task' limit 1)`)[0] as { frequency: string; recurrence_end_date: string } | undefined : undefined;
+        record('CM', 'routine-created recurring task with recurrence_end_date', !applyCMError && cmTask?.frequency === 'daily' && cmTask?.recurrence_end_date === addParticipantCalendarDays(startCM, 10), applyCMError?.message ?? JSON.stringify(cmTask));
+
         // Nested cross-suite "remains passing" checks (formerly CB-CL,
         // including the local runSuite() rate-limit/gateway-error SKIP
         // classifier) removed as part of Week 4 Task #1's DAG-flattening
