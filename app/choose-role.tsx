@@ -15,7 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
 import { useTranslation } from '@/lib/i18n/context';
-import { getRoleLabelKeys, isUseCase, logOnboardingEvent, UseCase } from '@/lib/onboarding';
+import { getRoleLabelKeys, isUseCase, logOnboardingEvent, USE_CASE_CARD_KEYS, UseCase } from '@/lib/onboarding';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 import { showAlertOnce } from '@/lib/alertGuard';
@@ -29,9 +29,9 @@ export default function ChooseRoleScreen() {
     const [loadingRole, setLoadingRole] = useState<Role | null>(null);
     const [useCase, setUseCase] = useState<UseCase | null>(null);
 
-    // Only affects which labels are shown (e.g. "Caregiver / Loved One" for
-    // the care use case) — never affects authorization, which stays on the
-    // role value written below regardless of use_case.
+    // Only affects which labels are shown (e.g. "Caregiver / Family Member"
+    // for the care use case) — never affects authorization, which stays on
+    // the role value written below regardless of use_case.
     useEffect(() => {
         (async () => {
             const { data: { user } } = await supabase.auth.getUser();
@@ -46,6 +46,12 @@ export default function ChooseRoleScreen() {
     }, []);
 
     const labels = getRoleLabelKeys(useCase);
+    // Matches the icon shown for this same use case one screen earlier on
+    // choose-use-case.tsx — a coach/manager/tutor must never see the
+    // organizer card default to a heart. 'people' is the neutral fallback
+    // for a null use_case (older account / skipped step), matching this
+    // screen's own header icon.
+    const organizerIconName = useCase ? USE_CASE_CARD_KEYS[useCase].icon : 'people';
 
     async function handleChooseRole(role: Role) {
         if (loadingRole) return;
@@ -126,8 +132,8 @@ export default function ChooseRoleScreen() {
                         accessibilityHint={t(labels.organizerDesc)}
                         accessibilityState={{ selected: loadingRole === 'caregiver', disabled: isLoading }}
                     >
-                        <View style={[styles.cardIconWrap, { backgroundColor: C.caregiverLight }]}>
-                            <Ionicons name="heart" size={26} color={C.caregiverColor} />
+                        <View style={[styles.cardIconWrap, { backgroundColor: C.organizerLight }]}>
+                            <Ionicons name={organizerIconName as never} size={26} color={C.organizerColor} />
                         </View>
 
                         <View style={styles.cardBody}>
@@ -139,7 +145,7 @@ export default function ChooseRoleScreen() {
 
                         <View style={styles.cardTrailing}>
                             {loadingRole === 'caregiver' ? (
-                                <ActivityIndicator size="small" color={C.caregiverColor} />
+                                <ActivityIndicator size="small" color={C.organizerColor} />
                             ) : (
                                 <Ionicons name="chevron-forward" size={20} color={C.textMuted} />
                             )}

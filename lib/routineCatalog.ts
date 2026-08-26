@@ -132,15 +132,25 @@ export const BUILT_IN_ROUTINE_PACKS: BuiltInPack[] = [
         ],
     },
     {
+        // packId/sourceItemKey are stable persistence identifiers (stored
+        // verbatim in routine_instances.built_in_pack_id and
+        // routine_instance_items.source_item_key, both live DB columns --
+        // confirmed via direct schema inspection during Build Batch 1
+        // pre-commit verification) and must never be renamed for cosmetic
+        // reasons alone. Only the customer-facing titleKey/descriptionKey
+        // (pure i18n lookups, never persisted) and recommendedUseCases were
+        // rebranded away from "Daily Care Routine" -- see
+        // docs/product-reset-audit.md §7 item B4 and the Batch 1
+        // pre-commit-verification report for the full evidence trail.
         packId: 'daily_care_routine',
         version: '1',
-        titleKey: 'routineCatalog.dailyCareRoutine.title',
-        descriptionKey: 'routineCatalog.dailyCareRoutine.description',
-        recommendedUseCases: ['care'],
+        titleKey: 'routineCatalog.dailyCheckinRoutine.title',
+        descriptionKey: 'routineCatalog.dailyCheckinRoutine.description',
+        recommendedUseCases: ['care', 'family', 'personal'],
         items: [
-            { sourceItemKey: 'daily_checkin', itemKind: 'reminder', titleKey: 'routineCatalog.dailyCareRoutine.checkIn', reminderType: 'other', timeOfDay: '09:00', frequency: 'daily', daysOfWeek: DAILY, noResponseMinutes: 30 },
-            { sourceItemKey: 'care_activities', itemKind: 'task', titleKey: 'routineCatalog.dailyCareRoutine.careActivities', frequency: 'daily', daysOfWeek: DAILY, startOffsetDays: 0, dueOffsetDays: null },
-            { sourceItemKey: 'notes_to_share', itemKind: 'task', titleKey: 'routineCatalog.dailyCareRoutine.notesToShare', frequency: 'daily', daysOfWeek: DAILY, startOffsetDays: 0, dueOffsetDays: null },
+            { sourceItemKey: 'daily_checkin', itemKind: 'reminder', titleKey: 'routineCatalog.dailyCheckinRoutine.checkIn', reminderType: 'other', timeOfDay: '09:00', frequency: 'daily', daysOfWeek: DAILY, noResponseMinutes: 30 },
+            { sourceItemKey: 'care_activities', itemKind: 'task', titleKey: 'routineCatalog.dailyCheckinRoutine.dailyActivities', frequency: 'daily', daysOfWeek: DAILY, startOffsetDays: 0, dueOffsetDays: null },
+            { sourceItemKey: 'notes_to_share', itemKind: 'task', titleKey: 'routineCatalog.dailyCheckinRoutine.notesToShare', frequency: 'daily', daysOfWeek: DAILY, startOffsetDays: 0, dueOffsetDays: null },
         ],
     },
     {

@@ -1,5 +1,16 @@
 // Generates assets/brand/tavora-icon.png and assets/brand/tavora-mark.png from inline SVG sources.
 // Run with: node scripts/generate-tavora-assets.mjs
+//
+// Build Batch 1 (Week 4 product-reset task #1, see docs/product-reset-audit.md
+// §7 item B6): the mark was previously a heart silhouette with a checkmark --
+// the single most visible caregiving-coded signal in the whole app (it's the
+// literal App Store/home-screen icon). Replaced with a neutral circular
+// badge + checkmark: no relationship connotation, same cobalt/white brand
+// palette, same checkmark language (a completed accountability item), same
+// two output files/paths, same iOS/Android/splash wiring in app.json --
+// only the silhouette itself changed. This does NOT touch bundleIdentifier,
+// EAS project id, or any other app/store identity (see app.json -- none of
+// those fields reference this script's output beyond the icon image path).
 import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,45 +20,37 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const outDir = join(__dirname, '..', 'assets', 'brand');
 
 const SIZE = 1024;
+const CENTER = SIZE / 2;
 
 // Brand palette (matches constants/theme.ts `T`)
 const COBALT = '#4361EE';
 const WHITE = '#FFFFFF';
 
-// Heart silhouette path, authored in a 0-120 x 0-93 local space, point-down.
-const HEART_PATH =
-    'M 50 88 C 10 60, -10 30, 20 10 C 40 -5, 50 5, 50 20 C 50 5, 60 -5, 80 10 C 110 30, 90 60, 50 88 Z';
-
-// Scales + centers the heart path within a SIZE x SIZE canvas at the given fraction of width.
-function heartTransform(targetWidth) {
-    const scale = targetWidth / 120;
-    const bboxCenterX = 50;
-    const bboxCenterY = 41.5;
-    const tx = SIZE / 2 - bboxCenterX * scale;
-    const ty = SIZE / 2 - bboxCenterY * scale;
-    return `translate(${tx.toFixed(2)},${ty.toFixed(2)}) scale(${scale.toFixed(4)})`;
-}
-
-// Checkmark polyline, positioned over the lower/center of the heart.
-const CHECK_POINTS = '418,548 486,616 612,462';
+// Checkmark polyline -- unchanged from the previous mark (already neutral),
+// re-centered slightly for a circular badge instead of a point-down heart.
+const CHECK_POINTS = '400,530 480,610 640,420';
 
 function checkmark(color, strokeWidth) {
     return `<polyline points="${CHECK_POINTS}" fill="none" stroke="${color}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" />`;
 }
 
-// App icon: full-bleed cobalt square (iOS applies its own corner mask), white heart, cobalt check.
+function badgeCircle(fill, radius) {
+    return `<circle cx="${CENTER}" cy="${CENTER}" r="${radius}" fill="${fill}" />`;
+}
+
+// App icon: full-bleed cobalt square (iOS applies its own corner mask), white circle badge, cobalt check.
 const iconSvg = `
 <svg width="${SIZE}" height="${SIZE}" viewBox="0 0 ${SIZE} ${SIZE}" xmlns="http://www.w3.org/2000/svg">
   <rect width="${SIZE}" height="${SIZE}" fill="${COBALT}" />
-  <path d="${HEART_PATH}" fill="${WHITE}" transform="${heartTransform(560)}" />
+  ${badgeCircle(WHITE, 300)}
   ${checkmark(COBALT, 46)}
 </svg>
 `;
 
-// Standalone mark: transparent background, cobalt heart, white check. Same symbol language, no square.
+// Standalone mark: transparent background, cobalt circle badge, white check. Same symbol language, no square.
 const markSvg = `
 <svg width="${SIZE}" height="${SIZE}" viewBox="0 0 ${SIZE} ${SIZE}" xmlns="http://www.w3.org/2000/svg">
-  <path d="${HEART_PATH}" fill="${COBALT}" transform="${heartTransform(720)}" />
+  ${badgeCircle(COBALT, 380)}
   ${checkmark(WHITE, 58)}
 </svg>
 `;

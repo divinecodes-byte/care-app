@@ -84,8 +84,8 @@ export const T = {
   errorLight:   '#FEE2E2',
 
   // Role accents
-  caregiverColor: '#4361EE',
-  caregiverLight: '#EEF2FF',
+  organizerColor: '#4361EE',
+  organizerLight: '#EEF2FF',
   recipientColor: '#059669',
   recipientLight: '#D1FAE5',
 } as const;
@@ -125,8 +125,8 @@ export const T_DARK: ThemeColors = {
   errorLight:   '#3B1717',
 
   // Role accents
-  caregiverColor: '#5B72F2',
-  caregiverLight: '#1E2247',
+  organizerColor: '#5B72F2',
+  organizerLight: '#1E2247',
   recipientColor: '#34D399',
   recipientLight: '#103527',
 } as const;

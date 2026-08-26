@@ -61,8 +61,8 @@ export const en = {
 
         // Care
         careOrganizerTitle: "I'm a Caregiver",
-        careOrganizerDesc: "Create reminders and follow your loved one's progress.",
-        careParticipantTitle: "I'm a Loved One",
+        careOrganizerDesc: "Create reminders and follow your family member's progress.",
+        careParticipantTitle: "I'm a Family Member",
         careParticipantDesc: "Receive reminders and mark them complete.",
 
         // Coaching
@@ -561,7 +561,7 @@ export const en = {
         errorText: 'Please check your connection and try again.',
         retry: 'Retry',
         emptyTitle: 'No participants yet',
-        emptyText: 'Invite someone to get started — they can be a loved one, an athlete, a team member, or anyone else you want to help stay on track.',
+        emptyText: 'Invite someone to get started — they can be a team member, a client, a student, a family member, or anyone else you want to help stay on track.',
         inviteFirst: 'Invite your first participant',
         activeSection: 'Active',
         pendingSection: 'Pending invitations',
@@ -970,12 +970,12 @@ export const en = {
             morning: 'Morning dental routine',
             evening: 'Evening dental routine',
         },
-        dailyCareRoutine: {
-            title: 'Daily Care Routine',
-            description: 'A generic daily structure for care and accountability. Not professional-care guidance.',
+        dailyCheckinRoutine: {
+            title: 'Daily Check-In Routine',
+            description: 'A generic daily structure for accountability. Not professional-care guidance.',
             checkIn: 'Daily check-in',
-            careActivities: 'Complete daily care activities',
-            notesToShare: 'Note anything to share with organizer',
+            dailyActivities: 'Complete daily activities',
+            notesToShare: 'Note anything to share with your organizer',
         },
         workdayCheckin: {
             title: 'Workday Check-In',

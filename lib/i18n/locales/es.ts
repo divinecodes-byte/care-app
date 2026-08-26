@@ -63,8 +63,8 @@ export const es: typeof en = {
 
         // Care
         careOrganizerTitle: 'Soy Cuidador',
-        careOrganizerDesc: 'Crea recordatorios y sigue el progreso de tu ser querido.',
-        careParticipantTitle: 'Soy el Ser Querido',
+        careOrganizerDesc: 'Crea recordatorios y sigue el progreso de tu familiar.',
+        careParticipantTitle: 'Soy Familiar',
         careParticipantDesc: 'Recibe recordatorios y márcalos como completados.',
 
         // Coaching
@@ -558,7 +558,7 @@ export const es: typeof en = {
         errorText: 'Verifica tu conexión e inténtalo de nuevo.',
         retry: 'Reintentar',
         emptyTitle: 'Aún no hay participantes',
-        emptyText: 'Invita a alguien para comenzar — puede ser un ser querido, un atleta, un miembro del equipo, o cualquier persona a quien quieras ayudar a mantenerse al día.',
+        emptyText: 'Invita a alguien para comenzar — puede ser un miembro del equipo, un cliente, un estudiante, un familiar, o cualquier persona a quien quieras ayudar a mantenerse al día.',
         inviteFirst: 'Invita a tu primer participante',
         activeSection: 'Activos',
         pendingSection: 'Invitaciones pendientes',
@@ -960,12 +960,12 @@ export const es: typeof en = {
             morning: 'Rutina dental matutina',
             evening: 'Rutina dental nocturna',
         },
-        dailyCareRoutine: {
-            title: 'Rutina de cuidado diario',
-            description: 'Una estructura diaria genérica de cuidado y seguimiento. No es orientación de cuidado profesional.',
+        dailyCheckinRoutine: {
+            title: 'Rutina de registro diario',
+            description: 'Una estructura diaria genérica de seguimiento. No es orientación de cuidado profesional.',
             checkIn: 'Registro diario',
-            careActivities: 'Completar actividades de cuidado diario',
-            notesToShare: 'Anotar algo para compartir con el organizador',
+            dailyActivities: 'Completar actividades diarias',
+            notesToShare: 'Anotar algo para compartir con tu organizador',
         },
         workdayCheckin: {
             title: 'Registro de jornada laboral',

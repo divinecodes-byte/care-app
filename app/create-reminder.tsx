@@ -81,7 +81,7 @@ export default function CreateReminderScreen() {
     const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
 
     const [title, setTitle]                         = useState('');
-    const [reminderType, setReminderType]           = useState<ReminderType>('medication');
+    const [reminderType, setReminderType]           = useState<ReminderType>('other');
     const [notes, setNotes]                         = useState('');
     const [timeValue, setTimeValue]                 = useState<Date>(() => {
         const d = new Date();

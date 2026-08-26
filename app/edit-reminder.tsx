@@ -90,7 +90,7 @@ export default function EditReminderScreen() {
 
     // Form state
     const [title,             setTitle]             = useState('');
-    const [reminderType,      setReminderType]      = useState<ReminderType>('medication');
+    const [reminderType,      setReminderType]      = useState<ReminderType>('other');
     const [notes,             setNotes]             = useState('');
     const [timeValue,         setTimeValue]         = useState<Date>(() => {
         const d = new Date();

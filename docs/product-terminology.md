@@ -106,10 +106,24 @@ via `getRoleLabelKeys(useCase)` — display-only, never affects authorization
 
 | `use_case` | Organizer-side | Participant-side |
 |---|---|---|
-| `care` | Caregiver | Loved One |
+| `care` | Caregiver | Family Member |
 | `coaching` | Coach | Athlete |
 | `team` | Manager | Team Member |
 | `family` / `personal` / `other` / unset | Organizer | Participant |
+
+An `education` value (Tutor/Student, Mentor/Mentee) was drafted in Build
+Batch 1 but **reverted before commit**: the live `profiles_use_case_check`
+and `routine_templates_use_case_check` constraints only allow
+`care`/`family`/`coaching`/`team`/`personal`/`other` — a 7th value would
+silently fail to persist (best-effort write, non-blocking onboarding) with
+no visible error. Adding `education` requires the same additive migration
+as the `relationship_pair` work (`docs/product-reset-audit.md` §12–§13,
+§17) and is deferred to that batch, not added standalone.
+
+**"Loved One" was replaced with "Family Member"** for the `care` use case
+(Build Batch 1) — the product's authoritative relationship vocabulary
+pairs Caregiver with Family Member, not Caregiver with Loved One. See
+`docs/product-reset-audit.md` §7 (item B2) for the full rationale.
 
 `getRoleLabelKeys` is the **only** approved source for a contextual
 relationship label. It's consumed correctly by `choose-role.tsx`,
@@ -212,8 +226,11 @@ No emoji and almost no exclamation marks exist anywhere in either locale
 file — the hypothesized "celebratory vs. flat" tone mismatch was not
 found; copy is uniformly short-title-plus-one-sentence, plain and
 functional. The one outlier for length (not tone) is
-`participants.emptyText`, which lists example relationships ("a loved one,
-an athlete, a team member...") and reads noticeably longer/chattier than
+`participants.emptyText`, which lists example relationships ("a team
+member, a client, a student, a family member..." — reordered in Build
+Batch 1 to lead with a neutral example rather than "a loved one," see
+`docs/product-reset-audit.md` §7 item B3) and reads noticeably
+longer/chattier than
 every other empty state — left as-is, since it's doing useful work
 (illustrating that Tavora isn't only for eldercare) that a terser version
 would lose.
