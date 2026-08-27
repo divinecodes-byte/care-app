@@ -44,6 +44,7 @@ import {
 } from '../audit-infrastructure/fixtures';
 import { resolveOrganizerDisplay, OrganizerProfileForDisplay } from '../../lib/organizerDisplay';
 import { BUILT_IN_ROUTINE_PACKS } from '../../lib/routineCatalog';
+import { getOrganizerLabelKey, getParticipantLabelKey, getRelationshipDefinition } from '../../lib/relationshipCore';
 
 const RAND = randomSuffix();
 const PASSWORD = `MultiOrgAudit!${RAND}9X`;
@@ -622,6 +623,165 @@ async function main() {
         // BJ: disposable accounts are all correctly tagged for globalSyntheticSweep().
         const untaggedCount = dbQuery(`select count(*) as c from auth.users where email like ${like} and coalesce((raw_user_meta_data->>'audit_account')::boolean, false) = false;`)[0] as { c: number };
         record('BJ', 'every disposable account created in this run is tagged audit_account=true for globalSyntheticSweep()', Number(untaggedCount.c) === 0, JSON.stringify(untaggedCount));
+
+        // ══════════════════════════════════════════════════════════════════
+        // BU-BX: Build Batch 2 -- per-connection relationship_pair. See
+        // docs/product-reset-audit.md §12-§13: profiles.use_case is a
+        // coarse, per-PROFILE onboarding signal; connections.relationship_pair
+        // is the finer-grained, per-CONNECTION label this section proves is
+        // genuinely independent per connection, never bled across
+        // organizers or overridden by use_case.
+        // ══════════════════════════════════════════════════════════════════
+        const { caregiver: cgBU, recipient: rcBU } = await makeConnectedPair('bu');
+        // NULL legacy connection remains fully valid: create_invite_code
+        // called exactly the pre-Batch-2 way (no p_relationship_pair) still
+        // produces a working connection, and a reminder can still be
+        // created on it -- relationship context is additive, never required.
+        const buConnRow = dbQuery(`select relationship_pair from public.connections where caregiver_id = '${cgBU.id}' and recipient_id = '${rcBU.id}' and status = 'accepted'`) as { relationship_pair: string | null }[];
+        const { error: buReminderError } = await cgBU.client.from('reminders').insert({
+            connection_id: (dbQuery(`select id from public.connections where caregiver_id='${cgBU.id}' and recipient_id='${rcBU.id}'`)[0] as any).id,
+            caregiver_id: cgBU.id, recipient_id: rcBU.id, title: 'BU reminder', reminder_type: 'general',
+            time_of_day: '09:00:00', frequency: 'daily', days_of_week: [1, 2, 3, 4, 5, 6, 7], no_response_minutes: 15,
+        });
+        record('BU', 'NULL legacy connection (no relationship_pair) remains fully valid', buConnRow[0]?.relationship_pair === null && !buReminderError, JSON.stringify({ relationship_pair: buConnRow[0]?.relationship_pair, reminderError: buReminderError?.message }));
+
+        // Full invite → preview → accept flow with a relationship_pair,
+        // proving the participant can see it via preview_invite_code
+        // (non-consuming) before accept_invite_code, and that it survives
+        // acceptance verbatim.
+        const cgBV = await signUpTestUser('bvcg', 'MultiOrg BV Caregiver', 'caregiver');
+        const rcBV = await signUpTestUser('bvrc', 'MultiOrg BV Recipient', 'recipient');
+        const { data: inviteBV } = await cgBV.client.rpc('create_invite_code', { p_existing_connection_id: null, p_relationship_pair: 'coach_athlete' }).maybeSingle() as { data: { id: string; invite_code: string; relationship_pair: string } | null };
+        record('BV', 'create_invite_code accepts and returns a valid relationship_pair', inviteBV?.relationship_pair === 'coach_athlete', JSON.stringify(inviteBV));
+
+        const { data: previewBV } = await rcBV.client.rpc('preview_invite_code', { p_code: inviteBV!.invite_code }).maybeSingle() as { data: { status: string; organizer_full_name: string; relationship_pair: string } | null };
+        const bvStillPending = dbQuery(`select status from public.connections where id = '${inviteBV!.id}'`)[0] as { status: string };
+        record('BV', 'preview_invite_code shows organizer name + relationship_pair to the participant WITHOUT consuming the invite', previewBV?.status === 'valid' && previewBV?.organizer_full_name === 'MultiOrg BV Caregiver' && previewBV?.relationship_pair === 'coach_athlete' && bvStillPending.status === 'pending', JSON.stringify({ previewBV, bvStillPending }));
+
+        const acceptBV = await rcBV.client.rpc('accept_invite_code', { p_code: inviteBV!.invite_code });
+        const bvFinalRow = dbQuery(`select relationship_pair, status from public.connections where id = '${inviteBV!.id}'`)[0] as { relationship_pair: string; status: string };
+        record('BV', 'relationship_pair survives acceptance verbatim', acceptBV.data === 'accepted' && bvFinalRow.relationship_pair === 'coach_athlete' && bvFinalRow.status === 'accepted', JSON.stringify(bvFinalRow));
+
+        // Cross-organizer isolation: two independent organizers, one SHARED
+        // participant, each sets a DIFFERENT relationship_pair -- proving
+        // one organizer's relationship label never bleeds into another
+        // organizer's own connection to the identical participant, and
+        // that this participant's own profiles.use_case (irrelevant here,
+        // never even set) could not have overridden either value even if
+        // it had been.
+        const org1BW = await signUpTestUser('bwo1', 'MultiOrg BW Organizer1', 'caregiver');
+        const org2BW = await signUpTestUser('bwo2', 'MultiOrg BW Organizer2', 'caregiver');
+        const sharedBW = await signUpTestUser('bwsh', 'MultiOrg BW Shared', 'recipient');
+        const { data: inviteBW1 } = await org1BW.client.rpc('create_invite_code', { p_existing_connection_id: null, p_relationship_pair: 'parent_child' }).maybeSingle() as { data: { invite_code: string } | null };
+        await sharedBW.client.rpc('accept_invite_code', { p_code: inviteBW1!.invite_code });
+        const { data: inviteBW2 } = await org2BW.client.rpc('create_invite_code', { p_existing_connection_id: null, p_relationship_pair: 'trainer_client' }).maybeSingle() as { data: { invite_code: string } | null };
+        await sharedBW.client.rpc('accept_invite_code', { p_code: inviteBW2!.invite_code });
+        const bwPairs = dbQuery(`select caregiver_id, relationship_pair from public.connections where recipient_id = '${sharedBW.id}' and status = 'accepted' order by caregiver_id`) as { caregiver_id: string; relationship_pair: string }[];
+        const bwOrg1Pair = bwPairs.find((r) => r.caregiver_id === org1BW.id)?.relationship_pair;
+        const bwOrg2Pair = bwPairs.find((r) => r.caregiver_id === org2BW.id)?.relationship_pair;
+        record('BW', "one organizer's relationship_pair never bleeds into another organizer's connection to the same shared participant", bwOrg1Pair === 'parent_child' && bwOrg2Pair === 'trainer_client', JSON.stringify({ bwOrg1Pair, bwOrg2Pair }));
+
+        // Invalid relationship_pair rejected server-side -- the client's
+        // own picker is never trusted as the only gate.
+        const { error: bxError } = await org1BW.client.rpc('create_invite_code', { p_existing_connection_id: null, p_relationship_pair: 'not_a_real_relationship' });
+        record('BX', 'invalid relationship_pair is rejected server-side', !!bxError && /invalid_relationship_pair/.test(bxError.message), bxError?.message);
+
+        // ── BY: current-client invite UI requires a relationship before generating ──
+        // A source-code assertion, not an RPC test -- this requirement is
+        // deliberately enforced client-side only (the RPC parameter stays
+        // optional for backward compatibility, per the correction brief).
+        // Confirms app/invite-recipient.tsx blocks createInviteCode() with
+        // an alert when relationshipPair is null, before ever calling
+        // create_invite_code.
+        const inviteRecipientSource = read('app/invite-recipient.tsx');
+        record(
+            'BY',
+            'invite-recipient.tsx blocks generating a new invite until a relationship is chosen',
+            has(inviteRecipientSource, /relationshipPair\s*===\s*null\)\s*\{/) && has(inviteRecipientSource, /relationshipRequiredTitle/) && has(inviteRecipientSource, /relationshipRequiredMessage/),
+            'expected the required-relationship guard (relationshipPair === null -> showAlertOnce(...relationshipRequiredTitle...)) before the create_invite_code call'
+        );
+
+        // ── BZ: 'other' (the generic escape hatch) can be explicitly chosen and persists ──
+        const cgBZ = await signUpTestUser('bzcg', 'MultiOrg BZ Caregiver', 'caregiver');
+        const rcBZ = await signUpTestUser('bzrc', 'MultiOrg BZ Recipient', 'recipient');
+        const { data: inviteBZ } = await cgBZ.client.rpc('create_invite_code', { p_existing_connection_id: null, p_relationship_pair: 'other' }).maybeSingle() as { data: { id: string; invite_code: string; relationship_pair: string } | null };
+        await rcBZ.client.rpc('accept_invite_code', { p_code: inviteBZ!.invite_code });
+        const bzRow = dbQuery(`select relationship_pair from public.connections where id = '${inviteBZ!.id}'`)[0] as { relationship_pair: string };
+        record('BZ', "'other' (Organizer/Participant) can be explicitly chosen and survives acceptance", inviteBZ?.relationship_pair === 'other' && bzRow.relationship_pair === 'other', JSON.stringify({ inviteBZ, bzRow }));
+
+        // ── CA: old/backward-compatible RPC callers that never send p_relationship_pair at all still succeed ──
+        const cgCA = await signUpTestUser('cacg', 'MultiOrg CA Caregiver', 'caregiver');
+        const { data: inviteCA, error: errorCA } = await cgCA.client.rpc('create_invite_code', { p_existing_connection_id: null }).maybeSingle() as { data: { id: string; relationship_pair: string | null } | null; error: any };
+        record('CA', 'a caller that omits p_relationship_pair entirely (old client shape) still succeeds, with relationship_pair=NULL', !errorCA && inviteCA?.relationship_pair === null, errorCA?.message ?? JSON.stringify(inviteCA));
+
+        // ── CB: relationship_pair resolution is structurally independent of use_case ──
+        // getRelationshipDefinition/getOrganizerLabelKey/getParticipantLabelKey
+        // (lib/relationshipCore.ts) take ONLY a relationship_pair -- there is
+        // no use_case parameter in their signature at all, so no code path
+        // exists by which use_case could leak into the resolved label.
+        const cbTrainerClient = getRelationshipDefinition('trainer_client');
+        const cbParentChild = getRelationshipDefinition('parent_child');
+        record('CB', "getRelationshipDefinition('trainer_client') resolves to Trainer/Client (no use_case parameter exists to influence this)", cbTrainerClient?.organizerLabelKey === 'relationshipPair.trainerClient.organizerLabel' && cbTrainerClient?.participantLabelKey === 'relationshipPair.trainerClient.participantLabel', JSON.stringify(cbTrainerClient));
+        record('CB', "getRelationshipDefinition('parent_child') resolves to Parent/Child (no use_case parameter exists to influence this)", cbParentChild?.organizerLabelKey === 'relationshipPair.parentChild.organizerLabel' && cbParentChild?.participantLabelKey === 'relationshipPair.parentChild.participantLabel', JSON.stringify(cbParentChild));
+        record('CB', 'a null/unrecognized relationship_pair resolves to the generic common.organizer/common.participant keys, never a use_case-specific label', getOrganizerLabelKey(null) === 'common.organizer' && getParticipantLabelKey(null) === 'common.participant' && getOrganizerLabelKey('not_real') === 'common.organizer', JSON.stringify({ org: getOrganizerLabelKey(null), part: getParticipantLabelKey(null), orgUnrecognized: getOrganizerLabelKey('not_real') }));
+
+        // ── CC-CF: end-to-end proof that relationship_pair always wins over
+        // profiles.use_case, and that a NULL relationship_pair never
+        // inherits the organizer's own use_case-driven label, for two
+        // representative, deliberately MISMATCHED use_case/relationship_pair
+        // combinations (organizer's use_case is the OPPOSITE category of
+        // their connection's actual relationship_pair, so a leak would be
+        // unambiguous, not accidentally-correct-by-coincidence).
+        const cgCC = await signUpTestUser('cccg', 'MultiOrg CC Caregiver', 'caregiver');
+        await cgCC.client.from('profiles').update({ use_case: 'care' }).eq('id', cgCC.id);
+        const rcCC = await signUpTestUser('ccrc', 'MultiOrg CC Recipient', 'recipient');
+        const { data: inviteCC } = await cgCC.client.rpc('create_invite_code', { p_existing_connection_id: null }).maybeSingle() as { data: { invite_code: string } | null }; // no relationship_pair -- legacy-shaped, NULL
+        await rcCC.client.rpc('accept_invite_code', { p_code: inviteCC!.invite_code });
+        const ccConn = dbQuery(`select relationship_pair from public.connections where caregiver_id = '${cgCC.id}' and recipient_id = '${rcCC.id}'`)[0] as { relationship_pair: string | null };
+        const ccResolvedOrganizerLabel = getOrganizerLabelKey(ccConn.relationship_pair);
+        record('CC', "organizer profile use_case='care' + connection relationship_pair=NULL resolves to generic 'Organizer', never 'Caregiver'", ccConn.relationship_pair === null && ccResolvedOrganizerLabel === 'common.organizer', JSON.stringify({ ccConn, ccResolvedOrganizerLabel }));
+
+        const cgCD = await signUpTestUser('cdcg', 'MultiOrg CD Caregiver', 'caregiver');
+        await cgCD.client.from('profiles').update({ use_case: 'coaching' }).eq('id', cgCD.id);
+        const rcCD = await signUpTestUser('cdrc', 'MultiOrg CD Recipient', 'recipient');
+        const { data: inviteCD } = await cgCD.client.rpc('create_invite_code', { p_existing_connection_id: null }).maybeSingle() as { data: { invite_code: string } | null };
+        await rcCD.client.rpc('accept_invite_code', { p_code: inviteCD!.invite_code });
+        const cdConn = dbQuery(`select relationship_pair from public.connections where caregiver_id = '${cgCD.id}' and recipient_id = '${rcCD.id}'`)[0] as { relationship_pair: string | null };
+        const cdResolvedParticipantLabel = getParticipantLabelKey(cdConn.relationship_pair);
+        record('CD', "organizer profile use_case='coaching' + connection relationship_pair=NULL resolves to generic 'Participant', never 'Client'/'Athlete'", cdConn.relationship_pair === null && cdResolvedParticipantLabel === 'common.participant', JSON.stringify({ cdConn, cdResolvedParticipantLabel }));
+
+        const cgCE = await signUpTestUser('cecg', 'MultiOrg CE Caregiver', 'caregiver');
+        await cgCE.client.from('profiles').update({ use_case: 'care' }).eq('id', cgCE.id); // deliberately mismatched vs. the relationship_pair below
+        const rcCE = await signUpTestUser('cerc', 'MultiOrg CE Recipient', 'recipient');
+        const { data: inviteCE } = await cgCE.client.rpc('create_invite_code', { p_existing_connection_id: null, p_relationship_pair: 'trainer_client' }).maybeSingle() as { data: { invite_code: string } | null };
+        await rcCE.client.rpc('accept_invite_code', { p_code: inviteCE!.invite_code });
+        const ceConn = dbQuery(`select relationship_pair from public.connections where caregiver_id = '${cgCE.id}' and recipient_id = '${rcCE.id}'`)[0] as { relationship_pair: string | null };
+        const ceDef = getRelationshipDefinition(ceConn.relationship_pair);
+        record('CE', "organizer profile use_case='care' + connection relationship_pair='trainer_client' displays Trainer/Client -- relationship_pair wins despite mismatched use_case", ceConn.relationship_pair === 'trainer_client' && ceDef?.organizerLabelKey === 'relationshipPair.trainerClient.organizerLabel' && ceDef?.participantLabelKey === 'relationshipPair.trainerClient.participantLabel', JSON.stringify({ ceConn, ceDef }));
+
+        const cgCF = await signUpTestUser('cfcg', 'MultiOrg CF Caregiver', 'caregiver');
+        await cgCF.client.from('profiles').update({ use_case: 'coaching' }).eq('id', cgCF.id); // deliberately mismatched vs. the relationship_pair below
+        const rcCF = await signUpTestUser('cfrc', 'MultiOrg CF Recipient', 'recipient');
+        const { data: inviteCF } = await cgCF.client.rpc('create_invite_code', { p_existing_connection_id: null, p_relationship_pair: 'parent_child' }).maybeSingle() as { data: { invite_code: string } | null };
+        await rcCF.client.rpc('accept_invite_code', { p_code: inviteCF!.invite_code });
+        const cfConn = dbQuery(`select relationship_pair from public.connections where caregiver_id = '${cgCF.id}' and recipient_id = '${rcCF.id}'`)[0] as { relationship_pair: string | null };
+        const cfDef = getRelationshipDefinition(cfConn.relationship_pair);
+        record('CF', "organizer profile use_case='coaching' + connection relationship_pair='parent_child' displays Parent/Child -- relationship_pair wins despite mismatched use_case", cfConn.relationship_pair === 'parent_child' && cfDef?.organizerLabelKey === 'relationshipPair.parentChild.organizerLabel' && cfDef?.participantLabelKey === 'relationshipPair.parentChild.participantLabel', JSON.stringify({ cfConn, cfDef }));
+
+        // ── CG: source-code assertion -- participants.tsx/my-connections.tsx never fall back to a use_case-driven label for a NULL relationship_pair ──
+        const participantsSource = read('app/participants.tsx');
+        record(
+            'CG',
+            'participants.tsx never falls back to a use_case-driven label when relationship_pair is unset (only common.participant)',
+            has(participantsSource, /relDef\s*\?\s*t\(relDef\.participantLabelKey\)\s*:\s*t\('common\.participant'\)/) && !has(participantsSource, /relDef\s*\?[^:]*:\s*participantRoleLabel/),
+            'expected the ternary fallback to be t(\'common.participant\'), never the use_case-driven participantRoleLabel'
+        );
+        record(
+            'CG',
+            'my-connections.tsx never falls back to a use_case-driven label when relationship_pair is unset (only common.organizer)',
+            has(myConnectionsSource, /relDef\s*\?\s*t\(relDef\.organizerLabelKey\)\s*:\s*t\('common\.organizer'\)/),
+            'expected the ternary fallback to be t(\'common.organizer\')'
+        );
 
         // ══════════════════════════════════════════════════════════════════
         // BK-BS: pointers to whole existing suites -- never invoked

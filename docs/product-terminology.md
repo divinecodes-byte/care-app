@@ -65,6 +65,26 @@ participant at a specific time" (Timed Reminder) and "Can be completed
 anytime within its assigned date or deadline" (Flexible Task) — chosen so
 neither option reads as the "default"/"other" choice.
 
+## Reminder category (Build Batch 2, product-reset task #2)
+
+The reminder-type picker's section label changed from **"Type"** to
+**"Category"** (`reminderForm.typeLabel`) — clearer once a genuinely
+neutral option exists alongside the relationship-specific ones. A new
+**`general`** category was added (`reminderForm.typeGeneral`, DB value
+`'general'`) and is now the first option and the default for a newly
+created reminder (`app/create-reminder.tsx`, `app/edit-reminder.tsx`'s
+initial/unset state) — the neutral, always-appropriate choice for any
+relationship type. `reminders.reminder_type`'s own column `DEFAULT` changed
+from `'medication'` to `'general'` in the same migration
+(`20260826000000_relationship_context_education_and_general_reminder_type.sql`)
+— Build Batch 1 had only fixed the client's initial `useState`, not the
+database's own independent default. **Medication, Hydration, Appointment,
+Meal, and Exercise remain unchanged, fully valid, selectable
+categories** — they were never removed, only no longer the default.
+`other` remains the existing catch-all. No existing reminder row was
+migrated or touched; this only changes what a *new* row defaults to when
+`reminder_type` is omitted.
+
 ## Routine terminology (Week 3 product-expansion task #3)
 
 **Routine** is the generic UI word for a reusable accountability blueprint
@@ -109,16 +129,65 @@ via `getRoleLabelKeys(useCase)` — display-only, never affects authorization
 | `care` | Caregiver | Family Member |
 | `coaching` | Coach | Athlete |
 | `team` | Manager | Team Member |
+| `education` | Organizer | Participant (no bespoke pair — see below) |
 | `family` / `personal` / `other` / unset | Organizer | Participant |
 
-An `education` value (Tutor/Student, Mentor/Mentee) was drafted in Build
-Batch 1 but **reverted before commit**: the live `profiles_use_case_check`
-and `routine_templates_use_case_check` constraints only allow
-`care`/`family`/`coaching`/`team`/`personal`/`other` — a 7th value would
-silently fail to persist (best-effort write, non-blocking onboarding) with
-no visible error. Adding `education` requires the same additive migration
-as the `relationship_pair` work (`docs/product-reset-audit.md` §12–§13,
-§17) and is deferred to that batch, not added standalone.
+**`education` (Build Batch 2)**: added to `profiles_use_case_check`,
+`routine_templates_use_case_check`, and the `create_routine_template`/
+`update_routine_template` RPC validation via
+`supabase/migrations/20260826000000_relationship_context_education_and_general_reminder_type.sql`.
+Build Batch 1 had drafted this client-side and then reverted it before
+commit after proving live (SQLSTATE 23514) that the database rejected it —
+see the git history for that verification. `education` has no bespoke
+`ROLE_LABEL_KEYS_BY_USE_CASE` role-card pair (falls through to the neutral
+Organizer/Participant labels, same as `family`/`personal`/`other`) — a
+Tutor/Student or Mentor/Mentee pairing now exists one level down, in the
+per-connection `relationship_pair` model below, not here.
+
+### Per-connection relationship (`connections.relationship_pair`, Build Batch 2)
+
+**Authoritative distinction**: `profiles.use_case` above is a coarse,
+pre-connection signal (asked once at signup, before any participant
+exists). `connections.relationship_pair` is the finer-grained, per-
+connection label — the same organizer can be a Parent to one participant
+and a Trainer to another, which `use_case` cannot represent. Nullable,
+additive (`supabase/migrations/20260826000000_...sql`), display-only —
+never read by RLS or any authorization RPC, exactly like `use_case`. `NULL`
+means "relationship unspecified" and is a fully valid, permanent state,
+never backfilled from `use_case`.
+
+Defined centrally in `lib/relationshipCore.ts` (`getRelationshipDefinition`/
+`getOrganizerLabelKey`/`getParticipantLabelKey`, i18n namespace
+`relationshipPair.*`) — the **only** approved source for a per-connection
+relationship label, mirroring `getRoleLabelKeys`'s role in the section
+above. Never duplicate this map in a screen.
+
+| `relationship_pair` | `use_case` category | Organizer-side | Participant-side |
+|---|---|---|---|
+| `parent_child` | family | Parent | Child |
+| `trainer_client` | coaching | Trainer | Client |
+| `coach_athlete` | coaching | Coach | Athlete |
+| `caregiver_family_member` | care | Caregiver | Family Member |
+| `tutor_student` | education | Tutor | Student |
+| `mentor_mentee` | education | Mentor | Mentee |
+| `manager_team_member` | team | Manager | Team Member |
+| `provider_patient` | care | Provider | Patient |
+| `accountability_partner` | personal | Accountability Partner | Partner |
+| `family_member_family_member` | family | Family Member | Family Member |
+| `other` | other | Organizer | Participant |
+| `null` (unspecified) | — | Organizer | Participant |
+
+Captured optionally at invite-creation time (`app/invite-recipient.tsx`,
+`create_invite_code`'s `p_relationship_pair`, validated server-side against
+this exact list). The participant sees it **before** accepting via the new
+`preview_invite_code` RPC (read-only, non-consuming, same information-
+disclosure boundary as `accept_invite_code` — requires the exact code) on
+`app/join-invite.tsx`'s new confirm screen — the relationship is never
+silently hidden. Surfaced on `app/participants.tsx` (organizer's view) and
+`app/my-connections.tsx` (participant's view) wherever a connection is
+already listed. Post-acceptance editing is deferred (not built this
+batch) — see `docs/product-reset-audit.md`'s Build Batch 2 report for the
+full rationale and remaining product debt.
 
 **"Loved One" was replaced with "Family Member"** for the `care` use case
 (Build Batch 1) — the product's authoritative relationship vocabulary

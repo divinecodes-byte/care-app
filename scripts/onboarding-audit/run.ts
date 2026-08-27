@@ -143,14 +143,24 @@ async function main() {
         const { data: partReadOwnLog } = await partA.client.from('reminder_logs').select('status').eq('reminder_id', remA.id).maybeSingle();
         record('B', 'new participant: can read their own recorded response', partReadOwnLog?.status === 'taken');
 
-        // ── C/D/E: coaching / team / personal use cases persist correctly ─────
-        for (const [letter, useCase] of [['C', 'coaching'], ['D', 'team'], ['E', 'personal']] as const) {
+        // ── C/D/E/W: coaching / team / personal / education use cases persist correctly ──
+        // 'education' (Build Batch 2) proves the live profiles_use_case_check
+        // constraint actually accepts it now -- Build Batch 1 proved live
+        // (SQLSTATE 23514) that it did NOT before the additive migration in
+        // 20260826000000_relationship_context_education_and_general_reminder_type.sql.
+        for (const [letter, useCase] of [['C', 'coaching'], ['D', 'team'], ['E', 'personal'], ['W', 'education']] as const) {
             const u = await signUpTestUser(`uc-${useCase}`, `Onb ${useCase}`);
             testUserIds.push(u.id);
             const { error } = await u.client.from('profiles').update({ use_case: useCase }).eq('id', u.id);
             const row = dbQuery(`select use_case from public.profiles where id='${u.id}';`)[0] as any;
             record(letter, `${useCase} use case selection persists`, !error && row?.use_case === useCase);
         }
+
+        // ── X: an invalid use_case is still rejected (the finite vocabulary is bounded, not open) ──
+        const invalidUseCaseUser = await signUpTestUser('uc-invalid', 'Onb Invalid');
+        testUserIds.push(invalidUseCaseUser.id);
+        const { error: invalidUseCaseErr } = await invalidUseCaseUser.client.from('profiles').update({ use_case: 'not_a_real_use_case' }).eq('id', invalidUseCaseUser.id);
+        record('X', 'an invalid use_case value is rejected (profiles_use_case_check)', !!invalidUseCaseErr, invalidUseCaseErr?.message);
 
         // ── F: older profile without use_case still resolves correctly ────────
         const legacyUser = await signUpTestUser('legacy', 'Legacy Account');

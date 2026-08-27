@@ -16,9 +16,9 @@
 // function that reads a use case accepts `null` (unset / older account)
 // and falls back to neutral copy, per the task's "default safely" rule.
 
-export type UseCase = 'care' | 'family' | 'coaching' | 'team' | 'personal' | 'other';
+export type UseCase = 'care' | 'family' | 'coaching' | 'team' | 'education' | 'personal' | 'other';
 
-export const USE_CASES: UseCase[] = ['care', 'family', 'coaching', 'team', 'personal', 'other'];
+export const USE_CASES: UseCase[] = ['care', 'family', 'coaching', 'team', 'education', 'personal', 'other'];
 
 export function isUseCase(value: unknown): value is UseCase {
     return typeof value === 'string' && (USE_CASES as string[]).includes(value);
@@ -71,6 +71,16 @@ const ROLE_LABEL_KEYS_BY_USE_CASE: Record<UseCase, RoleLabelKeys> = {
         participantTitle: 'chooseRole.participantTitle',
         participantDesc: 'chooseRole.participantDesc',
     },
+    // No bespoke Tutor/Mentor role-card pair -- falls through to the
+    // neutral Organizer/Participant labels, same as family/personal/other.
+    // A bespoke pair belongs to the per-connection relationshipPair.* model
+    // (lib/relationshipCore.ts: tutor_student, mentor_mentee), not here.
+    education: {
+        organizerTitle: 'chooseRole.organizerTitle',
+        organizerDesc: 'chooseRole.organizerDesc',
+        participantTitle: 'chooseRole.participantTitle',
+        participantDesc: 'chooseRole.participantDesc',
+    },
     personal: {
         organizerTitle: 'chooseRole.organizerTitle',
         organizerDesc: 'chooseRole.organizerDesc',
@@ -97,6 +107,7 @@ const EXAMPLE_TITLE_KEY_BY_USE_CASE: Record<UseCase, string> = {
     family: 'onboardingExamples.family',
     coaching: 'onboardingExamples.coaching',
     team: 'onboardingExamples.team',
+    education: 'onboardingExamples.education',
     personal: 'onboardingExamples.personal',
     other: 'onboardingExamples.personal',
 };
@@ -113,6 +124,7 @@ export const USE_CASE_CARD_KEYS: Record<UseCase, { title: string; desc: string; 
     family: { title: 'useCase.familyTitle', desc: 'useCase.familyDesc', icon: 'home' },
     coaching: { title: 'useCase.coachingTitle', desc: 'useCase.coachingDesc', icon: 'fitness' },
     team: { title: 'useCase.teamTitle', desc: 'useCase.teamDesc', icon: 'briefcase' },
+    education: { title: 'useCase.educationTitle', desc: 'useCase.educationDesc', icon: 'school' },
     personal: { title: 'useCase.personalTitle', desc: 'useCase.personalDesc', icon: 'checkmark-circle' },
     other: { title: 'useCase.otherTitle', desc: 'useCase.otherDesc', icon: 'ellipsis-horizontal-circle' },
 };

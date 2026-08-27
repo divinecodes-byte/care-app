@@ -24,6 +24,7 @@ import { ERROR_CATEGORY_TRANSLATION_KEYS } from '@/lib/errorClassification';
 import { useTranslation } from '@/lib/i18n/context';
 import { MAX_STANDARD_PARTICIPANTS } from '@/lib/limits';
 import { getRoleLabelKeys, UseCase } from '@/lib/onboarding';
+import { getRelationshipDefinition } from '@/lib/relationshipCore';
 import { setStoredSelectedConnectionId } from '@/lib/selected-participant';
 import { useThemeColors } from '@/lib/theme';
 import { useRequestGeneration } from '@/lib/useRequestGeneration';
@@ -330,6 +331,18 @@ export default function ParticipantsScreen() {
                                 {active.map((p) => {
                                     const busy = busyConnectionId === p.connectionId;
                                     const count = reminderCounts[p.connectionId] ?? 0;
+                                    // Canonical rule (see docs/product-terminology.md's
+                                    // per-connection relationship section): relationship_pair
+                                    // is the truth about THIS connection. profiles.use_case is
+                                    // broad onboarding/personalization context only and must
+                                    // NEVER be used to infer or display a specific relationship
+                                    // for a connection that hasn't set one -- a NULL
+                                    // relationship_pair always falls back to the neutral
+                                    // 'common.participant' noun, never the organizer's own
+                                    // use_case-driven label (which could easily be wrong for
+                                    // this specific participant).
+                                    const relDef = getRelationshipDefinition(p.relationshipPair);
+                                    const roleLabel = relDef ? t(relDef.participantLabelKey) : t('common.participant');
                                     return (
                                         <View key={p.connectionId} style={[styles.card, SHADOW.xs]}>
                                             <TouchableOpacity
@@ -346,7 +359,7 @@ export default function ParticipantsScreen() {
                                                 <View style={styles.cardBody}>
                                                     <Text style={styles.cardName} numberOfLines={1}>{p.recipientName || participantRoleLabel}</Text>
                                                     <Text style={styles.cardMeta} numberOfLines={1}>
-                                                        {participantRoleLabel} · {t('participants.activeReminderCount', { n: count, plural: count === 1 ? '' : 's' })}
+                                                        {roleLabel} · {t('participants.activeReminderCount', { n: count, plural: count === 1 ? '' : 's' })}
                                                     </Text>
                                                 </View>
                                                 <Ionicons name="chevron-forward" size={18} color={C.textMuted} />
@@ -399,6 +412,7 @@ export default function ParticipantsScreen() {
                                 <Text style={styles.sectionLabel}>{t('participants.pendingSection')}</Text>
                                 {pending.map((invite) => {
                                     const busy = busyConnectionId === invite.connectionId;
+                                    const relDef = getRelationshipDefinition(invite.relationshipPair);
                                     return (
                                         <View key={invite.connectionId} style={[styles.card, SHADOW.xs]}>
                                             <View style={styles.pendingRow}>
@@ -408,6 +422,9 @@ export default function ParticipantsScreen() {
                                                         {invite.expiresAt
                                                             ? t('inviteParticipant.expiresOn', { date: new Date(invite.expiresAt).toLocaleDateString() })
                                                             : t('participants.waitingStatus')}
+                                                    </Text>
+                                                                    <Text style={styles.cardMeta} numberOfLines={1}>
+                                                        {relDef ? t(relDef.participantLabelKey) : t('common.participant')}
                                                     </Text>
                                                 </View>
                                                 <View style={styles.waitingBadge}>

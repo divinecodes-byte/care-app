@@ -229,6 +229,7 @@ function statusBg(s: ReminderStatus, C: ThemeColors): string {
 }
 
 const TYPE_LABEL_KEYS: Record<string, string> = {
+    general:     'reminderForm.typeGeneral',
     medication:  'reminderForm.typeMedication',
     hydration:   'reminderForm.typeHydration',
     appointment: 'reminderForm.typeAppointment',

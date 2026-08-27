@@ -83,6 +83,38 @@ async function main() {
             `got ${bruteForce1}, ${bruteForce2}`
         );
 
+        // ── U: preview_invite_code brute-force yields no information ──────────
+        // Build Batch 2: preview_invite_code is read-only (never mutates
+        // connections) but must carry the exact same guessed-code
+        // information-disclosure boundary as accept_invite_code above --
+        // requires authentication and the exact code, reveals nothing for
+        // a code that doesn't resolve to a real, currently-pending,
+        // not-yet-expired invite belonging to someone else.
+        const { data: previewBrute1 } = await recipientA.client.rpc('preview_invite_code', { p_code: 'ZZZZZZ' }).maybeSingle() as { data: { status: string; organizer_full_name: string | null; relationship_pair: string | null } | null };
+        const { data: previewBrute2 } = await recipientA.client.rpc('preview_invite_code', { p_code: '000000' }).maybeSingle() as { data: { status: string; organizer_full_name: string | null; relationship_pair: string | null } | null };
+        record(
+            'U',
+            'preview_invite_code on brute-forced/guessed codes returns only not_found, never an organizer name or relationship',
+            previewBrute1?.status === 'not_found' && !previewBrute1?.organizer_full_name && !previewBrute1?.relationship_pair
+                && previewBrute2?.status === 'not_found' && !previewBrute2?.organizer_full_name && !previewBrute2?.relationship_pair,
+            JSON.stringify({ previewBrute1, previewBrute2 })
+        );
+
+        // ── V: preview_invite_code never mutates the row it previews ──────────
+        const { data: inviteV } = await caregiverA.client.rpc('create_invite_code', { p_existing_connection_id: null, p_relationship_pair: 'mentor_mentee' }).maybeSingle() as { data: { id: string; invite_code: string } | null };
+        if (inviteV) testConnectionIds.push(inviteV.id);
+        const beforePreview = dbQuery(`select status, recipient_id from public.connections where id = '${inviteV?.id}'`)[0] as { status: string; recipient_id: string | null };
+        await recipientA.client.rpc('preview_invite_code', { p_code: inviteV?.invite_code ?? '' });
+        await recipientA.client.rpc('preview_invite_code', { p_code: inviteV?.invite_code ?? '' }); // repeatable -- previewing twice is still non-consuming
+        const afterPreview = dbQuery(`select status, recipient_id from public.connections where id = '${inviteV?.id}'`)[0] as { status: string; recipient_id: string | null };
+        record(
+            'V',
+            'preview_invite_code never mutates connections -- status/recipient_id unchanged after (repeated) preview',
+            beforePreview.status === 'pending' && beforePreview.recipient_id === null
+                && afterPreview.status === 'pending' && afterPreview.recipient_id === null,
+            JSON.stringify({ beforePreview, afterPreview })
+        );
+
         // ── D: forged connection row ────────────────────────────────────────────
         const { error: forgedConnErr } = await caregiverB.client
             .from('connections')

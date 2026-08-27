@@ -895,6 +895,31 @@ async function main() {
         const cmTask = applyCM ? dbQuery(`select frequency, recurrence_end_date from public.tasks where id = (select task_id from public.routine_instance_items where routine_instance_id = '${applyCM.routineInstanceId}' and item_kind = 'task' limit 1)`)[0] as { frequency: string; recurrence_end_date: string } | undefined : undefined;
         record('CM', 'routine-created recurring task with recurrence_end_date', !applyCMError && cmTask?.frequency === 'daily' && cmTask?.recurrence_end_date === addParticipantCalendarDays(startCM, 10), applyCMError?.message ?? JSON.stringify(cmTask));
 
+        // ── CN-CP: Build Batch 2 -- 'education' use_case in the routine-
+        // template RPCs. Build Batch 1 proved profiles.use_case rejected
+        // 'education' live; this proves the identically-shaped
+        // routine_templates_use_case_check + create_routine_template/
+        // update_routine_template validation now accept it too (added in
+        // the same Batch 2 migration), and that the finite vocabulary
+        // remains bounded (an unrelated invalid string still fails).
+        const { data: templateCN, error: templateCNError } = await cgE.client.rpc('create_routine_template', {
+            p_title: 'CN Education Template', p_description: 'desc', p_use_case: 'education',
+            p_items: [reminderItem()],
+        });
+        record('CN', "create_routine_template accepts use_case='education'", !templateCNError && templateCN?.itemCount === 1, templateCNError?.message ?? JSON.stringify(templateCN));
+
+        const { data: updatedCN, error: updateCNError } = await cgE.client.rpc('update_routine_template', {
+            p_template_id: templateCN.templateId, p_title: 'CN Education Template', p_description: 'desc', p_use_case: 'education',
+            p_items: [reminderItem(), taskItem()],
+        });
+        record('CO', "update_routine_template accepts use_case='education'", !updateCNError && updatedCN?.itemCount === 2, updateCNError?.message ?? JSON.stringify(updatedCN));
+
+        const { error: invalidUseCaseCPError } = await cgE.client.rpc('create_routine_template', {
+            p_title: 'CP Invalid', p_description: null, p_use_case: 'not_a_real_use_case',
+            p_items: [reminderItem()],
+        });
+        record('CP', 'create_routine_template still rejects an invalid use_case', !!invalidUseCaseCPError && /invalid_use_case/.test(invalidUseCaseCPError.message), invalidUseCaseCPError?.message);
+
         // Nested cross-suite "remains passing" checks (formerly CB-CL,
         // including the local runSuite() rate-limit/gateway-error SKIP
         // classifier) removed as part of Week 4 Task #1's DAG-flattening

@@ -18,6 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { RADIUS, SHADOW, ThemeColors } from '@/constants/theme';
 import { useTranslation } from '@/lib/i18n/context';
 import { logOnboardingEvent } from '@/lib/onboarding';
+import { getOrganizerLabelKey, getRelationshipDefinition } from '@/lib/relationshipCore';
 import { useThemeColors } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 import { showAlertOnce } from '@/lib/alertGuard';
@@ -26,6 +27,11 @@ import { ERROR_CATEGORY_TRANSLATION_KEYS } from '@/lib/errorClassification';
 import { useRequestGeneration } from '@/lib/useRequestGeneration';
 import { useFocusOnChange } from '@/lib/useAccessibilityFocus';
 
+type InvitePreview = {
+    organizerName: string | null;
+    relationshipPair: string | null;
+};
+
 export default function JoinInviteScreen() {
     const C = useThemeColors();
     const t = useTranslation();
@@ -33,38 +39,47 @@ export default function JoinInviteScreen() {
     const [inviteCode, setInviteCode] = useState('');
     const [loading, setLoading]       = useState(false);
     const [focused, setFocused]       = useState(false);
-    // Set only after a real 'accepted' result — the connected-caregiver's
-    // name is looked up AFTER server validation succeeds (never guessed or
-    // fetched pre-emptively from the raw code), per the task's own
-    // requirement not to reveal who a code belongs to before acceptance.
+    // Set after a successful, non-consuming preview_invite_code call —
+    // shows the organizer name and proposed relationship BEFORE the
+    // participant commits to accepting (the relationship must never be
+    // silently hidden). Accepting/declining from this screen never guesses
+    // anything client-side; preview_invite_code requires the exact code
+    // and never mutates the row, so nothing here weakens the original
+    // "can't learn who a code belongs to without it" guarantee.
+    const [preview, setPreview] = useState<InvitePreview | null>(null);
+    // Set only after a real 'accepted' result from accept_invite_code.
     const [connectedName, setConnectedName] = useState<string | null>(null);
     const { start: startLoad, isCurrent: isLoadCurrent } = useRequestGeneration();
     const connectedHeadingRef = useFocusOnChange<Text>(connectedName !== null);
+    const previewHeadingRef = useFocusOnChange<Text>(preview !== null);
 
-    async function joinInvite() {
+    function normalizedCodeOrAlert(): string | null {
+        const normalizedCode = inviteCode.trim().toUpperCase();
+        if (!normalizedCode) {
+            showAlertOnce(t('joinInvite.missingCodeTitle'), t('joinInvite.missingCodeMessage'));
+            return null;
+        }
+        if (normalizedCode.length < 6) {
+            showAlertOnce(t('joinInvite.invalidCodeTitle'), t('joinInvite.invalidCodeLength'));
+            return null;
+        }
+        return normalizedCode;
+    }
+
+    async function previewInvite() {
         // Guards both the button (already disabled via `disabled={loading}`)
         // and the keyboard "Done" submit path (TextInput's onSubmitEditing
         // isn't gated by that prop) against a rapid double-fire.
         if (loading) return;
 
-        const normalizedCode = inviteCode.trim().toUpperCase();
-
-        if (!normalizedCode) {
-            showAlertOnce(t('joinInvite.missingCodeTitle'), t('joinInvite.missingCodeMessage'));
-            return;
-        }
-
-        if (normalizedCode.length < 6) {
-            showAlertOnce(t('joinInvite.invalidCodeTitle'), t('joinInvite.invalidCodeLength'));
-            return;
-        }
+        const normalizedCode = normalizedCodeOrAlert();
+        if (!normalizedCode) return;
 
         if (Platform.OS === 'ios') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         const generation = startLoad();
         setLoading(true);
 
         const { data: { user }, error: userError } = await supabase.auth.getUser();
-
         if (!isLoadCurrent(generation)) return;
 
         if (userError || !user) {
@@ -73,11 +88,61 @@ export default function JoinInviteScreen() {
             return;
         }
 
+        // Read-only, non-consuming — requires the exact code (same search
+        // space accept_invite_code has always required), never mutates
+        // connections. See preview_invite_code() in
+        // supabase/migrations/20260826000000_relationship_context_education_and_general_reminder_type.sql.
+        const { data: result, error: previewError } = await supabase
+            .rpc('preview_invite_code', { p_code: normalizedCode })
+            .maybeSingle() as { data: { status: string; organizer_full_name: string | null; relationship_pair: string | null } | null; error: { message: string } | null };
+
+        if (!isLoadCurrent(generation)) return;
+        setLoading(false);
+
+        if (previewError || !result) {
+            showAlertOnce(t('joinInvite.errorTitle'), t(ERROR_CATEGORY_TRANSLATION_KEYS[classifyScreenError(previewError?.message)]));
+            return;
+        }
+
+        if (result.status === 'not_found') {
+            showAlertOnce(t('joinInvite.invalidCodeTitle'), t('joinInvite.invalidCodeNotFound'));
+            return;
+        }
+        if (result.status === 'already_accepted') {
+            showAlertOnce(t('joinInvite.alreadyUsedTitle'), t('joinInvite.alreadyUsedMessage'));
+            return;
+        }
+        if (result.status === 'expired') {
+            showAlertOnce(t('joinInvite.invalidCodeTitle'), t('joinInvite.expiredCodeMessage'));
+            return;
+        }
+        if (result.status === 'self') {
+            showAlertOnce(t('joinInvite.invalidCodeTitle'), t('joinInvite.selfConnectMessage'));
+            return;
+        }
+
+        setPreview({ organizerName: result.organizer_full_name, relationshipPair: result.relationship_pair });
+    }
+
+    function declinePreview() {
+        setPreview(null);
+        setInviteCode('');
+    }
+
+    async function confirmAccept() {
+        if (loading || !preview) return;
+        const normalizedCode = inviteCode.trim().toUpperCase();
+
+        if (Platform.OS === 'ios') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        const generation = startLoad();
+        setLoading(true);
+
         // Validates and accepts atomically, server-side — self-connection,
         // expiration, and a concurrent acceptance race are all enforced
-        // inside the function itself, not by a raw client UPDATE. Returns a
-        // status string only (no row data), so a guessed code can't be used
-        // to learn anything about who owns it.
+        // inside the function itself, not by a raw client UPDATE. A code
+        // can still race between preview and accept (e.g. it expires, or
+        // someone else accepts it first) -- every one of preview's status
+        // outcomes is re-checked here too, not assumed still true.
         const { data: result, error: acceptError } = await supabase
             .rpc('accept_invite_code', { p_code: normalizedCode });
 
@@ -85,66 +150,37 @@ export default function JoinInviteScreen() {
         setLoading(false);
 
         if (acceptError) {
-            // Never surface a raw Supabase error string here — classify it
-            // the same way every other screen does, so network/rate-limited/
-            // unexpected each get their own distinct, translated copy
-            // instead of collapsing into one generic message.
             showAlertOnce(t('joinInvite.errorTitle'), t(ERROR_CATEGORY_TRANSLATION_KEYS[classifyScreenError(acceptError.message)]));
             return;
         }
 
         if (result === 'not_found') {
+            setPreview(null);
             showAlertOnce(t('joinInvite.invalidCodeTitle'), t('joinInvite.invalidCodeNotFound'));
             return;
         }
-
         if (result === 'already_accepted') {
-            showAlertOnce(
-                t('joinInvite.alreadyUsedTitle'),
-                t('joinInvite.alreadyUsedMessage')
-            );
+            setPreview(null);
+            showAlertOnce(t('joinInvite.alreadyUsedTitle'), t('joinInvite.alreadyUsedMessage'));
             return;
         }
-
         if (result === 'expired') {
+            setPreview(null);
             showAlertOnce(t('joinInvite.invalidCodeTitle'), t('joinInvite.expiredCodeMessage'));
             return;
         }
-
         if (result === 'self') {
+            setPreview(null);
             showAlertOnce(t('joinInvite.invalidCodeTitle'), t('joinInvite.selfConnectMessage'));
             return;
         }
 
         logOnboardingEvent('invite_accepted');
-
-        // Look up the connected caregiver's display name only now, after
-        // server-side acceptance already succeeded — RLS ("Users can view
-        // connected profiles") only grants this read once the connection
-        // is genuinely accepted, so this can never leak who a code
-        // belonged to before it was used.
-        const { data: connectionRow } = await supabase
-            .from('connections')
-            .select('caregiver_id')
-            .eq('recipient_id', user.id)
-            .eq('status', 'accepted')
-            .order('accepted_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-
-        if (!isLoadCurrent(generation)) return;
-
-        if (connectionRow?.caregiver_id) {
-            const { data: caregiverProfile } = await supabase
-                .from('profiles')
-                .select('full_name')
-                .eq('id', connectionRow.caregiver_id)
-                .maybeSingle();
-            if (!isLoadCurrent(generation)) return;
-            setConnectedName(caregiverProfile?.full_name ?? null);
-        } else {
-            setConnectedName('');
-        }
+        // The organizer name shown here is the exact same one already
+        // confirmed by preview_invite_code for this exact code -- no
+        // redundant re-fetch needed (accepting can't change who the
+        // invite belonged to).
+        setConnectedName(preview.organizerName ?? '');
     }
 
     if (connectedName !== null) {
@@ -174,6 +210,71 @@ export default function JoinInviteScreen() {
                     >
                         <Text style={styles.buttonText}>{t('joinInvite.continueButton')}</Text>
                         <Ionicons name="arrow-forward" size={20} color={C.textInverse} />
+                    </TouchableOpacity>
+                </View>
+            </SafeAreaView>
+        );
+    }
+
+    if (preview !== null) {
+        const relationshipDef = getRelationshipDefinition(preview.relationshipPair);
+        const organizerLabel = t(getOrganizerLabelKey(preview.relationshipPair));
+        return (
+            <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+                <View style={styles.connectedContent}>
+                    <View style={styles.connectedIconWrap}>
+                        <Ionicons name="person-circle-outline" size={48} color={C.primary} />
+                    </View>
+                    <Text ref={previewHeadingRef} style={styles.heading} accessibilityRole="header">
+                        {t('joinInvite.previewTitle')}
+                    </Text>
+                    <Text style={styles.subheading}>
+                        {preview.organizerName
+                            ? t('joinInvite.previewSubtitle', { name: preview.organizerName })
+                            : t('joinInvite.connectedSubtitleGeneric')}
+                    </Text>
+
+                    <View style={[styles.relationshipCard, SHADOW.xs]}>
+                        <Ionicons name={(relationshipDef?.icon ?? 'people') as keyof typeof Ionicons.glyphMap} size={20} color={C.primary} />
+                        <View style={styles.relationshipCardTextWrap}>
+                            <Text style={styles.relationshipCardTitle}>
+                                {relationshipDef ? t(relationshipDef.titleKey) : t('joinInvite.relationshipUnspecified')}
+                            </Text>
+                            <Text style={styles.relationshipCardBody}>
+                                {t('joinInvite.previewRoleLine', { organizerLabel })}
+                            </Text>
+                        </View>
+                    </View>
+
+                    <View style={styles.spacer} />
+
+                    <TouchableOpacity
+                        style={[styles.button, SHADOW.primary, loading && styles.buttonDisabled]}
+                        onPress={confirmAccept}
+                        disabled={loading}
+                        activeOpacity={0.88}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('joinInvite.acceptButton')}
+                        accessibilityState={{ disabled: loading, busy: loading }}
+                    >
+                        {loading ? (
+                            <ActivityIndicator color={C.textInverse} />
+                        ) : (
+                            <>
+                                <Text style={styles.buttonText}>{t('joinInvite.acceptButton')}</Text>
+                                <Ionicons name="checkmark" size={20} color={C.textInverse} />
+                            </>
+                        )}
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={styles.declineButton}
+                        onPress={declinePreview}
+                        disabled={loading}
+                        activeOpacity={0.7}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('joinInvite.declineButton')}
+                    >
+                        <Text style={styles.declineButtonText}>{t('joinInvite.declineButton')}</Text>
                     </TouchableOpacity>
                 </View>
             </SafeAreaView>
@@ -229,7 +330,7 @@ export default function JoinInviteScreen() {
                             onFocus={() => setFocused(true)}
                             onBlur={() => setFocused(false)}
                             returnKeyType="done"
-                            onSubmitEditing={joinInvite}
+                            onSubmitEditing={previewInvite}
                             accessibilityLabel={t('joinInvite.codeLabel')}
                             accessibilityHint={t('joinInvite.codeHelper')}
                         />
@@ -255,7 +356,7 @@ export default function JoinInviteScreen() {
                     {/* Connect button */}
                     <TouchableOpacity
                         style={[styles.button, SHADOW.primary, loading && styles.buttonDisabled]}
-                        onPress={joinInvite}
+                        onPress={previewInvite}
                         disabled={loading}
                         activeOpacity={0.88}
                         accessibilityRole="button"
@@ -418,6 +519,41 @@ const createStyles = (C: ThemeColors) => StyleSheet.create({
         color: '#065F46',
         lineHeight: 19,
         fontWeight: '500',
+    },
+
+    // ── Relationship preview card ────────────────────────────────────
+    relationshipCard: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: 12,
+        backgroundColor: C.bgSurface,
+        borderRadius: RADIUS.lg,
+        padding: 16,
+        width: '100%',
+        marginTop: 4,
+    },
+    relationshipCardTextWrap: {
+        flex: 1,
+    },
+    relationshipCardTitle: {
+        fontSize: 15,
+        fontWeight: '700',
+        color: C.textPrimary,
+        marginBottom: 3,
+    },
+    relationshipCardBody: {
+        fontSize: 13,
+        color: C.textSecondary,
+        lineHeight: 18,
+    },
+    declineButton: {
+        paddingVertical: 14,
+        alignItems: 'center',
+    },
+    declineButtonText: {
+        fontSize: 15,
+        color: C.textMuted,
+        fontWeight: '600',
     },
 
     // ── CTA ───────────────────────────────────────────────────────────

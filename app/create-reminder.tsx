@@ -28,7 +28,7 @@ import { supabase } from '@/lib/supabase';
 import { showAlertOnce } from '@/lib/alertGuard';
 import { useFocusOnChange } from '@/lib/useAccessibilityFocus';
 
-type ReminderType = 'medication' | 'hydration' | 'appointment' | 'meal' | 'exercise' | 'other';
+type ReminderType = 'general' | 'medication' | 'hydration' | 'appointment' | 'meal' | 'exercise' | 'other';
 
 type ParticipantOption = {
     connectionId: string;
@@ -36,10 +36,15 @@ type ParticipantOption = {
     recipientName: string;
 };
 
-const REMINDER_TYPES: ReminderType[] = ['medication', 'hydration', 'appointment', 'meal', 'exercise', 'other'];
+// 'general' first -- the neutral, always-appropriate default/leading
+// option for any relationship type (see docs/product-reset-audit.md §11
+// item F1). The five relationship-specific categories remain unchanged
+// and useful; 'other' remains as the existing catch-all.
+const REMINDER_TYPES: ReminderType[] = ['general', 'medication', 'hydration', 'appointment', 'meal', 'exercise', 'other'];
 const FREQUENCIES:    Frequency[]    = ['daily', 'weekdays', 'weekends', 'custom'];
 
 const TYPE_ICON_NAMES: Record<ReminderType, string> = {
+    general:     'checkmark-circle-outline',
     medication:  'medical-outline',
     hydration:   'water-outline',
     appointment: 'calendar-outline',
@@ -49,6 +54,7 @@ const TYPE_ICON_NAMES: Record<ReminderType, string> = {
 };
 
 const TYPE_LABEL_KEYS: Record<ReminderType, string> = {
+    general:     'reminderForm.typeGeneral',
     medication:  'reminderForm.typeMedication',
     hydration:   'reminderForm.typeHydration',
     appointment: 'reminderForm.typeAppointment',
@@ -81,7 +87,7 @@ export default function CreateReminderScreen() {
     const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
 
     const [title, setTitle]                         = useState('');
-    const [reminderType, setReminderType]           = useState<ReminderType>('other');
+    const [reminderType, setReminderType]           = useState<ReminderType>('general');
     const [notes, setNotes]                         = useState('');
     const [timeValue, setTimeValue]                 = useState<Date>(() => {
         const d = new Date();

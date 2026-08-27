@@ -29,6 +29,7 @@ import { endConnection } from '@/lib/connections';
 import { ERROR_CATEGORY_TRANSLATION_KEYS } from '@/lib/errorClassification';
 import { useTranslation } from '@/lib/i18n/context';
 import { resolveOrganizerDisplay } from '@/lib/organizerDisplay';
+import { getRelationshipDefinition } from '@/lib/relationshipCore';
 import { useThemeColors } from '@/lib/theme';
 import { useRequestGeneration } from '@/lib/useRequestGeneration';
 import { supabase } from '@/lib/supabase';
@@ -42,6 +43,7 @@ type OrganizerConnectionSummary = {
     organizer_full_name: string | null;
     organizer_account_status: string | null;
     organizer_deleted_at: string | null;
+    relationship_pair: string | null;
     active_reminder_count: number;
     active_task_count: number;
     active_routine_count: number;
@@ -197,6 +199,15 @@ export default function MyConnectionsScreen() {
                             const reminderN = conn.active_reminder_count;
                             const taskN = conn.active_task_count;
                             const routineN = conn.active_routine_count;
+                            // relationship_pair is the truth about THIS
+                            // connection; a NULL value must fall back to the
+                            // neutral 'common.organizer' noun, never any
+                            // profile-level use_case default -- the same
+                            // participant could plausibly be a different
+                            // relationship to a different organizer, and
+                            // no organizer profile signal is authoritative
+                            // for what THIS specific connection is.
+                            const relDef = getRelationshipDefinition(conn.relationship_pair);
                             return (
                                 <View key={conn.connection_id} style={[styles.card, SHADOW.xs]}>
                                     <View style={styles.cardMain}>
@@ -205,6 +216,9 @@ export default function MyConnectionsScreen() {
                                         </View>
                                         <View style={styles.cardBody}>
                                             <Text style={styles.cardName} numberOfLines={1}>{organizer.displayName}</Text>
+                                            <Text style={styles.cardMeta} numberOfLines={1}>
+                                                {relDef ? t(relDef.organizerLabelKey) : t('common.organizer')}
+                                            </Text>
                                             {conn.accepted_at ? (
                                                 <Text style={styles.cardMeta} numberOfLines={1}>
                                                     {t('myConnections.connectedSince', { date: new Date(conn.accepted_at).toLocaleDateString() })}

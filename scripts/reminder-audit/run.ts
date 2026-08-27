@@ -478,6 +478,44 @@ async function main() {
         const ahEdit = await editSchedule(recipientA.client, reminderC, { title: 'forged edit' });
         record('AH', 'a recipient cannot call update_reminder_schedule for a reminder they do not own as caregiver', !!ahEdit.error, ahEdit.error?.message);
 
+        // ── AL-AO: Build Batch 2 reminder taxonomy (general category + widened
+        // reminders_reminder_type_check). See docs/product-reset-audit.md
+        // §11 item F1 and the Batch 2 migration
+        // 20260826000000_relationship_context_education_and_general_reminder_type.sql.
+        // ─────────────────────────────────────────────────────────────────
+        const alRows = dbQuery(`
+          insert into public.reminders (connection_id, caregiver_id, recipient_id, title, reminder_type, time_of_day, days_of_week, no_response_minutes)
+          values ('${connA}', '${caregiverA.id}', '${recipientA.id}', 'AL general reminder', 'general', '09:00:00', ARRAY[1,2,3,4,5,6,7], 15)
+          returning id, reminder_type;
+        `);
+        if (alRows[0]) testReminderIds.push((alRows[0] as any).id);
+        record('AL', "a 'general' reminder can be created", (alRows[0] as any)?.reminder_type === 'general', JSON.stringify(alRows[0]));
+
+        // createReminder()'s own insert (used by every other scenario in
+        // this file) has never specified reminder_type -- it has always
+        // relied on the column's own DEFAULT. Confirmed live before Batch 2
+        // (see the Batch 2 pre-work verification) that this default was
+        // 'medication'; the migration above changed it to 'general'. This
+        // is the exact same insert path every earlier scenario in this
+        // file already uses, so it also doubles as a real regression check
+        // that the default change didn't disturb anything upstream.
+        const amReminderId = await createReminder(connA, caregiverA.id, recipientA.id, { daysOfWeek: [1, 2, 3, 4, 5, 6, 7], scheduledOffsetMinutes: -5 });
+        const amRow = dbQuery(`select reminder_type from public.reminders where id = '${amReminderId}';`)[0] as any;
+        record('AM', "the reminders.reminder_type column DEFAULT is 'general' (was 'medication')", amRow?.reminder_type === 'general', JSON.stringify(amRow));
+
+        // Every pre-existing category remains a fully valid, selectable
+        // value through the real edit RPC -- none were removed.
+        const anTypes = ['general', 'medication', 'hydration', 'appointment', 'meal', 'exercise', 'other'];
+        const anResults: Record<string, boolean> = {};
+        for (const type of anTypes) {
+            const anResp = await editSchedule(caregiverA.client, amReminderId, { reminderType: type });
+            anResults[type] = !anResp.error;
+        }
+        record('AN', 'every taxonomy value (general/medication/hydration/appointment/meal/exercise/other) remains valid via update_reminder_schedule', Object.values(anResults).every(Boolean), JSON.stringify(anResults));
+
+        const aoResp = await editSchedule(caregiverA.client, amReminderId, { reminderType: 'not_a_real_type' });
+        record('AO', 'an invalid reminder_type is rejected by update_reminder_schedule', !!aoResp.error && /invalid_reminder_type/.test(aoResp.error.message), aoResp.error?.message);
+
         // Nested cross-suite "remains passing" checks (formerly AI/AJ/AK)
         // removed as part of Week 4 Task #1's DAG-flattening pass -- see
         // docs/audit-infrastructure-model.md. scripts/final-regression/run.ts

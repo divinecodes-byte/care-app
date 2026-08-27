@@ -79,6 +79,7 @@ type Reminder = {
 const OVERDUE_PREVIEW_CAP = 5;
 
 const TYPE_ICONS: Record<string, string> = {
+    general:     '✅',
     medication:  '💊',
     hydration:   '💧',
     appointment: '📅',
@@ -88,6 +89,7 @@ const TYPE_ICONS: Record<string, string> = {
 };
 
 const TYPE_LABEL_KEYS: Record<string, string> = {
+    general:     'reminderForm.typeGeneral',
     medication:  'reminderForm.typeMedication',
     hydration:   'reminderForm.typeHydration',
     appointment: 'reminderForm.typeAppointment',

@@ -14,12 +14,15 @@ export type ParticipantSummary = {
     recipientName: string;
     useCase: UseCase | null;
     acceptedAt: string | null;
+    /** This specific connection's relationship context (e.g. 'trainer_client') -- null means unspecified. See lib/relationshipCore.ts. Distinct from useCase above, which is the participant's own profile-level signal, not this connection's. */
+    relationshipPair: string | null;
 };
 
 export type PendingInviteSummary = {
     connectionId: string;
     inviteCode: string;
     expiresAt: string | null;
+    relationshipPair: string | null;
 };
 
 export type OrganizerConnections = {
@@ -48,7 +51,7 @@ export type OrganizerConnections = {
 export async function fetchOrganizerConnections(caregiverId: string): Promise<OrganizerConnections> {
     const { data: rows, error: connError } = await supabase
         .from('connections')
-        .select('id, recipient_id, status, expires_at, accepted_at, invite_code')
+        .select('id, recipient_id, status, expires_at, accepted_at, invite_code, relationship_pair')
         .eq('caregiver_id', caregiverId);
 
     if (connError) {
@@ -82,6 +85,7 @@ export async function fetchOrganizerConnections(caregiverId: string): Promise<Or
             recipientName: profile?.full_name ?? '',
             useCase: isUseCase(profile?.use_case) ? profile!.use_case as UseCase : null,
             acceptedAt: r.accepted_at,
+            relationshipPair: r.relationship_pair ?? null,
         };
     });
 
@@ -89,6 +93,7 @@ export async function fetchOrganizerConnections(caregiverId: string): Promise<Or
         connectionId: r.id,
         inviteCode: r.invite_code,
         expiresAt: r.expires_at,
+        relationshipPair: r.relationship_pair ?? null,
     }));
 
     return { ok: true, errorCategory: null, active, pending, slotsUsed: active.length + pending.length };
